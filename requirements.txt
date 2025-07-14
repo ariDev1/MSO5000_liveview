@@ -1,0 +1,8 @@
+pyvisa
+pyvisa-py
+numpy
+Pillow
+requests
+tk
+matplotlib
+vncdo
