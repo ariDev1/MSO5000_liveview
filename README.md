@@ -11,7 +11,7 @@ This tool provides a live view and SCPI-based data extraction from a **Rigol MSO
 - 📷 Live screenshots from the oscilloscope (via VNC)
 - 📊 Channel settings: coupling, bandwidth, scale, offset, probe
 - ⏱️ Trigger and timebase information
-- 📈 Waveform measurements: Vpp, Vavg, Vrms (up to 4 channels)
+- 📈 Waveform measurements: Vpp, Vavg, Vrms (up to 4 channels and MATH1..4)
 - 📤 CSV export of waveform data
 - 🧪 Long-time measurement mode with pause/resume/stop
 - 🐞 Scrollable debug log

@@ -52,7 +52,18 @@ def start_scpi_loop(ip):
                             "coupling": safe_query(scope, f":CHAN{ch}:COUP?"),
                             "probe": safe_query(scope, f":CHAN{ch}:PROB?"),
                         }
-
+                    #Add MATH channel support
+                    for m in range(1, 4):
+                        math_name = f"MATH{m}"
+                        if safe_query(scope, f":{math_name}:DISP?") != "1":
+                            continue
+                        #log_debug(f"✅ Detected {math_name} — added to channel_info")
+                        channels[math_name] = {
+                            "scale": safe_query(scope, f":{math_name}:SCALe?", "N/A"),
+                            "offset": safe_query(scope, f":{math_name}:OFFS?", "N/A"),
+                            "type": safe_query(scope, f":{math_name}:OPER?", "N/A"),
+                        }
+    
                 scpi_data["channel_info"] = channels
                 time.sleep(INTERVALL_SCPI)
 

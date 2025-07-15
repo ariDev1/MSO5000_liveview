@@ -8,7 +8,7 @@ from scpi.interface import safe_query
 from scpi.interface import scpi_lock
 
 def export_channel_csv(scope, channel, outdir="oszi_csv"):
-    chan = f"CHAN{channel}"
+    chan = channel if str(channel).startswith("MATH") else f"CHAN{channel}"
     try:
         if safe_query(scope, f":{chan}:DISP?") != "1":
             return None
@@ -65,8 +65,7 @@ def export_channel_csv(scope, channel, outdir="oszi_csv"):
 
 def get_channel_waveform_data(scope, channel, use_simple_calc=True):
     try:
-        chan = f"CHAN{channel}"
-
+        chan = channel if str(channel).startswith("MATH") else f"CHAN{channel}"
         with scpi_lock:
             if safe_query(scope, f":{chan}:DISP?") != "1":
                 return None, None, None

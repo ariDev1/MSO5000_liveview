@@ -51,11 +51,12 @@ def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled,
                 writer = csv.writer(f)
                 header = ["Timestamp"]
                 for ch in channels:
-                    header.append(f"CH{ch}_Vpp")
+                    chname = f"CH{ch}" if isinstance(ch, int) else ch
+                    header.append(f"{chname}_Vpp")
                     if vavg_enabled:
-                        header.append(f"CH{ch}_Vavg")
+                        header.append(f"{chname}_Vavg")
                     if vrms_enabled:
-                        header.append(f"CH{ch}_Vrms")
+                        header.append(f"{chname}_Vrms")
                 writer.writerow(header)
 
                 start_time = time.time()

@@ -29,7 +29,7 @@ def main():
     update_image(root)
     start_screenshot_thread()
 
-    tabs = create_main_gui(root)
+    tabs = create_main_gui(root, ip)
 
     # === Long-Time Measurement Tab ===
     logmeas_frame = tabs["Long-Time Measurement"]
@@ -48,7 +48,7 @@ def main():
         background="#1a1a1a", foreground="#cccccc", wraplength=600
     ).grid(row=99, column=0, columnspan=2, padx=10, pady=10, sticky="w")
 
-    ttk.Label(logmeas_frame, text="Channels (e.g., 1,2):", background="#1a1a1a", foreground="#ffffff").grid(row=0, column=0, sticky="e", padx=10, pady=5)
+    ttk.Label(logmeas_frame, text="Channels (e.g., 1,2,MATH1):", background="#1a1a1a", foreground="#ffffff").grid(row=0, column=0, sticky="e", padx=10, pady=5)
     entry_channels = ttk.Entry(logmeas_frame, width=20)
     entry_channels.grid(row=0, column=1, sticky="w", padx=10, pady=5)
 
@@ -70,7 +70,15 @@ def main():
 
     def start_log_session():
         try:
-            ch_list = [int(c.strip()) for c in entry_channels.get().split(',') if c.strip().isdigit()]
+            raw = entry_channels.get()
+            ch_list = []
+            for item in raw.split(","):
+                item = item.strip().upper()
+                if item.startswith("MATH") and item[4:].isdigit():
+                    ch_list.append(item)  # MATH1, MATH2, etc.
+                elif item.isdigit():
+                    ch_list.append(int(item))  # CH1, CH2, etc.
+
             dur = float(entry_duration.get())
             inter = float(entry_interval.get())
             assert dur > 0 and inter > 0 and ch_list
@@ -139,7 +147,12 @@ def main():
     def update_channel_info():
         lines = []
         for ch, info in scpi_data["channel_info"].items():
-            lines.append(f"{ch}: {info['scale']} V/div | Offset: {info['offset']} V | Coupling: {info['coupling']} | Probe: {info['probe']}x")
+            #lines.append(f"{ch}: {info['scale']} V/div | Offset: {info['offset']} V | Coupling: {info['coupling']} | Probe: {info['probe']}x")
+            if ch.startswith("MATH"):
+                lines.append(f"{ch}: {info['scale']} V/div | Offset: {info['offset']} V | Type: {info.get('type', 'N/A')}")
+            else:
+                lines.append(f"{ch}: {info['scale']} V/div | Offset: {info['offset']} V | Coupling: {info['coupling']} | Probe: {info['probe']}x")
+
         channel_var.set("\n".join(lines) if lines else "⚠️ No active channels")
         root.after(2000, update_channel_info)
     update_channel_info()
@@ -154,8 +167,15 @@ def main():
             log_debug("❌ Not connected — export aborted")
             return
 
-        for ch in range(1, 5):
-            export_channel_csv(scope, ch)
+        for ch in scpi_data.get("channel_info", {}).keys():
+            try:
+                if ch.startswith("CH"):
+                    ch_num = int(ch[2:])
+                    export_channel_csv(scope, ch_num)
+                elif ch.startswith("MATH"):
+                    export_channel_csv(scope, ch)  # pass "MATH1", "MATH2", etc.
+            except Exception as e:
+                log_debug(f"⚠️ Export failed for {ch}: {e}")
 
     tk.Button(channel_frame, text="📥 Export Channel CSV", command=on_export,
               bg="#2d2d2d", fg="#ffffff", activebackground="#333333").pack(pady=10)

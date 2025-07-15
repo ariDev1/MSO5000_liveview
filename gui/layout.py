@@ -15,8 +15,8 @@ def setup_styles():
     style.map('TNotebook.Tab', background=[('selected', DARK_SELECT)])
     style.configure('TFrame', background=DARK_BG, borderwidth=0)
 
-def create_main_gui(root):
-    root.title("RIGOL MSO5000 Live Monitor")
+def create_main_gui(root, ip):
+    root.title(f"MSO5000 Live Monitor - {ip}")
     root.geometry("1200x800")
     root.minsize(800, 600)
     root.configure(bg=DARK_BG)
