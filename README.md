@@ -11,17 +11,18 @@ This tool provides a live view and SCPI-based data extraction from a **Rigol MSO
 - 📷 Live screenshots from the oscilloscope (via VNC)
 - 📊 Channel settings: coupling, bandwidth, scale, offset, probe
 - ⏱️ Trigger and timebase information
-- 📈 Waveform measurements: Vpp, Vavg, Vrms (up to 4 channels and MATH1..4)
+- 📈 Waveform measurements: Vpp, Vavg, Vrms (up to 4 channels)
 - 📤 CSV export of waveform data
 - 🧪 Long-time measurement mode with pause/resume/stop
 - 🐞 Scrollable debug log
 - 🌙 Dark mode GUI with resizable window and tabs
+- 🐳 **Docker support for easy deployment and portability**
 
 ---
 
 ## 🛠️ Installation (Tested on Ubuntu 24.04 Noble)
 
-Run these commands in your terminal:
+### 📦 Native Python Setup
 
 ```bash
 sudo apt install python3-tk
@@ -34,19 +35,52 @@ pip install -r requirements.txt
 python3 main.py
 ```
 
-Alternatively, you can use the prewritten installation script:
+Or use the prewritten installation script:
 
 ```bash
 bash how-to-install.txt
 ```
 
-> 💡 This setup is tested on Ubuntu 24.04 LTS with Python 3.12 and VNC enabled on the Rigol scope.
+> 💡 Tested on Ubuntu 24.04 LTS with Python 3.12 and VNC enabled on the Rigol scope.
+
+---
+
+## 🐳 Docker Support (X11 and Wayland compatible)
+
+You can now run this app in a **self-contained Docker container** with GUI support.
+
+### 🔧 Build the Image
+
+```bash
+docker build -t mso5000_liveview .
+```
+
+### 🚀 Run It
+
+```bash
+./run.sh
+```
+
+The script automatically detects whether you're running **X11 or Wayland**, sets up the display bridge, and launches the GUI.
+
+### 📁 Where Are My CSV Files?
+
+All exported CSV files are saved to:
+
+```bash
+~/oszi_csv/
+```
+
+This folder is automatically mapped into the container and persists even after exit.
+
+> Requires: Docker, X11 or Wayland+XWayland, and VNC + SCPI enabled on the oscilloscope.
 
 ---
 
 ## 📦 Python Requirements
 
 Listed in `requirements.txt`, install with:
+
 ```bash
 pip install -r requirements.txt
 ```
@@ -69,6 +103,7 @@ Dependencies include:
 ## 🚀 How to Use
 
 After launching the app:
+
 ```bash
 python3 main.py
 ```
@@ -89,13 +124,16 @@ You’ll be prompted to enter the IP address of the oscilloscope. The GUI will s
 
 ```
 MSO5000_liveview/
+├── Dockerfile
+├── run.sh
+├── .dockerignore
 ├── main.py
 ├── rigol_vnc_liveview8.py
 ├── requirements.txt
 ├── how-to-install.txt
-├── oszi_csv/              ← CSV exports stored here
+├── oszi_csv/              ← (inside Docker mapped to ~/oszi_data/)
 ├── docs/
-│   └── screenshot.png     ← Screenshot shown in README
+│   └── screenshot.png
 ```
 
 ---
