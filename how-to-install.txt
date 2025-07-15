@@ -1,0 +1,7 @@
+sudo apt install python3-tk
+git clone https://github.com/ariDev1/MSO5000_liveview.git
+cd MSO5000_liveview/
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python3 main.py

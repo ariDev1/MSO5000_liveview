@@ -1,120 +1,116 @@
-# 🧠 RIGOL MSO5000 Live Monitor (Hacked Firmware Compatible)
+# 🧠 RIGOL MSO5000 Live Monitor (Hacked FW Compatible)
 
-This tool provides a live GUI-based monitor for **Rigol MSO5000 series** oscilloscopes (including those with hacked firmware). It offers real-time waveform screenshots, SCPI data logging, waveform exports, and debug insight.
+This tool provides a live view and SCPI-based data extraction from a **Rigol MSO5000** oscilloscope with **hacked firmware**, using VNC for screenshots and VISA (SCPI) for waveform data.
 
-## ✨ Features
+![Screenshot](docs/screenshot.png)
 
-- Live screen capture via VNC from the oscilloscope
-- Query of timebase, trigger, and channel configuration
-- Automatic logging of Vpp, Vavg, and Vrms values for selected channels
-- CSV waveform export per channel with full metadata
-- Dark-mode GUI with scrollable debug log
-- Pause/resume/stop support for long-time measurement
-- Safe operation with hacked firmware (timeout-aware)
+---
 
-## 🖼️ Screenshot
+## 🧩 Features
 
-![GUI Screenshot](docs/screenshot.png)
+- 📷 Live screenshots from the oscilloscope (via VNC)
+- 📊 Channel settings: coupling, bandwidth, scale, offset, probe
+- ⏱️ Trigger and timebase information
+- 📈 Waveform measurements: Vpp, Vavg, Vrms (up to 4 channels)
+- 📤 CSV export of waveform data
+- 🧪 Long-time measurement mode with pause/resume/stop
+- 🐞 Scrollable debug log
+- 🌙 Dark mode GUI with resizable window and tabs
+
+---
+
+## 🛠️ Installation (Tested on Ubuntu 24.04 Noble)
+
+Run these commands in your terminal:
+
+```bash
+sudo apt install python3-tk
+
+git clone https://github.com/ariDev1/MSO5000_liveview.git
+cd MSO5000_liveview/
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python3 main.py
+```
+
+Alternatively, you can use the prewritten installation script:
+
+```bash
+bash how-to-install.txt
+```
+
+> 💡 This setup is tested on Ubuntu 24.04 LTS with Python 3.12 and VNC enabled on the Rigol scope.
+
+---
+
+## 📦 Python Requirements
+
+Listed in `requirements.txt`, install with:
+```bash
+pip install -r requirements.txt
+```
+
+Dependencies include:
+- `pillow`, `numpy`, `pyvisa`, `pyvisa-py`
+- `requests`, `vncdotool`, `psutil`, `zeroconf`
+
+---
+
+## 🖧 Prerequisites
+
+- Your Rigol MSO5000 is on the **same local network** as your PC
+- **VNC** is enabled on the oscilloscope
+- **SCPI over TCP/IP** is working
+- You know the IP address of the scope
 
 ---
 
 ## 🚀 How to Use
 
+After launching the app:
 ```bash
 python3 main.py
 ```
 
-You will be prompted to enter the IP address of the Rigol MSO5000.
+You’ll be prompted to enter the IP address of the oscilloscope. The GUI will show:
 
-### Prerequisites
-
-- VNC must be enabled on the oscilloscope
-- SCPI over TCP/IP must be reachable (default port 5555 or VISA-compatible)
-- Device must be on the same LAN as your computer
-
----
-
-## 🧪 Logging Measurement Data
-
-- Select channels (e.g. `1,2`)
-- Enter duration (in **hours**) and interval (in **seconds**)
-- Optionally enable Vavg and Vrms checkboxes
-- Start the logging session
-
-Results are saved to a CSV file under:
-
-```
-oszi_csv/session_<timestamp>/session_log.csv
-```
-
-> ⚠️ **Note:** Logging all 4 channels with sub-second intervals may cause backlog delays on slower firmware. For long-time measurements (e.g. 24h), intervals ≥ 1s are recommended.
+- Live screenshot (top)
+- Tabbed interface:
+  - **System Info**
+  - **Channel Data**
+  - **Debug Log**
+  - **Licenses**
+  - **Long-Time Measurement** (with CSV export)
 
 ---
 
-## 🗂 Export Channel Waveforms
-
-Use the “📥 Export Channel CSV” button to fetch all currently visible waveforms (1–4) as full CSV exports with metadata headers.
-
-Each channel CSV includes:
-
-- Time (s)
-- Voltage (V)
-- Device metadata (ID, timebase, scale, offset, etc.)
-
----
-
-## ⚙️ Configuration
-
-In `main.py` and the `config.py` files you can adjust:
-
-| Variable         | Description                            | Default |
-|------------------|----------------------------------------|---------|
-| `INTERVALL_BILD` | Screenshot update interval (seconds)   | 2       |
-| `INTERVALL_SCPI` | SCPI query interval (seconds)          | 4       |
-| `WAV_POINTS`     | Waveform sample points per channel     | 1200    |
-
----
-
-## 📦 Installation Requirements
-
-Create a virtual environment (optional but recommended):
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-
-Then install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-### System Packages (Ubuntu/Debian)
-
-```bash
-sudo apt install python3-tk python3-pil.imagetk vncdo
-```
-
----
-
-## 📁 Project Structure
+## 📁 File Structure
 
 ```
 MSO5000_liveview/
-├── main.py                # Entry point for the GUI
-├── config.py              # Customizable constants
-├── scpi/                  # SCPI tools and waveform handling
-├── rigol_vnc_liveview8.py# GUI components (called from main.py)
-├── oszi_csv/              # Measurement + export logs
-├── requirements.txt       # Python dependencies
-└── README.md              # This file
+├── main.py
+├── rigol_vnc_liveview8.py
+├── requirements.txt
+├── how-to-install.txt
+├── oszi_csv/              ← CSV exports stored here
+├── docs/
+│   └── screenshot.png     ← Screenshot shown in README
 ```
 
 ---
 
-## 🧾 License
+## ⚠️ Firmware Notice
 
-This project is for **personal, educational, and diagnostic use** only.
+This tool is optimized for **hacked firmware** (unofficial). Adjustments have been made to:
 
-Not affiliated with Rigol Technologies. Use at your own risk.
+- Skip unstable SCPI queries
+- Avoid timeouts and hangs
+- Maintain compatibility with patched behavior
+
+---
+
+## 📃 License
+
+This project is for **educational and personal use only**.  
+Not affiliated with Rigol Technologies.
