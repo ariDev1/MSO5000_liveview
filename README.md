@@ -1,5 +1,8 @@
 # 🧠 RIGOL MSO5000 Live Monitor (Hacked FW Compatible)
 
+> **Current Version:** v0.9.2  
+> 📦 See [Release Notes](https://github.com/ariDev1/MSO5000_liveview/releases/tag/v0.9.2)
+
 This tool provides a live view and SCPI-based data extraction from a **Rigol MSO5000** oscilloscope with **hacked firmware**, using VNC for screenshots and VISA (SCPI) for waveform data.
 
 ![Screenshot](docs/screenshot.png)
@@ -13,10 +16,13 @@ This tool provides a live view and SCPI-based data extraction from a **Rigol MSO
 - ⏱️ Trigger and timebase information
 - 📈 Waveform measurements: Vpp, Vavg, Vrms (up to 4 channels)
 - 📤 CSV export of waveform data
-- 🧪 Long-time measurement mode with pause/resume/stop
+- 🧪 **Long-time measurement mode with pause/resume/stop**  
+  ↪️ Saves all data to a single timestamped CSV  
+  ↪️ Timestamped rows at user-defined intervals  
+  ↪️ Performance tips built into the UI
 - 🐞 Scrollable debug log
 - 🌙 Dark mode GUI with resizable window and tabs
-- 🐳 **Docker support for easy deployment and portability**
+- 🐳 **Docker support** for easy deployment (X11 + Wayland)
 
 ---
 
@@ -35,7 +41,7 @@ pip install -r requirements.txt
 python3 main.py
 ```
 
-Or use the prewritten installation script:
+Or use the prewritten install script:
 
 ```bash
 bash how-to-install.txt
@@ -47,7 +53,7 @@ bash how-to-install.txt
 
 ## 🐳 Docker Support (X11 and Wayland compatible)
 
-You can now run this app in a **self-contained Docker container** with GUI support.
+You can run this app in a **Docker container with GUI**.
 
 ### 🔧 Build the Image
 
@@ -61,31 +67,29 @@ docker build -t mso5000_liveview .
 ./run.sh
 ```
 
-The script automatically detects whether you're running **X11 or Wayland**, sets up the display bridge, and launches the GUI.
+The script auto-detects X11 or Wayland and sets up display bridging.
 
 ### 📁 Where Are My CSV Files?
 
-All exported CSV files are saved to:
+All exported CSV files go to:
 
 ```bash
 ~/oszi_csv/
 ```
 
-This folder is automatically mapped into the container and persists even after exit.
-
-> Requires: Docker, X11 or Wayland+XWayland, and VNC + SCPI enabled on the oscilloscope.
+This folder is mounted into the container.
 
 ---
 
 ## 📦 Python Requirements
 
-Listed in `requirements.txt`, install with:
+Install with:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Dependencies include:
+Required packages:
 - `pillow`, `numpy`, `pyvisa`, `pyvisa-py`
 - `requests`, `vncdotool`, `psutil`, `zeroconf`
 
@@ -93,30 +97,30 @@ Dependencies include:
 
 ## 🖧 Prerequisites
 
-- Your Rigol MSO5000 is on the **same local network** as your PC
-- **VNC** is enabled on the oscilloscope
-- **SCPI over TCP/IP** is working
-- You know the IP address of the scope
+- Rigol MSO5000 on **same local network**
+- **VNC enabled** on the oscilloscope
+- **SCPI over TCP/IP enabled**
+- Know the IP address of the scope
 
 ---
 
 ## 🚀 How to Use
 
-After launching the app:
+Launch the app:
 
 ```bash
 python3 main.py
 ```
 
-You’ll be prompted to enter the IP address of the oscilloscope. The GUI will show:
+Enter the oscilloscope’s IP when prompted. GUI includes:
 
-- Live screenshot (top)
-- Tabbed interface:
-  - **System Info**
-  - **Channel Data**
-  - **Debug Log**
-  - **Licenses**
-  - **Long-Time Measurement** (with CSV export)
+- 🔍 Live screenshot
+- 📂 Tabbed interface:
+  - System Info
+  - Channel Data
+  - Debug Log
+  - Licenses
+  - Long-Time Measurement (with CSV export)
 
 ---
 
@@ -128,10 +132,11 @@ MSO5000_liveview/
 ├── run.sh
 ├── .dockerignore
 ├── main.py
-├── rigol_vnc_liveview8.py
+├── build_version.py
+├── version.py          ← auto-generated
 ├── requirements.txt
 ├── how-to-install.txt
-├── oszi_csv/              ← (inside Docker mapped to ~/oszi_data/)
+├── oszi_csv/           ← output folder for logs
 ├── docs/
 │   └── screenshot.png
 ```
@@ -140,11 +145,11 @@ MSO5000_liveview/
 
 ## ⚠️ Firmware Notice
 
-This tool is optimized for **hacked firmware** (unofficial). Adjustments have been made to:
+This tool targets **hacked firmware** (unofficial). Compatibility improvements include:
 
-- Skip unstable SCPI queries
-- Avoid timeouts and hangs
-- Maintain compatibility with patched behavior
+- Skipping problematic SCPI commands
+- Handling timeouts gracefully
+- Adapting to patched behavior
 
 ---
 
@@ -152,3 +157,9 @@ This tool is optimized for **hacked firmware** (unofficial). Adjustments have be
 
 This project is for **educational and personal use only**.  
 Not affiliated with Rigol Technologies.
+
+---
+
+## 📖 Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for full version history.
