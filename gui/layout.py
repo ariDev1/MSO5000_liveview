@@ -9,11 +9,21 @@ DARK_TAB_BG = "#2d2d2d"
 def setup_styles():
     style = ttk.Style()
     style.theme_use('clam')
+    style.layout("TButton", [('Button.focus', {'children': [('Button.padding', {'children': [('Button.label', {'sticky': 'nswe'})]})]})])
     style.configure('TNotebook', background=DARK_BG, borderwidth=0, relief='flat')
     style.configure('TNotebook.Tab', background=DARK_TAB_BG, foreground=DARK_FG,
                     padding=[10, 5], borderwidth=0)
     style.map('TNotebook.Tab', background=[('selected', DARK_SELECT)])
-    style.configure('TFrame', background=DARK_BG, borderwidth=0)
+    style.configure('TFrame', background=DARK_BG)
+    
+    # New: Consistent dark styling
+    style.configure('TLabel', background=DARK_BG, foreground=DARK_FG)
+    style.configure('TButton', background=DARK_TAB_BG, foreground=DARK_FG, focuscolor=DARK_TAB_BG)
+    style.map('TButton',
+              background=[('active', DARK_SELECT)],
+              foreground=[('active', '#ffffff')])
+    style.configure('TLabelframe', background=DARK_BG, foreground=DARK_FG)
+    style.configure('TLabelframe.Label', background=DARK_BG, foreground=DARK_FG)
 
 def create_main_gui(root, ip):
     root.title(f"MSO5000 Live Monitor - {ip}")

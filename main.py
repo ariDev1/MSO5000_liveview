@@ -30,43 +30,12 @@ def main():
     start_screenshot_thread()
 
     tabs = create_main_gui(root, ip)
-
-    # === Long-Time Measurement Tab ===
-    logmeas_frame = tabs["Long-Time Measurement"]
-    logmeas_frame.columnconfigure(0, weight=1)
-    logmeas_frame.columnconfigure(1, weight=1)
-    # ⚠️ Performance Tip Label
-    tip_text = (
-        "⚠️ Performance Tip:\n"
-        "• Logging more than 2 channels with <2s interval can cause delays.\n"
-        "• Use ≥2s for 3–4 channels. Use ≥1s for 1–2 channels.\n"
-        "• Disable Vavg/Vrms for faster logging.\n"
-        "• Ideal for long-term measurements (e.g. 1–24h)."
-    )
-    ttk.Label(
-        logmeas_frame, text=tip_text, justify="left",
-        background="#1a1a1a", foreground="#cccccc", wraplength=600
-    ).grid(row=99, column=0, columnspan=2, padx=10, pady=10, sticky="w")
-
-    ttk.Label(logmeas_frame, text="Channels (e.g., 1,2,MATH1):", background="#1a1a1a", foreground="#ffffff").grid(row=0, column=0, sticky="e", padx=10, pady=5)
-    entry_channels = ttk.Entry(logmeas_frame, width=20)
-    entry_channels.grid(row=0, column=1, sticky="w", padx=10, pady=5)
-
-    ttk.Label(logmeas_frame, text="Duration (hours):", background="#1a1a1a", foreground="#ffffff").grid(row=1, column=0, sticky="e", padx=10, pady=5)
-    entry_duration = ttk.Entry(logmeas_frame, width=20)
-    entry_duration.grid(row=1, column=1, sticky="w", padx=10, pady=5)
-
-    ttk.Label(logmeas_frame, text="Interval (seconds):", background="#1a1a1a", foreground="#ffffff").grid(row=2, column=0, sticky="e", padx=10, pady=5)
-    entry_interval = ttk.Entry(logmeas_frame, width=20)
-    entry_interval.grid(row=2, column=1, sticky="w", padx=10, pady=5)
-
-    vavg_var = tk.BooleanVar(value=False)
-    vrms_var = tk.BooleanVar(value=False)
-    ttk.Checkbutton(logmeas_frame, text="Include Vavg", variable=vavg_var).grid(row=3, column=0, sticky="e", padx=10, pady=5)
-    ttk.Checkbutton(logmeas_frame, text="Include Vrms", variable=vrms_var).grid(row=3, column=1, sticky="w", padx=10, pady=5)
-
-    log_status = tk.StringVar(value="Idle")
-    ttk.Label(logmeas_frame, textvariable=log_status, background="#1a1a1a", foreground="#ffffff").grid(row=4, column=0, columnspan=2, sticky="w", padx=10, pady=5)
+    def update_status(message):
+        log_status.set(message)
+        if "finished" in message.lower() or "error" in message.lower():
+            start_button.config(state="normal")
+            pause_button.config(state="disabled")
+            stop_button.config(state="disabled")
 
     def start_log_session():
         try:
@@ -91,21 +60,88 @@ def main():
             log_status.set("❌ No scope connection")
             return
 
+        start_button.config(state="disabled")
+        pause_button.config(state="normal")
+        stop_button.config(state="normal")
+        pause_button.config(text="⏸ Pause")
+
         start_logging(None, ip, ch_list, dur, inter,
-                      vavg_var.get(), vrms_var.get(), log_status.set)
+                      vavg_var.get(), vrms_var.get(), update_status)
         log_status.set("🔴 Logging started")
 
     def toggle_pause():
         paused = pause_resume()
-        log_status.set("⏸ Paused" if paused else "▶ Resumed")
+        if paused:
+            log_status.set("⏸ Paused")
+            pause_button.config(text="▶ Resume")
+        else:
+            log_status.set("▶ Resumed")
+            pause_button.config(text="⏸ Pause")
 
     def stop_log_session():
         stop_logging()
         log_status.set("🛑 Stop requested")
+        start_button.config(state="normal")
+        pause_button.config(state="disabled")
+        stop_button.config(state="disabled")
 
-    ttk.Button(logmeas_frame, text="▶ Start Logging", command=start_log_session).grid(row=5, column=0, sticky="e", padx=10, pady=10)
-    ttk.Button(logmeas_frame, text="Pause", command=toggle_pause).grid(row=5, column=1, sticky="w", padx=10, pady=10)
-    ttk.Button(logmeas_frame, text="⏹ Stop", command=stop_log_session).grid(row=6, column=0, columnspan=2, pady=10)
+    # === Long-Time Measurement Tab ===
+    logmeas_frame = tabs["Long-Time Measurement"]
+    logmeas_frame.columnconfigure(0, weight=1)
+    logmeas_frame.columnconfigure(1, weight=1)
+
+    # --- Measurement Settings Group ---
+    meas_frame = ttk.LabelFrame(logmeas_frame, text="Measurement Settings")
+    meas_frame.grid(row=0, column=0, columnspan=2, padx=10, pady=10, sticky="ew")
+
+    ttk.Label(meas_frame, text="Channels (e.g., 1,2,MATH1):", background="#1a1a1a", foreground="#ffffff").grid(row=0, column=0, sticky="e", padx=5, pady=5)
+    entry_channels = ttk.Entry(meas_frame, width=20)
+    entry_channels.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+
+    ttk.Label(meas_frame, text="Duration (hours):", background="#1a1a1a", foreground="#ffffff").grid(row=1, column=0, sticky="e", padx=5, pady=5)
+    entry_duration = ttk.Entry(meas_frame, width=20)
+    entry_duration.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+
+    ttk.Label(meas_frame, text="Interval (seconds):", background="#1a1a1a", foreground="#ffffff").grid(row=2, column=0, sticky="e", padx=5, pady=5)
+    entry_interval = ttk.Entry(meas_frame, width=20)
+    entry_interval.grid(row=2, column=1, sticky="w", padx=5, pady=5)
+
+    vavg_var = tk.BooleanVar(value=False)
+    vrms_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(meas_frame, text="Include Vavg", variable=vavg_var).grid(row=3, column=0, sticky="w", padx=5, pady=5)
+    ttk.Checkbutton(meas_frame, text="Include Vrms", variable=vrms_var).grid(row=3, column=1, sticky="w", padx=5, pady=5)
+
+    # --- Logging Status ---
+    log_status = tk.StringVar(value="Idle")
+    ttk.Label(logmeas_frame, textvariable=log_status, background="#1a1a1a", foreground="#ffffff").grid(
+        row=1, column=0, columnspan=2, sticky="w", padx=10, pady=5
+    )
+    # --- Button Controls ---
+    button_frame = ttk.Frame(logmeas_frame)
+    button_frame.grid(row=2, column=0, columnspan=2, pady=10)
+
+    start_button = ttk.Button(button_frame, text="▶ Start Logging", command=start_log_session)
+    start_button.pack(side="left", padx=10)
+
+    pause_button = ttk.Button(button_frame, text="⏸ Pause", command=toggle_pause)
+    pause_button.pack(side="left", padx=10)
+
+    stop_button = ttk.Button(button_frame, text="⏹ Stop", command=stop_log_session)
+    stop_button.pack(side="left", padx=10)
+
+    # --- Performance Tips ---
+    tip_frame = ttk.LabelFrame(logmeas_frame, text="⚠️ Performance Tips")
+    tip_frame.grid(row=3, column=0, columnspan=2, padx=10, pady=10, sticky="ew")
+
+    tip_text = (
+        "• Logging more than 2 channels with <2s interval can cause delays.\n"
+        "• Use ≥2s for 3–4 channels. Use ≥1s for 1–2 channels.\n"
+        "• Disable Vavg/Vrms for faster logging.\n"
+        "• Ideal for long-term measurements (e.g. 1–24h)."
+    )
+
+    ttk.Label(tip_frame, text=tip_text, justify="left",
+              background="#1a1a1a", foreground="#cccccc", wraplength=700).pack(anchor="w", padx=10, pady=5)
 
     # === Licenses Tab ===
     license_frame = tabs["Licenses"]
@@ -134,7 +170,15 @@ def main():
              bg="#1a1a1a", fg="#ffffff", wraplength=1100).pack(fill="both", expand=True, padx=10, pady=10)
 
     def update_system_info():
-        system_var.set(scpi_data["system_info"])
+        from version import APP_NAME, VERSION, GIT_COMMIT, BUILD_DATE, AUTHOR, PROJECT_URL
+        meta_info = (
+            f"\n\n🔧 {APP_NAME} {VERSION}\n"
+            f"Build Date: {BUILD_DATE}\n"
+            f"Git Commit: {GIT_COMMIT}\n"
+            f"Maintainer: {AUTHOR}\n"
+            f"Project: {PROJECT_URL}\n"
+        )
+        system_var.set(scpi_data["system_info"] + meta_info)
         root.after(2000, update_system_info)
     update_system_info()
 
