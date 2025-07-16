@@ -158,6 +158,8 @@ This tool targets **hacked firmware** (unofficial). Compatibility improvements i
 This project is for **educational and personal use only**.  
 Not affiliated with Rigol Technologies.
 
+Look for [COMPARISON.md](COMPARISON.md)?
+
 ---
 
 ## 📖 Changelog

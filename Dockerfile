@@ -1,9 +1,12 @@
 # Dockerfile
 FROM python:3.12-slim
-
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
 # System packages for Tkinter + VNC support
 RUN apt update && apt install -y \
     python3-tk \
+    fonts-dejavu \
+    fonts-noto-color-emoji \
     libx11-6 \
     libx11-xcb1 \
     libxcb1 \
