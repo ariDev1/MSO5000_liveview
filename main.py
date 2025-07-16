@@ -1,3 +1,9 @@
+import os
+os.system("python3 build_version.py")
+
+import sys
+from version import APP_NAME, VERSION, GIT_COMMIT, BUILD_DATE
+
 import tkinter as tk
 from tkinter import ttk
 from gui.layout import create_main_gui
@@ -12,6 +18,12 @@ from logger.longtime import start_logging, pause_resume, stop_logging
 from app.app_state import is_logging_active
 
 def main():
+    if "--version" in sys.argv:
+        print(f"{APP_NAME} {VERSION}")
+        print(f"Git Commit: {GIT_COMMIT}")
+        print(f"Build Date: {BUILD_DATE}")
+        sys.exit(0)
+
     ip = input("Enter RIGOL MSO5000 IP address: ").strip()
     if not ip:
         print("❌ No IP provided. Exiting.")
@@ -172,7 +184,7 @@ def main():
     def update_system_info():
         from version import APP_NAME, VERSION, GIT_COMMIT, BUILD_DATE, AUTHOR, PROJECT_URL
         meta_info = (
-            f"\n\n🔧 {APP_NAME} {VERSION}\n"
+            f"\n\n{APP_NAME} {VERSION}\n"
             f"Build Date: {BUILD_DATE}\n"
             f"Git Commit: {GIT_COMMIT}\n"
             f"Maintainer: {AUTHOR}\n"
