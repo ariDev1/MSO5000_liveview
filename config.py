@@ -8,8 +8,8 @@ BLACKLISTED_COMMANDS = [
     ":SYSTem:OPTions?",
     ":TIMebase:HREFerence?",
     ":ACQuire:MODE?",
-    ":ACQuire:TYPE?",
-    ":TRIGger:HOLDoff?",
+    #":ACQuire:TYPE?",
+    #":TRIGger:HOLDoff?",
     ":WAVeform:YINCrement?",
     ":WAVeform:YORigin?",
     ":WAVeform:YREFerence?"

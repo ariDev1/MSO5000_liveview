@@ -8,7 +8,13 @@ debug_widget = None
 
 def log_debug(message):
     timestamp = time.strftime("%H:%M:%S")
-    debug_log.append(f"[{timestamp}] {message}")
+    full_msg = f"[{timestamp}] {message}"
+    debug_log.append(full_msg)
+
+    # Print to console
+    print(full_msg)
+
+    # Show in GUI
     if debug_widget and not debug_paused:
         debug_widget.config(state=tk.NORMAL)
         debug_widget.delete(1.0, tk.END)
