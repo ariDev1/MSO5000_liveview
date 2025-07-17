@@ -1,4 +1,4 @@
-sudo apt install python3-tk
+sudo apt install python3-tk python3.12-venv
 git clone https://github.com/ariDev1/MSO5000_liveview.git
 cd MSO5000_liveview/
 python3 -m venv venv

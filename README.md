@@ -31,7 +31,7 @@ This tool provides a live view and SCPI-based data extraction from a **Rigol MSO
 ### 📦 Native Python Setup
 
 ```bash
-sudo apt install python3-tk
+sudo apt install python3-tk python3.12-venv
 
 git clone https://github.com/ariDev1/MSO5000_liveview.git
 cd MSO5000_liveview/
@@ -83,7 +83,12 @@ This folder is mounted into the container.
 
 ## 📦 Python Requirements
 
-Install with:
+Create a virtual environment first:
+
+```bash
+python3 -m venv venv
+```
+Then install with:
 
 ```bash
 pip install -r requirements.txt
