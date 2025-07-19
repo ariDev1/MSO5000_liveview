@@ -14,13 +14,19 @@ def log_debug(message):
     # Print to console
     print(full_msg)
 
-    # Show in GUI
+    # Safe GUI update (defer to main thread)
     if debug_widget and not debug_paused:
-        debug_widget.config(state=tk.NORMAL)
-        debug_widget.delete(1.0, tk.END)
-        debug_widget.insert(tk.END, "\n".join(list(debug_log)[-500:]))
-        debug_widget.config(state=tk.DISABLED)
-        debug_widget.see(tk.END)
+        def update_gui():
+            try:
+                debug_widget.config(state=tk.NORMAL)
+                debug_widget.delete(1.0, tk.END)
+                debug_widget.insert(tk.END, "\n".join(list(debug_log)[-500:]))
+                debug_widget.config(state=tk.DISABLED)
+                debug_widget.see(tk.END)
+            except Exception as e:
+                print(f"[log_debug GUI error] {e}")
+
+        debug_widget.after(0, update_gui)
 
 def attach_debug_widget(widget):
     global debug_widget

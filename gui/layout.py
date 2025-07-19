@@ -39,7 +39,7 @@ def create_main_gui(root, ip):
 
     tabs = {}
 
-    for tab_name in ["System Info", "Channel Data", "Debug Log", "Licenses", "Long-Time Measurement"]:
+    for tab_name in ["System Info", "Channel Data", "Debug Log", "Licenses", "Long-Time Measurement", "SCPI"]:
         frame = ttk.Frame(notebook)
         notebook.add(frame, text=tab_name)
         tabs[tab_name] = frame

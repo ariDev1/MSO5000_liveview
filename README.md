@@ -1,7 +1,7 @@
 # 🧠 RIGOL MSO5000 Live Monitor (Hacked FW Compatible)
 
-> **Current Version:** v0.9.3  
-> 📦 See [Release Notes](https://github.com/ariDev1/MSO5000_liveview/releases/tag/v0.9.3)
+> **Current Version:** v0.9.4  
+> 📦 See [Release Notes](https://github.com/ariDev1/MSO5000_liveview/releases/tag/v0.9.4)
 
 This tool provides a live view and SCPI-based data extraction from a **Rigol MSO5000** oscilloscope with **hacked firmware**, using VNC for screenshots and VISA (SCPI) for waveform data.
 
@@ -21,6 +21,10 @@ This tool provides a live view and SCPI-based data extraction from a **Rigol MSO
   ↪️ Timestamped rows at user-defined intervals  
   ↪️ Performance tips built into the UI
 - 🐞 Scrollable debug log
+- ⚙️ Manual SCPI tab with command input and response log  
+  ↪️ Command list from `commands.txt` (click or double-click to load)  
+  ↪️ Error-safe querying with response log  
+  ↪️ Full debug trace included
 - 🌙 Dark mode GUI with resizable window and tabs
 - 🐳 **Docker support** for easy deployment (X11 + Wayland)
 

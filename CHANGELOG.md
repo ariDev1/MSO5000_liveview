@@ -4,6 +4,29 @@ All notable changes to this project are documented here.
 
 ---
 
+## v0.9.4 (2025-07-19)
+
+- 🧪 **New SCPI Tab**
+  - Added a dedicated SCPI tab with manual command input
+  - Response output area with scrollback and timestamped logs
+  - Optional right-side command list (`scpi_command_list.txt`) lets users select known SCPI commands
+  - Double-click or “➡ Insert into Input” button to load from list
+  - Handles I/O errors safely and logs all SCPI activity
+
+- 🧱 **UI Improvements**
+  - Fixed vertical overflow in SCPI tab — output box no longer hides buttons
+  - Sidebar list resizes correctly with window
+
+- 🐞 **Debug Log Integration**
+  - All SCPI commands and errors now appear in the Debug tab
+  - Uses `log_debug()` for traceability
+
+- 🧼 Minor cleanup:
+  - Removed layout duplication from button handlers
+  - Improved resilience against missing files (e.g., `scpi_command_list.txt`)
+
+---
+
 ## v0.9.3 (2025-07-17)
 
 - 🎨 **UI Consistency Improvements**
