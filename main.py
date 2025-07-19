@@ -100,25 +100,36 @@ def main():
     logmeas_frame.columnconfigure(1, weight=1)
 
     # --- Measurement Settings Group ---
-    meas_frame = ttk.LabelFrame(logmeas_frame, text="Measurement Settings")
-    meas_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+    meas_frame = ttk.LabelFrame(logmeas_frame, text="Measurement Settings", width=320)
+    meas_frame.grid(row=0, column=0, padx=10, pady=10, sticky="ns")
+    meas_frame.grid_propagate(False)
 
-    ttk.Label(meas_frame, text="Channels (e.g., 1,2,MATH1):", background="#1a1a1a", foreground="#ffffff").grid(row=0, column=0, sticky="e", padx=5, pady=5)
-    entry_channels = ttk.Entry(meas_frame, width=20)
-    entry_channels.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+    inner_left = ttk.Frame(meas_frame)
+    inner_left.pack(fill="both", expand=True, padx=5, pady=5)
 
-    ttk.Label(meas_frame, text="Duration (hours):", background="#1a1a1a", foreground="#ffffff").grid(row=1, column=0, sticky="e", padx=5, pady=5)
-    entry_duration = ttk.Entry(meas_frame, width=20)
-    entry_duration.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+    ttk.Label(inner_left, text="Channels (e.g., 1,2,MATH1):", background="#1a1a1a", foreground="#ffffff").pack(anchor="w", pady=2)
+    entry_channels = ttk.Entry(inner_left, width=20)
+    entry_channels.pack(fill="x", pady=2)
 
-    ttk.Label(meas_frame, text="Interval (seconds):", background="#1a1a1a", foreground="#ffffff").grid(row=2, column=0, sticky="e", padx=5, pady=5)
-    entry_interval = ttk.Entry(meas_frame, width=20)
-    entry_interval.grid(row=2, column=1, sticky="w", padx=5, pady=5)
+    ttk.Label(inner_left, text="Duration (hours):", background="#1a1a1a", foreground="#ffffff").pack(anchor="w", pady=2)
+    entry_duration = ttk.Entry(inner_left, width=20)
+    entry_duration.pack(fill="x", pady=2)
+
+    ttk.Label(inner_left, text="Interval (seconds):", background="#1a1a1a", foreground="#ffffff").pack(anchor="w", pady=2)
+    entry_interval = ttk.Entry(inner_left, width=20)
+    entry_interval.pack(fill="x", pady=2)
 
     vavg_var = tk.BooleanVar(value=False)
     vrms_var = tk.BooleanVar(value=False)
-    ttk.Checkbutton(meas_frame, text="Include Vavg", variable=vavg_var).grid(row=3, column=0, sticky="w", padx=5, pady=5)
-    ttk.Checkbutton(meas_frame, text="Include Vrms", variable=vrms_var).grid(row=3, column=1, sticky="w", padx=5, pady=5)
+    #ttk.Checkbutton(inner_left, text="Include Vavg", variable=vavg_var).pack(anchor="w", pady=2)
+    #ttk.Checkbutton(inner_left, text="Include Vrms", variable=vrms_var).pack(anchor="w", pady=2)
+    tk.Checkbutton(inner_left, text="Include Vavg", variable=vavg_var,
+               bg="#2d2d2d", fg="#ffffff", activebackground="#333333",
+               selectcolor="#555555", indicatoron=False, relief="raised").pack(fill="x", pady=2)
+
+    tk.Checkbutton(inner_left, text="Include Vrms", variable=vrms_var,
+                   bg="#2d2d2d", fg="#ffffff", activebackground="#333333",
+                   selectcolor="#555555", indicatoron=False, relief="raised").pack(fill="x", pady=2)
 
     # --- Logging Status Output (scrollable like other tabs)
     status_frame = ttk.LabelFrame(logmeas_frame, text="Logging Status")
@@ -144,14 +155,17 @@ def main():
     btn_frame = ttk.Frame(logmeas_frame)
     btn_frame.grid(row=1, column=1, sticky="ne", padx=10, pady=10)
 
+    btn_frame.grid_columnconfigure((0, 1, 2), weight=1)
+
     start_button = ttk.Button(btn_frame, text="▶ Start Logging", command=start_log_session)
-    start_button.pack(fill="x", pady=2)
+    start_button.grid(row=0, column=0, padx=5)
 
     pause_button = ttk.Button(btn_frame, text="⏸ Pause", command=toggle_pause)
-    pause_button.pack(fill="x", pady=2)
+    pause_button.grid(row=0, column=1, padx=5)
 
     stop_button = ttk.Button(btn_frame, text="⏹ Stop", command=stop_log_session)
-    stop_button.pack(fill="x", pady=2)
+    stop_button.grid(row=0, column=2, padx=5)
+
 
     def update_log_buttons(state="idle", paused=False):
         if state == "idle":
@@ -205,6 +219,7 @@ def main():
 
     text_system = tk.Text(system_frame, font=("Courier", 10), bg="#1a1a1a", fg="#ffffff",
                           insertbackground="#ffffff", selectbackground="#333333", wrap="none")
+    
     text_system.pack(side="left", fill="both", expand=True, padx=5, pady=5)
 
     scrollbar_sys = ttk.Scrollbar(system_frame, orient="vertical", command=text_system.yview)

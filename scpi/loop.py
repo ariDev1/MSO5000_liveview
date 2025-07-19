@@ -112,14 +112,14 @@ def start_scpi_loop(ip):
                         f"{'Timebase'       :<18}: {tbase_fmt:<12}    {'Sample Rate'   :<18}: {srate_fmt}",
                         f"{'Trigger Status' :<18}: {trig:<12}    {'Trigger Pos'   :<18}: {trig_pos_fmt}",
                         f"{'Trigger Holdoff':<18}: {trig_hold_fmt}",
-                        "-" * 60,
-                        f"{'Acquisition'    :<20} {'Display'       :<20} {'Counter'        :<20}",
-                        f"{'Mode'           :<18}: {acq_type:<10}    {'Brightness'    :<18}: {brightness:<6}    {'Mode'           :<18}: {counter_mode}",
+                        "-" * 90,
+                        #f"{'Acquisition'    :<20} {'Display'       :<20} {'Counter'        :<20}",
+                        f"{'Mode'           :<18}: {acq_type:<10}    {'Brightness'    :<18}: {brightness:<8}    {'Mode'           :<18}: {counter_mode}",
                         f"{'Interleave'     :<18}: {interleave:<10}    {'Grid'          :<18}: {grid:<8}    {'Source'         :<18}: {counter_src}",
                         *la_lines,
-                        "-" * 60,
+                        "-" * 90,
                         f"{'Measurement'}",
-                        f"{'Mode'           :<18}: {meas_mode:<10}    {'Type'          :<18}: {meas_type:<10}    {'Stats'          :<18}: {meas_stats}"
+                        f"{'Mode'           :<18}: {meas_mode:<10}    {'Type'          :<18}: {meas_type:<8}    {'Stats'          :<18}: {meas_stats}"
                     ])
 
                 scpi_data["trigger_status"] = trig
