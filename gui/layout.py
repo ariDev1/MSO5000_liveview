@@ -25,7 +25,8 @@ def setup_styles():
     style.configure('TLabelframe', background=DARK_BG, foreground=DARK_FG)
     style.configure('TLabelframe.Label', background=DARK_BG, foreground=DARK_FG)
 
-def create_main_gui(root, ip):
+def create_main_gui(container, ip):
+    root = container.winfo_toplevel()  # ✅ define root from container
     root.title(f"MSO5000 Live Monitor - {ip}")
     root.geometry("1200x800")
     root.minsize(800, 600)
@@ -34,7 +35,7 @@ def create_main_gui(root, ip):
     setup_styles()
 
     # Tabs
-    notebook = ttk.Notebook(root)
+    notebook = ttk.Notebook(container)
     notebook.pack(fill="both", expand=True, padx=10, pady=5)
 
     tabs = {}
@@ -44,4 +45,4 @@ def create_main_gui(root, ip):
         notebook.add(frame, text=tab_name)
         tabs[tab_name] = frame
 
-    return tabs
+    return tabs, notebook

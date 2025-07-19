@@ -25,8 +25,10 @@ def log_debug(message):
                 debug_widget.see(tk.END)
             except Exception as e:
                 print(f"[log_debug GUI error] {e}")
-
-        debug_widget.after(0, update_gui)
+        try:
+            debug_widget.after(0, update_gui)
+        except RuntimeError:
+            pass  # Main loop probably already exited
 
 def attach_debug_widget(widget):
     global debug_widget

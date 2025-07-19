@@ -34,14 +34,38 @@ def main():
 
     root = tk.Tk()
 
-    # Screenshot tab image
-    img_label = tk.Label(root, bg="#1a1a1a")
-    img_label.pack(pady=5)
+    # Create main vertical container
+    main_frame = tk.Frame(root, bg="#1a1a1a")
+    main_frame.pack(fill="both", expand=True)
+
+    # Toggle button to hide/show screenshot
+    toggle_btn = ttk.Button(main_frame, text="🖼️ Hide", style="TButton")
+    toggle_btn.pack(anchor="ne", padx=10, pady=(5, 0))
+
+    # Toggle screenshot visibility
+    img_visible = [True]
+    image_frame = tk.Frame(main_frame, bg="#1a1a1a")
+    img_label = tk.Label(image_frame, bg="#1a1a1a")
+    img_label.pack()
+
+    tabs, notebook = create_main_gui(main_frame, ip)
+    image_frame.pack(before=notebook, fill="x", pady=5)
+
     attach_image_label(img_label)
     update_image(root)
     start_screenshot_thread()
 
-    tabs = create_main_gui(root, ip)
+    def toggle_image():
+        if img_visible[0]:
+            image_frame.pack_forget()
+            toggle_btn.config(text="🖼️ Show")
+        else:
+            image_frame.pack(before=notebook, fill="x", pady=5)
+            toggle_btn.config(text="🖼️ Hide")
+        img_visible[0] = not img_visible[0]
+
+    toggle_btn.config(command=toggle_image)
+
     def update_status(message):
         update_log_status(message)
         if "finished" in message.lower() or "error" in message.lower():
