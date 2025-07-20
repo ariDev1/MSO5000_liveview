@@ -130,6 +130,7 @@ Enter the oscilloscope’s IP when prompted. GUI includes:
   - Debug Log
   - Licenses
   - Long-Time Measurement (with CSV export)
+  - SCPI
 
 ---
 
