@@ -23,6 +23,13 @@ def is_session_log(path):
     except Exception:
         return False
 
+def is_power_log(path):
+    try:
+        df = pd.read_csv(path, nrows=1)
+        return "P (W)" in df.columns and "S (VA)" in df.columns and "Q (VAR)" in df.columns
+    except Exception:
+        return False
+
 def plot_waveform_csv(path, smooth=False, window=5, spline=False):
     try:
         df = pd.read_csv(path, comment="#")
@@ -106,6 +113,44 @@ def plot_session_log(path, smooth=False, window=5, spline=False):
     plt.tight_layout()
     plt.show()
 
+def plot_power_log(path, smooth=False, window=5, spline=False):
+    try:
+        df = pd.read_csv(path, parse_dates=["Timestamp"])
+        metrics = ["P (W)", "S (VA)", "Q (VAR)", "PF", "Vrms (V)", "Irms (A)"]
+        df = df[["Timestamp"] + [m for m in metrics if m in df.columns]]
+    except Exception as e:
+        print(f"❌ Error reading power log: {e}")
+        return
+
+    timestamp_num = df["Timestamp"].astype("int64") // 10**9
+
+    plt.figure(figsize=(14, 7))
+    for col in df.columns[1:]:
+        raw = df[col]
+        label = f"{col} (raw)"
+        plt.plot(df["Timestamp"], raw, label=label, alpha=0.85)
+
+        if smooth or spline:
+            y = raw.rolling(window=window, center=True).mean() if smooth else raw
+            mask = ~np.isnan(y)
+
+            if spline and sum(mask) > 3:
+                x_smooth = np.linspace(timestamp_num[mask].min(), timestamp_num[mask].max(), 300)
+                spline_fit = make_interp_spline(timestamp_num[mask], y[mask], k=3)
+                y_smooth = spline_fit(x_smooth)
+                time_smooth = pd.to_datetime(x_smooth, unit="s")
+                plt.plot(time_smooth, y_smooth, linestyle="dotted", label=f"{col} (spline)")
+            else:
+                plt.plot(df["Timestamp"], y, linestyle="dotted", label=f"{col} (smooth)")
+
+    plt.title("Power Analyzer Log")
+    plt.xlabel("Time")
+    plt.ylabel("Power / Voltage / Current")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
 def main():
     parser = argparse.ArgumentParser(
         description="""Plot waveform or session log CSV files.
@@ -138,6 +183,8 @@ Examples:
         plot_waveform_csv(path, smooth=args.smooth, window=args.window, spline=args.spline)
     elif is_session_log(path):
         plot_session_log(path, smooth=args.smooth, window=args.window, spline=args.spline)
+    elif is_power_log(path):
+        plot_power_log(path, smooth=args.smooth, window=args.window, spline=args.spline)
     else:
         print("❌ Unknown or unsupported CSV format.")
 

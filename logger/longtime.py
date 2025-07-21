@@ -17,7 +17,7 @@ stop_flag = False
 
 from scpi.data import scpi_data
 
-def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled, vrms_enabled, status_callback):
+def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled, vrms_enabled, status_callback, current_scale=1.0):
     scope = connect_scope(ip)
     if not scope:
         status_callback("❌ Scope not ready")
@@ -73,13 +73,30 @@ def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled,
                     row = [datetime.now().isoformat()]
                     for ch in channels:
                         vpp, vavg, vrms = get_channel_waveform_data(scope, ch, use_simple_calc=True)
-                        row.append(f"{vpp:.4f}" if vpp is not None else "")
-                        if vavg_enabled:
-                            row.append(f"{vavg:.4f}" if vavg is not None else "")
-                        if vrms_enabled:
-                            row.append(f"{vrms:.4f}" if vrms is not None else "")
-                    writer.writerow(row)
+                        chname = f"CH{ch}" if isinstance(ch, int) else ch
+                        log_debug(f"{chname} ➜ Vpp={vpp:.3f}  Vavg={vavg:.3f}  Vrms={vrms:.3f}")
+                        
+                        try:
+                            chnum = str(ch).replace("CH", "").strip()
+                            unit = safe_query(scope, f":CHAN{chnum}:UNIT?", default="VOLT").strip().upper()
+                            if unit == "AMP":
+                                scale = 1.0
+                                log_debug(f"⚙️ {chname} is in AMP — no scaling applied")
+                            else:
+                                scale = current_scale
+                                log_debug(f"⚙️ {chname} is in VOLT — applying scale {scale}")
+                        except Exception as e:
+                            log_debug(f"⚠️ Unit detection failed for {chname}: {e}")
+                            scale = current_scale
 
+                        row.append(f"{vpp * scale:.4f}" if vpp is not None else "")
+                        if vavg_enabled:
+                            row.append(f"{vavg * scale:.4f}" if vavg is not None else "")
+                        if vrms_enabled:
+                            row.append(f"{vrms * scale:.4f}" if vrms is not None else "")
+
+                    writer.writerow(row)
+                    log_debug(f"📈 Sample {i+1}/{total} complete")
                     if (i + 1) % 5 == 0 or i == total - 1:
                         status_callback(f"✅ Saved {i+1}/{total}")
 
@@ -92,6 +109,7 @@ def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled,
 
             log_debug("✅ Logging finished")
             status_callback("✅ Logging finished")
+            log_debug("✅ Long-time logging completed successfully")
 
         except Exception as e:
             log_debug(f"❌ Logging error: {e}")

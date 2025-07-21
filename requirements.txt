@@ -6,3 +6,5 @@ requests
 vncdotool
 psutil
 zeroconf
+Image
+matplotlib
