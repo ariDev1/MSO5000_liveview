@@ -4,6 +4,29 @@ All notable changes to this project are documented here.
 
 ---
 
+## v0.9.5 (2025-07-21)
+
+- ⚡ **Power Analyzer Upgrade**
+  - Now displays `Reference: CURR` or `Reference: VOLT` based on SCPI readout
+  - Reference source appears live in GUI beside channel selection
+  - Clean handling of `:POWer:QUALity:FREQreference?` with fallback if unavailable
+
+- 🖥️ **GUI Enhancements**
+  - Compact layout for Voltage/Current/Reference fields to support smaller screen widths
+  - Input fields now scale with cleaner spacing and shorter labels
+  - Adaptive GUI padding and right-aligned labels to maximize clarity
+
+- 📉 **Improved Plot Behavior**
+  - Live PQ plot now tracks trailing values cleanly even in auto-refresh mode
+  - Enhanced visibility of PF Angle vector
+
+- 🐞 **Fixes and Logging**
+  - Avoids SCPI spam and I/O errors from repeated FREQreference queries
+  - Debug log now shows Freq.Ref status clearly and only once at connect time
+  - Minor improvements to waveform data error handling
+
+---
+
 ## v0.9.4 (2025-07-19)
 
 - 🧪 **New SCPI Tab**
