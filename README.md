@@ -1,7 +1,7 @@
 # 🧠 RIGOL MSO5000 Live Monitor (Hacked FW Compatible)
 
-> **Current Version:** v0.9.4  
-> 📦 See [Release Notes](https://github.com/ariDev1/MSO5000_liveview/releases/tag/v0.9.4)
+> **Current Version:** v0.9.5  
+> 📦 See [Release Notes](https://github.com/ariDev1/MSO5000_liveview/releases/tag/v0.9.5)
 
 This tool provides a live view and SCPI-based data extraction from a **Rigol MSO5000** oscilloscope with **hacked firmware**, using VNC for screenshots and VISA (SCPI) for waveform data.
 
@@ -20,9 +20,15 @@ This tool provides a live view and SCPI-based data extraction from a **Rigol MSO
   ↪️ Saves all data to a single timestamped CSV  
   ↪️ Timestamped rows at user-defined intervals  
   ↪️ Performance tips built into the UI
+- 🧠 **Live Power Analyzer** with PQ chart and scaling  
+  ↪️ Real-time P/S/Q/PF/Vrms/Irms calculations  
+  ↪️ Probe scaling (shunt/clamp + unit conversion)  
+  ↪️ Display of PF angle and cumulative energy  
+  ↪️ Heatmap-style PQ trail with fading  
+  ↪️ Shows `Reference: CURRENT` or `VOLTAGE` from scope
 - 🐞 Scrollable debug log
 - ⚙️ Manual SCPI tab with command input and response log  
-  ↪️ Command list from `commands.txt` (click or double-click to load)  
+  ↪️ Command list from `scpi_command_list.txt` (click or double-click to load)  
   ↪️ Error-safe querying with response log  
   ↪️ Full debug trace included
 - 🌙 Dark mode GUI with resizable window and tabs
@@ -131,6 +137,7 @@ Enter the oscilloscope’s IP when prompted. GUI includes:
   - Licenses
   - Long-Time Measurement (with CSV export)
   - SCPI
+  - Power Analysis
 
 ---
 
@@ -167,8 +174,6 @@ This tool targets **hacked firmware** (unofficial). Compatibility improvements i
 
 This project is for **educational and personal use only**.  
 Not affiliated with Rigol Technologies.
-
-Look for [COMPARISON.md](COMPARISON.md)?
 
 ---
 
