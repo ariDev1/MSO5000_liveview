@@ -26,7 +26,7 @@ def setup_styles():
     style.configure('TLabelframe.Label', background=DARK_BG, foreground=DARK_FG)
 
 def create_main_gui(container, ip):
-    root = container.winfo_toplevel()  # ✅ define root from container
+    root = container.winfo_toplevel()
     root.title(f"MSO5000 Live Monitor - {ip}")
     root.geometry("1200x800")
     root.minsize(800, 600)
