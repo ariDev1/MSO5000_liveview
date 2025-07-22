@@ -180,3 +180,5 @@ Not affiliated with Rigol Technologies.
 ## 📖 Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for full version history.
+
+![REPO Card](docs/mso5000_repo_card.png)
