@@ -26,8 +26,8 @@ def attach_marquee(parent, file_path="marquee.txt", url=None, speed=2):
     canvas = tk.Canvas(parent, height=24, bg="#1a1a1a", highlightthickness=0)
     canvas.grid(row=0, column=0, columnspan=99, sticky="ew")  # stretch fully
 
-    text_id = canvas.create_text(0, 12, text=text, anchor="w", fill="#00ffcc",
-                                 font=("TkFixedFont", 11, "bold"))
+    text_id = canvas.create_text(0, 12, text=text, anchor="w", fill="#008066",
+                                 font=("TkFixedFont", 11, "normal"))
 
     def update_width(event=None):
         canvas.config(width=parent.winfo_width())
