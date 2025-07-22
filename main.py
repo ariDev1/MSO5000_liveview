@@ -17,8 +17,9 @@ from gui.image_display import attach_image_label, update_image, set_ip, start_sc
 from gui.scpi_console import setup_scpi_tab
 from gui.logging_controls import setup_logging_tab
 from gui.power_analysis import setup_power_analysis_tab
+from gui.marquee import attach_marquee
 
-from utils.debug import attach_debug_widget, log_debug
+from utils.debug import attach_debug_widget, start_debug_updater, log_debug
 from scpi.waveform import export_channel_csv
 from scpi.licenses import get_license_options
 from scpi.loop import start_scpi_loop
@@ -79,11 +80,29 @@ def main():
 
     #Top Row
     button_row = tk.Frame(main_frame, bg="#1a1a1a")
-    button_row.pack(anchor="ne", padx=10, pady=(5, 0))
-    toggle_btn = ttk.Button(button_row, text="🖼️ Hide", style="TButton")
-    toggle_btn.pack(side="left", padx=(0, 5))
-    shutdown_btn = ttk.Button(button_row, text="⏻ Shutdown", style="TButton", command=lambda: shutdown())
-    shutdown_btn.pack(side="left")
+    button_row.pack(fill="x", padx=10, pady=(5, 0))
+
+    # Two-column layout inside button_row
+    button_row.columnconfigure(0, weight=1)  # marquee expands
+    button_row.columnconfigure(1, weight=0)  # buttons stay fixed
+
+    # Frame for marquee (left side)
+    marquee_frame = tk.Frame(button_row, bg="#1a1a1a")
+    marquee_frame.grid(row=0, column=0, sticky="ew")
+
+    # Frame for buttons (right side)
+    button_frame = tk.Frame(button_row, bg="#1a1a1a")
+    button_frame.grid(row=0, column=1, sticky="e")
+
+    # Attach marquee to left subframe
+    marquee = attach_marquee(marquee_frame, file_path="marquee.txt", url="https://aether-research.institute/MSO5000/marquee.txt")
+
+    # Buttons to right subframe
+    toggle_btn = ttk.Button(button_frame, text="🖼️ Hide", style="TButton")
+    toggle_btn.pack(side="left", padx=(10, 5))
+
+    shutdown_btn = ttk.Button(button_frame, text="⏻ Shutdown", style="TButton", command=lambda: shutdown())
+    shutdown_btn.pack(side="left", padx=(0, 5))
 
     # Toggle screenshot visibility
     img_visible = [True]
@@ -184,6 +203,7 @@ def main():
     text_widget.configure(yscrollcommand=scrollbar.set)
     scrollbar.pack(side="right", fill="y")
     attach_debug_widget(text_widget)
+    start_debug_updater(root)
     log_debug("🔧 Debug log ready.")
 
     def shutdown():

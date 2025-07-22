@@ -18,6 +18,9 @@ stop_flag = False
 from scpi.data import scpi_data
 
 def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled, vrms_enabled, status_callback, current_scale=1.0):
+    if app_state.is_power_analysis_active:
+        status_callback("⚠️ Cannot start long-time logging during power analysis.")
+    return
     scope = connect_scope(ip)
     if not scope:
         status_callback("❌ Scope not ready")

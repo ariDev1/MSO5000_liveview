@@ -10,13 +10,15 @@ def log_debug(message):
     timestamp = time.strftime("%H:%M:%S")
     full_msg = f"[{timestamp}] {message}"
     debug_log.append(full_msg)
-
-    # Print to console
     print(full_msg)
 
-    # Safe GUI update (defer to main thread)
-    if debug_widget and not debug_paused:
-        def update_gui():
+def attach_debug_widget(widget):
+    global debug_widget
+    debug_widget = widget
+
+def start_debug_updater(root):
+    def update_gui():
+        if debug_widget and not debug_paused:
             try:
                 debug_widget.config(state=tk.NORMAL)
                 debug_widget.delete(1.0, tk.END)
@@ -25,11 +27,6 @@ def log_debug(message):
                 debug_widget.see(tk.END)
             except Exception as e:
                 print(f"[log_debug GUI error] {e}")
-        try:
-            debug_widget.after(0, update_gui)
-        except RuntimeError:
-            pass  # Main loop probably already exited
+        root.after(250, update_gui)  # update every 250ms
 
-def attach_debug_widget(widget):
-    global debug_widget
-    debug_widget = widget
+    root.after(250, update_gui)

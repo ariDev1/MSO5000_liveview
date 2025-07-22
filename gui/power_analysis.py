@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import ttk
 import numpy as np
 import matplotlib.pyplot as plt
+import app.app_state as app_state
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from scpi.interface import connect_scope, safe_query
@@ -12,6 +13,10 @@ from scpi.data import scpi_data
 from utils.debug import log_debug
 
 def setup_power_analysis_tab(tab_frame, ip, root):
+    if app_state.is_logging_active:
+        log_debug("⚠️ Cannot start power analysis during long-time logging.")
+        return
+    app_state.is_power_analysis_active = False
     power_csv_path = None
     shutdown_hook = lambda: None  # placeholder
 
@@ -375,6 +380,10 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         canvas.draw()
 
     def analyze_power():
+        if app_state.is_logging_active:
+            log_debug("⚠️ Cannot start power analysis during long-time logging")
+            return
+
         from scpi.interface import connect_scope, safe_query
         from scpi.waveform import compute_power_from_scope
         from utils.debug import log_debug
@@ -432,6 +441,8 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                     log_debug(f"🧭 Operating Point in Quadrant {quad}")
                 else:
                     log_debug("⚠️ Non-finite P/Q/PF — skipping log")
+            
+            app_state.is_power_analysis_active = True
 
             show_power_results(result)
 
@@ -476,6 +487,9 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
         if refresh_var.get():
             try:
+                if app_state.is_logging_active:
+                    log_debug("⚠️ Auto-refresh paused — logging in progress")
+                    return
                 analyze_power()
             except Exception as e:
                 from utils.debug import log_debug
@@ -487,6 +501,8 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
     def stop_auto_refresh():
         refresh_var.set(False)
+        app_state.is_power_analysis_active = False
+
         log_debug("🛑 Refresh stopped by shutdown")
 
     tab_frame._shutdown = stop_auto_refresh
