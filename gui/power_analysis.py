@@ -79,9 +79,17 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     btn_clamp.pack(side="left", padx=1)
 
     ttk.Label(probe_frame, text="Probe Value (Ω or A/V):").grid(row=0, column=2, sticky="e", padx=15)
-    ttk.Label(probe_frame, text="Tip: Use 0.01 for 10 mΩ shunt, or 1.0 if scope shows Amps directly",
-          foreground="#bbbbbb", background="#1a1a1a", wraplength=500).grid(
-          row=1, column=0, columnspan=6, sticky="w", padx=5, pady=(2, 8))
+    
+    ttk.Label(
+        probe_frame,
+        text=(
+            "Tip: Use 0.01 for 10mΩ shunt, or 1.0 if scope shows Amps directly. For better power accuracy, enable 20MHz BW limit on Channels it filters noise, stabilizes FFT phase and PF. Avoid >20MHz unless needed."
+        ),
+        foreground="#bbbbbb", background="#1a1a1a",
+        wraplength=720, font=("TkDefaultFont", 8)
+    ).grid(
+        row=1, column=0, columnspan=6, sticky="w", padx=5, pady=(2, 8)
+    )
 
     entry_probe_value = ttk.Entry(probe_frame, width=10)
     entry_probe_value.insert(0, "1.0")
@@ -127,16 +135,36 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     control_row.grid(row=2, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 10))
     control_row.columnconfigure((0, 1, 2, 3, 4, 5), weight=1)
 
-    tk.Checkbutton(control_row, text="Remove DC Offset", variable=remove_dc_var,
-                   bg="#2d2d2d", fg="#ffffff", activebackground="#333333",
-                   selectcolor="#555555", indicatoron=False, relief="raised").grid(row=0, column=0, padx=3)
+    ttk.Checkbutton(control_row, text="Remove DC Offset", variable=remove_dc_var,
+                    style="DC.TCheckbutton").grid(row=0, column=0, padx=3)
 
-    ttk.Button(control_row, text="⚡ Analyze Power", command=lambda: analyze_power()).grid(row=0, column=1, padx=3)
-
-    refresh_chk = tk.Checkbutton(control_row, text="Auto Refresh", variable=refresh_var,
-                   bg="#2d2d2d", fg="#ffffff", activebackground="#333333",
-                   selectcolor="#555555", indicatoron=False, relief="raised")
+    refresh_chk = ttk.Checkbutton(control_row, text="Auto Refresh", variable=refresh_var,
+        style="Refresh.TCheckbutton")
     refresh_chk.grid(row=0, column=3, padx=3)
+
+    def plot_last_power_log():
+        import glob
+        import subprocess
+
+        files = glob.glob("oszi_csv/power_log_*.csv")
+        if not files:
+            log_debug("⚠️ No power log files found in oszi_csv/")
+            return
+
+        latest_file = max(files, key=os.path.getmtime)
+
+        try:
+            scale = float(entry_current_scale.get())
+            log_debug(f"⚙️ Plot scale factor: {scale:.4f} A/V (used for all power values)")
+        except Exception:
+            scale = 1.0
+            log_debug("⚠️ Invalid scale factor — defaulting to 1.0")
+
+        log_debug(f"📊 Launching plot for {latest_file} with scale={scale}")
+        subprocess.Popen(["python3", "utils/plot_rigol_csv.py", latest_file, "--scale", str(scale)])
+
+    ttk.Button(control_row, text="📈 Plot Last Power Log",
+           command=plot_last_power_log, style="Action.TButton").grid(row=0, column=2, padx=3)
 
     ttk.Label(control_row, text="Interval (s):").grid(row=0, column=4, padx=(20, 3), sticky="e")
     ttk.Spinbox(control_row, from_=2, to=60, width=5, textvariable=refresh_interval).grid(row=0, column=5, padx=(0, 5), sticky="w")
@@ -448,6 +476,8 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
         finally:
             app_state.is_power_analysis_active = False  # ✅ release lock no matter what
+    
+    ttk.Button(control_row, text="⚡ Analyze Power", command=analyze_power, style="Action.TButton").grid(row=0, column=1, padx=3)
 
     def update_current_scale(*args):
         try:
@@ -512,5 +542,4 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         power_frame.after(1000, update_refresh_checkbox_state)
 
     update_refresh_checkbox_state()
-
     tab_frame._shutdown = stop_auto_refresh
