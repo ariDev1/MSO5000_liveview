@@ -57,6 +57,9 @@ def plot_waveform_csv(path, smooth=False, window=5, spline=False):
         else:
             plt.plot(x, y, linestyle="dotted", label="Smoothed")
 
+    #print(f"Time delta between first 2 samples: {df['Time (s)'].iloc[1] - df['Time (s)'].iloc[0]}")
+    #print(f"Total duration: {df['Time (s)'].iloc[-1] - df['Time (s)'].iloc[0]}")
+
     plt.axhline(0, color='gray', linestyle='--', linewidth=1)
     plt.title("Waveform Preview")
     plt.xlabel("Time (s)")
@@ -113,7 +116,7 @@ def plot_session_log(path, smooth=False, window=5, spline=False):
     plt.tight_layout()
     plt.show()
 
-def plot_power_log(path, smooth=False, window=5, spline=False):
+def plot_power_log(path, smooth=False, window=5, spline=False, scale=1.0):
     try:
         df = pd.read_csv(path, parse_dates=["Timestamp"])
         metrics = ["P (W)", "S (VA)", "Q (VAR)", "PF", "Vrms (V)", "Irms (A)"]
@@ -122,13 +125,21 @@ def plot_power_log(path, smooth=False, window=5, spline=False):
         print(f"❌ Error reading power log: {e}")
         return
 
-    timestamp_num = df["Timestamp"].astype("int64") // 10**9
+    # Copy and scale data (except PF)
+    scaled_df = df.copy()
+    for col in scaled_df.columns:
+        if col == "PF" or col == "Timestamp":
+            continue
+        if scaled_df[col].dtype.kind in "fi":  # numeric
+            scaled_df[col] *= scale
+
+    timestamp_num = scaled_df["Timestamp"].astype("int64") // 10**9
 
     plt.figure(figsize=(14, 7))
-    for col in df.columns[1:]:
-        raw = df[col]
-        label = f"{col} (raw)"
-        plt.plot(df["Timestamp"], raw, label=label, alpha=0.85)
+    for col in scaled_df.columns[1:]:
+        raw = scaled_df[col]
+        label = f"{col} (raw × {scale})" if scale != 1.0 else f"{col} (raw)"
+        plt.plot(scaled_df["Timestamp"], raw, label=label, alpha=0.85)
 
         if smooth or spline:
             y = raw.rolling(window=window, center=True).mean() if smooth else raw
@@ -141,9 +152,11 @@ def plot_power_log(path, smooth=False, window=5, spline=False):
                 time_smooth = pd.to_datetime(x_smooth, unit="s")
                 plt.plot(time_smooth, y_smooth, linestyle="dotted", label=f"{col} (spline)")
             else:
-                plt.plot(df["Timestamp"], y, linestyle="dotted", label=f"{col} (smooth)")
+                plt.plot(scaled_df["Timestamp"], y, linestyle="dotted", label=f"{col} (smooth)")
+    
+    print(f"[debug] scale in plot_power_log() = {scale}")
 
-    plt.title("Power Analyzer Log")
+    plt.title(f"Power Analyzer Log (scale ×{scale})")
     plt.xlabel("Time")
     plt.ylabel("Power / Voltage / Current")
     plt.grid(True)
@@ -153,25 +166,30 @@ def plot_power_log(path, smooth=False, window=5, spline=False):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="""Plot waveform or session log CSV files.
+        description="""Plot waveform, session log, or power analysis CSV files.
 
-Supported formats:
-  - Waveform export (CHANx_*.csv) with 'Time (s)', 'Voltage (V)'
-  - Session logs (session_log.csv) with 'Timestamp', Vpp/Vavg/Vrms
+    Run from project root like:
+      python3 utils/plot_rigol_csv.py <your_csv_file>
 
-Examples:
-  python3 plot_rigol_csv.py CHAN1.csv
-  python3 plot_rigol_csv.py CHAN1.csv --smooth
-  python3 plot_rigol_csv.py CHAN1.csv --spline
-  python3 plot_rigol_csv.py CHAN1.csv --smooth --spline
-  python3 plot_rigol_csv.py session_log.csv --smooth --window 7
-""",
+    Supported formats:
+      - Waveform export (CHANx_*.csv) with 'Time (s)', 'Voltage (V)'
+      - Session logs (session_log.csv) with 'Timestamp', Vpp/Vavg/Vrms
+      - Power Analyzer logs (power_log_*.csv) with P, Q, S, PF, Vrms, Irms, Energy
+
+    Examples:
+      python3 utils/plot_rigol_csv.py CHAN1.csv
+      python3 utils/plot_rigol_csv.py session_log.csv --smooth
+      python3 utils/plot_rigol_csv.py oszi_csv/power_log_20250721_152301.csv --spline
+      python3 utils/plot_rigol_csv.py oszi_csv/power_log.csv --smooth --scale 100
+    """,
+
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("file", help="Path to CSV file")
     parser.add_argument("--smooth", action="store_true", help="Apply rolling average to smooth signal")
     parser.add_argument("--spline", action="store_true", help="Interpolate a dotted spline curve")
     parser.add_argument("--window", type=int, default=5, help="Smoothing window size (default: 5)")
+    parser.add_argument("--scale", type=float, default=1.0, help="Multiply all numeric values by this factor (default: 1.0). Use e.g. 100 for 10mΩ shunt.")
     args = parser.parse_args()
 
     path = args.file
@@ -181,10 +199,13 @@ Examples:
 
     if is_waveform_csv(path):
         plot_waveform_csv(path, smooth=args.smooth, window=args.window, spline=args.spline)
+
+    elif is_power_log(path):
+        plot_power_log(path, smooth=args.smooth, window=args.window, spline=args.spline, scale=args.scale)
+
     elif is_session_log(path):
         plot_session_log(path, smooth=args.smooth, window=args.window, spline=args.spline)
-    elif is_power_log(path):
-        plot_power_log(path, smooth=args.smooth, window=args.window, spline=args.spline)
+    
     else:
         print("❌ Unknown or unsupported CSV format.")
 

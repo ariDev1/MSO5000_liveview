@@ -867,6 +867,7 @@
 :TRIGger:WINDows:SLOPe?
 :TRIGger:WINDows:SOURce?
 :TRIGger:WINDows:TIME?
+:WAV:PRE?
 :WAVeform:DATA?
 :WAVeform:FORMat?
 :WAVeform:MODE?
