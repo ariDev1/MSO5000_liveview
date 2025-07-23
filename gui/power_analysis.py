@@ -133,11 +133,10 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
     ttk.Button(control_row, text="⚡ Analyze Power", command=lambda: analyze_power()).grid(row=0, column=1, padx=3)
 
-    #ttk.Button(control_row, text="🛑 Stop", command=lambda: stop_power_analysis()).grid(row=0, column=2, padx=3)
-
-    tk.Checkbutton(control_row, text="Auto Refresh", variable=refresh_var,
+    refresh_chk = tk.Checkbutton(control_row, text="Auto Refresh", variable=refresh_var,
                    bg="#2d2d2d", fg="#ffffff", activebackground="#333333",
-                   selectcolor="#555555", indicatoron=False, relief="raised").grid(row=0, column=3, padx=3)
+                   selectcolor="#555555", indicatoron=False, relief="raised")
+    refresh_chk.grid(row=0, column=3, padx=3)
 
     ttk.Label(control_row, text="Interval (s):").grid(row=0, column=4, padx=(20, 3), sticky="e")
     ttk.Spinbox(control_row, from_=2, to=60, width=5, textvariable=refresh_interval).grid(row=0, column=5, padx=(0, 5), sticky="w")
@@ -384,28 +383,28 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             log_debug("⚠️ Cannot start power analysis during long-time logging")
             return
 
-        from scpi.interface import connect_scope, safe_query
-        from scpi.waveform import compute_power_from_scope
-        from utils.debug import log_debug
-
-        vch = entry_vch.get().strip()
-        ich = entry_ich.get().strip()
-
-        log_debug(f"📡 Analyzing power for V={vch}, I={ich}")
-
-        if not vch or not ich:
-            show_power_results({"Error": "Missing channel input"})
-            log_debug("⚠️ Missing voltage or current channel input")
-            return
-
-        scope = connect_scope(ip)
-        if not scope:
-            show_power_results({"Error": "Scope not connected"})
-            log_debug("❌ Scope not connected")
-            return
+        app_state.is_power_analysis_active = True  # 🔒 set flag before starting
 
         try:
-            # 🧠 Auto-detect if current channel is already in Amps
+            from scpi.interface import connect_scope, safe_query
+            from scpi.waveform import compute_power_from_scope
+
+            vch = entry_vch.get().strip()
+            ich = entry_ich.get().strip()
+
+            log_debug(f"📡 Analyzing power for V={vch}, I={ich}")
+
+            if not vch or not ich:
+                show_power_results({"Error": "Missing channel input"})
+                log_debug("⚠️ Missing voltage or current channel input")
+                return
+
+            scope = connect_scope(ip)
+            if not scope:
+                show_power_results({"Error": "Scope not connected"})
+                log_debug("❌ Scope not connected")
+                return
+
             try:
                 chnum = ich.replace("CH", "").strip()
                 unit = safe_query(scope, f":CHAN{chnum}:UNIT?", default="VOLT").strip().upper()
@@ -425,7 +424,6 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 current_scale=scaling
             )
 
-            # ✅ Log results if available
             if result:
                 p = result.get("Real Power (P)", 0)
                 q = result.get("Reactive Power (Q)", 0)
@@ -441,14 +439,15 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                     log_debug(f"🧭 Operating Point in Quadrant {quad}")
                 else:
                     log_debug("⚠️ Non-finite P/Q/PF — skipping log")
-            
-            app_state.is_power_analysis_active = True
 
             show_power_results(result)
 
         except Exception as e:
             log_debug(f"⚠️ Power analysis error: {e}")
             show_power_results({"Error": str(e)})
+
+        finally:
+            app_state.is_power_analysis_active = False  # ✅ release lock no matter what
 
     def update_current_scale(*args):
         try:
@@ -475,6 +474,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
     def refresh_power_loop():
         nonlocal power_stats
+
         if not refresh_var.get():
             power_stats.clear()
             power_stats.update({
@@ -483,20 +483,19 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 "PF_sum": 0.0, "Vrms_sum": 0.0, "Irms_sum": 0.0,
                 "start_time": None
             })
-            pq_trail.clear()  # 🔥 clear old trail on auto-refresh reset
+            pq_trail.clear()
 
         if refresh_var.get():
             try:
                 if app_state.is_logging_active:
                     log_debug("⚠️ Auto-refresh paused — logging in progress")
-                    return
-                analyze_power()
+                else:
+                    analyze_power()
             except Exception as e:
-                from utils.debug import log_debug
                 log_debug(f"⚠️ Auto-refresh error: {e}")
-        
+
         power_frame.after(refresh_interval.get() * 1000, refresh_power_loop)
-    
+
     refresh_power_loop()
 
     def stop_auto_refresh():
@@ -504,5 +503,14 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         app_state.is_power_analysis_active = False
 
         log_debug("🛑 Refresh stopped by shutdown")
+    def update_refresh_checkbox_state():
+        if app_state.is_logging_active:
+            refresh_chk.config(state="disabled")
+            refresh_var.set(False)
+        else:
+            refresh_chk.config(state="normal")
+        power_frame.after(1000, update_refresh_checkbox_state)
+
+    update_refresh_checkbox_state()
 
     tab_frame._shutdown = stop_auto_refresh
