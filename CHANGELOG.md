@@ -4,6 +4,38 @@ All notable changes to this project are documented here.
 
 ---
 
+## v0.9.6 (2025-07-24)
+
+### 🐳 Docker Integration and GUI Access
+- 🖥️ Full X11 GUI support inside Docker
+  - `entrypoint.sh` detects `$DISPLAY` and `/tmp/.X11-unix`
+  - Friendly error message if X11 access is blocked (e.g., missing `xhost`)
+  - Works on X11 and XWayland setups (GNOME, KDE, etc.)
+- 🐚 Improved Docker CLI usability
+  - Mount `oszi_csv/` folder easily from host
+  - Performance improvements from clean runtime
+
+### ⚡ Power Analyzer Refinements
+- 📡 Frequency reference (`Reference: VOLT` or `CURR`) shown live in GUI
+- 🧠 Compact layout and right-aligned labels for better readability
+- 🛑 Power analyzer is disabled while long-time logging is active (conflict-safe)
+- 📊 Frequency reference printed only once to log at startup
+
+### 🛠️ Versioning & Build Metadata
+- `build_version.py` now auto-generates `version.py` with:
+  - Git tag (e.g. `v0.9.6`)
+  - Commit hash
+  - Build timestamp (UTC)
+- `--version` CLI shows exact release identity
+
+### 📦 GitHub Actions CI/CD
+- Docker image auto-built and pushed on:
+  - Push to `master`
+  - Any `v*` tag (e.g., `v0.9.6`)
+- Produces both `:latest` and `:v0.9.6` Docker tags
+
+---
+
 ## v0.9.5 (2025-07-21)
 
 - ⚡ **Power Analyzer Upgrade**
