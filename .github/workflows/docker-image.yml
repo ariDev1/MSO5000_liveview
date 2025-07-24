@@ -1,0 +1,27 @@
+name: Docker Build & Push
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 🧾 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔐 Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: 🛠️ Build image
+      run: |
+        docker build -t aridev1/mso5000_liveview:latest .
+
+    - name: 📦 Push to Docker Hub
+      run: |
+        docker push aridev1/mso5000_liveview:latest
