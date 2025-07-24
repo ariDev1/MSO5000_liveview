@@ -3,6 +3,7 @@ name: Docker Build & Push
 on:
   push:
     branches: [ master ]
+    tags: [ 'v*' ]
 
 jobs:
   build-and-push:
@@ -22,6 +23,13 @@ jobs:
       run: |
         docker build -t aridev1/mso5000_liveview:latest .
 
-    - name: 📦 Push to Docker Hub
+    - name: 📦 Push 'latest' tag
       run: |
         docker push aridev1/mso5000_liveview:latest
+
+    - name: 🏷️ Tag and push versioned image
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/}
+        docker tag aridev1/mso5000_liveview:latest aridev1/mso5000_liveview:$VERSION
+        docker push aridev1/mso5000_liveview:$VERSION
