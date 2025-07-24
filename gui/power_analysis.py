@@ -25,28 +25,25 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     power_frame.columnconfigure(0, weight=1)
     power_frame.columnconfigure(1, weight=3)
 
-    # --- Channel Selection (Compact Layout) ---
-    ch_input_frame = ttk.Frame(power_frame)
+    # --- Channel Selection (Colored Background Row) ---
+    ch_input_frame = tk.Frame(power_frame, bg="#226688")
     ch_input_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
-
-    # Get reference string
-    initial_ref = scpi_data.get("freq_ref", "N/A")
-    ref_text = tk.StringVar(value=f"Reference: {initial_ref}")
+    ch_input_frame.grid_columnconfigure(5, weight=1)
 
     # Voltage Channel
-    ttk.Label(ch_input_frame, text="Voltage Ch:").grid(row=0, column=0, sticky="e", padx=(2, 2))
+    tk.Label(ch_input_frame, text="Voltage Ch:", bg="#226688", fg="white").grid(row=0, column=0, sticky="e", padx=(2, 2), pady=4)
     entry_vch = ttk.Entry(ch_input_frame, width=8)
-    entry_vch.grid(row=0, column=1, sticky="w", padx=(0, 6))
+    entry_vch.grid(row=0, column=1, sticky="w", padx=(0, 6), pady=4)
 
     # Current Channel
-    ttk.Label(ch_input_frame, text="Current Ch:").grid(row=0, column=2, sticky="e", padx=(2, 2))
+    tk.Label(ch_input_frame, text="Current Ch:", bg="#226688", fg="white").grid(row=0, column=2, sticky="e", padx=(2, 2), pady=4)
     entry_ich = ttk.Entry(ch_input_frame, width=8)
-    entry_ich.grid(row=0, column=3, sticky="w", padx=(0, 6))
+    entry_ich.grid(row=0, column=3, sticky="w", padx=(0, 6), pady=4)
 
-    # Reference Info (faded gray)
-    ttk.Label(ch_input_frame, textvariable=ref_text, foreground="#bbbbbb").grid(
-        row=0, column=4, sticky="w", padx=(10, 0)
-    )
+    # Reference Info
+    initial_ref = scpi_data.get("freq_ref", "N/A")
+    ref_text = tk.StringVar(value=f"Reference: {initial_ref}")
+    tk.Label(ch_input_frame, textvariable=ref_text, bg="#226688", fg="white").grid(row=0, column=4, sticky="w", padx=(10, 0), pady=4)
 
     # Stretch last column to consume extra space
     ch_input_frame.grid_columnconfigure(5, weight=1)
@@ -170,8 +167,27 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     ttk.Spinbox(control_row, from_=2, to=60, width=5, textvariable=refresh_interval).grid(row=0, column=5, padx=(0, 5), sticky="w")
 
     # --- Result Display ---
-    result_frame = ttk.LabelFrame(power_frame, text="📊 Analysis Output", padding=0)
-    result_frame.grid(row=3, column=0, columnspan=2, sticky="nsew", padx=5, pady=5)
+    #result_frame = ttk.LabelFrame(power_frame, text="📊 Analysis Output", padding=0)
+    #result_frame.grid(row=3, column=0, columnspan=2, sticky="nsew", padx=5, pady=5)
+
+    # --- Custom Header with Inline DC Offset Status ---
+    result_header = tk.Frame(power_frame, bg="#1a1a1a")
+    result_header.grid(row=3, column=0, columnspan=2, sticky="ew", padx=5, pady=(5, 0))
+    result_header.grid_columnconfigure(0, weight=0)
+    result_header.grid_columnconfigure(1, weight=1)
+
+    tk.Label(result_header, text="📊 Analysis Output", font=("TkDefaultFont", 10, "bold"),
+             bg="#1a1a1a", fg="white").grid(row=0, column=0, sticky="w")
+
+    dc_status_var = tk.StringVar(value="DC Offset Removal is OFF — full waveform is analyzed.")
+    tk.Label(result_header, textvariable=dc_status_var, bg="#1a1a1a", fg="#cccccc",
+             font=("TkDefaultFont", 9)).grid(row=0, column=1, sticky="e", padx=(10, 5))
+
+    # --- Output Box below it ---
+    result_frame = tk.Frame(power_frame, bg="#202020", bd=1, relief="solid")
+    result_frame.grid(row=4, column=0, columnspan=2, sticky="nsew", padx=5, pady=(0, 5))
+    power_frame.rowconfigure(4, weight=1)
+
 
     # Create a wrapper frame inside the LabelFrame
     text_container = tk.Frame(result_frame, bg="#202020", padx=6, pady=4)
@@ -188,9 +204,12 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     fig, ax = plt.subplots(figsize=(4, 3), dpi=100, facecolor="#1a1a1a")
     canvas = FigureCanvasTkAgg(fig, master=power_frame)
     canvas_widget = canvas.get_tk_widget()
-    canvas_widget.grid(row=4, column=0, columnspan=2, sticky="nsew", padx=5, pady=(0, 4))
-    power_frame.rowconfigure(3, weight=1)  # text_result
-    power_frame.rowconfigure(4, weight=2)  # PQ plot
+    canvas_widget.grid(row=5, column=0, columnspan=2, sticky="nsew", padx=5, pady=(0, 4))
+    power_frame.rowconfigure(5, weight=2)  # new line
+
+    power_frame.rowconfigure(4, weight=1)  # text_result
+    power_frame.rowconfigure(5, weight=2)  # PQ plot
+
     power_frame.columnconfigure(0, weight=1)
     power_frame.columnconfigure(1, weight=1)
 
@@ -229,9 +248,9 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
         # Show DC offset setting at top of result
         if remove_dc_var.get():
-            text_result.insert(tk.END, "DC Offset Removal is ON — results may exclude DC component.\n", "info")
+            dc_status_var.set("DC Offset Removal is ON — results may exclude DC component.")
         else:
-            text_result.insert(tk.END, "DC Offset Removal is OFF — full waveform is analyzed.\n", "info")
+            dc_status_var.set("DC Offset Removal is OFF — full waveform is analyzed.")
 
         text_result.insert(tk.END, "\n")
 
@@ -391,25 +410,22 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         ax.set_ylabel("Reactive Power Q (VAR)")
         ax.set_title("PQ Operating Point", fontsize=10)
 
-        # Adaptive zoom range with tighter fallback
-        p_range = max(abs(p) * 1.5, 1.0)   # 🔧 fallback = ±1 W
-        q_range = max(abs(q) * 1.5, 1.0)   # 🔧 fallback = ±1 VAR
-
+        # Adaptive zoom range with fallback
+        p_range = max(abs(p) * 1.5, 1.0)
+        q_range = max(abs(q) * 1.5, 1.0)
         ax.set_xlim(-p_range, p_range)
         ax.set_ylim(-q_range, q_range)
 
-        # Trail history: fading gray
+        # Trail history (fading dots)
         if len(pq_trail) > 1:
             trail_x = [pt[0] for pt in pq_trail]
             trail_y = [pt[1] for pt in pq_trail]
             ax.plot(trail_x, trail_y, color="#888888", linestyle="-", linewidth=1, alpha=0.4)
 
-        #ax.plot(p, q, "ro", markersize=8)
         for i, (xp, yq) in enumerate(pq_trail):
             fade = (i + 1) / len(pq_trail)
             alpha = max(0.0, min(1.0, 0.2 + 0.8 * fade))
             ax.plot(xp, yq, "o", color="red", markersize=4, alpha=alpha)
-
 
         # Quadrant labels
         ax.text(0.9, 0.9, "I", transform=ax.transAxes, fontsize=10, color="#bbbbbb")
@@ -417,9 +433,32 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         ax.text(0.1, 0.1, "III", transform=ax.transAxes, fontsize=10, color="#bbbbbb")
         ax.text(0.9, 0.1, "IV", transform=ax.transAxes, fontsize=10, color="#bbbbbb")
 
-        ax.grid(True, linestyle="--", color="#444444", alpha=0.5)
-        # Power factor angle line from origin
+        # Power triangle
+        S = math.hypot(p, q)
+        theta_deg = math.degrees(math.atan2(q, p))
+
+        # Hypotenuse (already drawn)
         ax.plot([0, p], [0, q], color="orange", linestyle="--", linewidth=1, label="PF Angle θ")
+        # Vertical leg (Q)
+        ax.plot([p, p], [0, q], color="lime", linestyle="-", linewidth=1)
+        # Horizontal leg (P)
+        ax.plot([0, p], [0, 0], color="cyan", linestyle="-", linewidth=1)
+
+        # Annotate P, Q, S
+        ax.annotate(f"P = {p:.2f} W", xy=(p/2, -0.07*q), color="white", fontsize=9, ha="center")
+        ax.annotate(f"Q = {q:.2f} VAR", xy=(p + 0.05*p, q/2), color="white", fontsize=9)
+        ax.annotate(f"S = {S:.2f} VA", xy=(p/2, q/2), color="white", fontsize=9, ha="center")
+
+        # Annotate angle θ
+        arc_radius = 0.15 * max(p_range, q_range)
+        arc_theta = np.linspace(0, math.radians(theta_deg), 50)
+        arc_x = arc_radius * np.cos(arc_theta)
+        arc_y = arc_radius * np.sin(arc_theta)
+        ax.plot(arc_x, arc_y, color="grey", linewidth=1)
+        ax.text(arc_radius * 0.7, arc_radius * 0.3, f"θ = {theta_deg:.1f}°", color="orange", fontsize=9)
+
+        # Grid and legend
+        ax.grid(True, linestyle="--", color="#444444", alpha=0.5)
         ax.legend(loc="lower right", fontsize=8, facecolor="#1a1a1a", edgecolor="#444444", labelcolor="white")
 
         canvas.draw()
