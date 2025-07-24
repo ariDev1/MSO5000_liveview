@@ -126,7 +126,6 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
     chan_i = current_ch if str(current_ch).startswith("MATH") else f"CHAN{current_ch}"
 
     log_debug(f"📊 Analyzing: Voltage = {chan_v}, Current = {chan_i}")
-    log_debug(f"⚙️ Remove DC Offset: {'ON' if remove_dc else 'OFF'}")
     log_debug(f"⚙️ Current scaling factor: {current_scale:.4f} A/V")
 
     with scpi_lock:
@@ -162,12 +161,17 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
 
     # Decode waveforms
     t = xorig + np.arange(len(raw_v)) * xinc
+
+    probe_v = float(safe_query(scope, f":{chan_v}:PROB?", "1.0"))
     v = ((raw_v - yref_v) * yinc_v + yorig_v)
+    log_debug(f"⚠️ CH{voltage_ch} probe multiplier reported = {probe_v}, but already applied by scope.")
+
     i = ((raw_i - yref_i) * yinc_i + yorig_i) * current_scale
 
     if remove_dc:
         v -= np.mean(v)
         i -= np.mean(i)
+
 
     # Power calculations
     p_inst = v * i

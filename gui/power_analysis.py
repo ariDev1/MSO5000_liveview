@@ -203,7 +203,10 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     }
     pq_trail = []  # stores (P, Q)
     MAX_TRAIL = 30  # number of points to show
-
+    
+    # Track last-logged DC offset setting
+    dc_offset_logged = {"status": None}
+    
     def format_si(value, unit):
         abs_val = abs(value)
         if abs_val >= 1e6:
@@ -223,6 +226,14 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         nonlocal power_csv_path
         text_result.config(state=tk.NORMAL)
         text_result.delete(1.0, tk.END)
+
+        # Show DC offset setting at top of result
+        if remove_dc_var.get():
+            text_result.insert(tk.END, "DC Offset Removal is ON — results may exclude DC component.\n", "info")
+        else:
+            text_result.insert(tk.END, "DC Offset Removal is OFF — full waveform is analyzed.\n", "info")
+
+        text_result.insert(tk.END, "\n")
 
         keys = ["Real Power (P)", "Apparent Power (S)", "Reactive Power (Q)",
                 "Power Factor", "Vrms", "Irms"]
@@ -314,8 +325,15 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                     line = f"{key:<22}: {val_str:<12} | {avg_str:<12}\n"
                     text_result.insert(tk.END, line)
 
-        # Add extra section (only once)
         text_result.insert(tk.END, "\n")
+        Vrms = result.get("Vrms")
+        Irms = result.get("Irms")
+        if isinstance(Vrms, float) and isinstance(Irms, float) and Irms != 0:
+            Z = Vrms / Irms
+            text_result.insert(tk.END, f"{'Impedance (Z)':<22}: {format_si(Z, 'Ω'):<12}\n")
+        
+        # Add extra section (only once)
+        #text_result.insert(tk.END, "\n")
         if pf_angle is not None:
             text_result.insert(tk.END, f"{'PF Angle (θ)':<22}: {pf_angle:>10.2f} °\n")
         text_result.insert(tk.END, f"{'Real Energy':<22}: {format_si(energy_wh, 'Wh'):<12}\n")
@@ -412,6 +430,15 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             return
 
         app_state.is_power_analysis_active = True  # 🔒 set flag before starting
+
+        current_dc_setting = remove_dc_var.get()
+        if dc_offset_logged["status"] != current_dc_setting:
+            dc_offset_logged["status"] = current_dc_setting
+            log_debug(f"⚙️ Remove DC Offset: {'ON' if current_dc_setting else 'OFF'}")
+            if current_dc_setting:
+                log_debug("⚠️ Analyzer will subtract mean(V) and mean(I)")
+            else:
+                log_debug("ℹ️ Full waveform (including DC) is used")
 
         try:
             from scpi.interface import connect_scope, safe_query
