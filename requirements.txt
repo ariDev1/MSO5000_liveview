@@ -8,3 +8,5 @@ psutil
 zeroconf
 Image
 matplotlib
+pandas
+scipy
