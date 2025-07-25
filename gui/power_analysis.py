@@ -17,7 +17,9 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         log_debug("⚠️ Cannot start power analysis during long-time logging.")
         return
     app_state.is_power_analysis_active = False
-    power_csv_path = None
+    #power_csv_path = None
+    global_power_csv_path = [None]  # use list for mutability
+
     shutdown_hook = lambda: None  # placeholder
 
     # === Power Analysis Tab ===
@@ -134,9 +136,13 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
     ttk.Checkbutton(control_row, text="Remove DC Offset", variable=remove_dc_var,
                     style="DC.TCheckbutton").grid(row=0, column=0, padx=3)
+    
+    def toggle_auto_refresh():
+        if not refresh_var.get():  # Means the checkbox is being turned OFF
+            stop_auto_refresh()
 
     refresh_chk = ttk.Checkbutton(control_row, text="Auto Refresh", variable=refresh_var,
-        style="Refresh.TCheckbutton")
+        style="Refresh.TCheckbutton", command=toggle_auto_refresh)
     refresh_chk.grid(row=0, column=3, padx=3)
 
     def plot_last_power_log():
@@ -242,7 +248,8 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             return f"{value:.3e} {unit}"
 
     def show_power_results(result):
-        nonlocal power_csv_path
+        power_csv_path = global_power_csv_path[0]
+
         text_result.config(state=tk.NORMAL)
         text_result.delete(1.0, tk.END)
 
@@ -292,11 +299,12 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             log_debug(f"⚠️ PF Angle calc error: {e}")
 
         # Create CSV log file once
-        nonlocal power_csv_path
         if power_csv_path is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             os.makedirs("oszi_csv", exist_ok=True)  # 🔧 ensure folder exists
             power_csv_path = os.path.join("oszi_csv", f"power_log_{timestamp}.csv")
+            global_power_csv_path[0] = power_csv_path
+
             with open(power_csv_path, "w", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow([
@@ -347,10 +355,25 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         text_result.insert(tk.END, "\n")
         Vrms = result.get("Vrms")
         Irms = result.get("Irms")
+
+        # Impedance
         if isinstance(Vrms, float) and isinstance(Irms, float) and Irms != 0:
             Z = Vrms / Irms
             text_result.insert(tk.END, f"{'Impedance (Z)':<22}: {format_si(Z, 'Ω'):<12}\n")
-        
+
+        # FFT-based frequency estimates (experimental, not published)
+        #f_v = result.get("Freq_V")
+        #f_i = result.get("Freq_I")
+        #if isinstance(f_v, float):
+        #    text_result.insert(tk.END, f"{'Voltage Freq (FFT)':<22}: {f_v:.2f} Hz\n")
+        #if isinstance(f_i, float):
+        #    text_result.insert(tk.END, f"{'Current Freq (FFT)':<22}: {f_i:.2f} Hz\n")
+
+        # Scope frequency reference
+        freq_val = scpi_data.get("freq_ref", None)
+        if freq_val:
+            text_result.insert(tk.END, f"{'Frequency (ref)':<22}: {freq_val.strip():<12}  (used for θ, PF)\n")
+
         # Add extra section (only once)
         #text_result.insert(tk.END, "\n")
         if pf_angle is not None:
@@ -524,7 +547,11 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 pf = result.get("Power Factor", 0)
 
                 if all(map(math.isfinite, [p, q, pf])):
+                    pq_trail.append((p, q))
+
                     log_debug(f"📈 Result — P={p:.3f} W, Q={q:.3f} VAR, PF={pf:.3f}")
+                    log_debug(f"📍 PQ added → now {len(pq_trail)} points")
+
                     if p > 0 and q > 0: quad = "I"
                     elif p < 0 and q > 0: quad = "II"
                     elif p < 0 and q < 0: quad = "III"
@@ -595,10 +622,28 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     refresh_power_loop()
 
     def stop_auto_refresh():
+        log_debug("🧪 stop_auto_refresh() called")
+        log_debug(f"🧪 csv = {global_power_csv_path[0]}")
+        log_debug(f"🧪 pq_trail = {len(pq_trail)} points")
+
         refresh_var.set(False)
         app_state.is_power_analysis_active = False
-
         log_debug("🛑 Refresh stopped by shutdown")
+
+        # Save final PQ plot if possible
+        if global_power_csv_path[0] and len(pq_trail) > 1:
+            try:
+                img_path = global_power_csv_path[0].replace(".csv", "_summary.png")
+
+                # Force redraw before saving
+                draw_pq_plot(*pq_trail[-1])
+                canvas.draw()
+                fig.savefig(img_path, dpi=150, facecolor=fig.get_facecolor())
+
+                log_debug(f"🖼️ Saved final PQ plot to {img_path}")
+            except Exception as e:
+                log_debug(f"⚠️ Failed to save final PQ plot: {e}")
+
     def update_refresh_checkbox_state():
         if app_state.is_logging_active:
             refresh_chk.config(state="disabled")

@@ -187,6 +187,13 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
     fft_i = np.fft.fft(i)
     phase_v = np.angle(fft_v[1])
     phase_i = np.angle(fft_i[1])
+
+    # Frequency estimate via FFT peak detection
+    dt = t[1] - t[0] if len(t) > 1 else 1e-6
+    freqs = np.fft.fftfreq(len(t), d=dt)
+    v_freq = abs(freqs[np.argmax(np.abs(fft_v[1:len(fft_v)//2])) + 1])
+    i_freq = abs(freqs[np.argmax(np.abs(fft_i[1:len(fft_i)//2])) + 1])
+
     phase_shift_rad = phase_v - phase_i
     phase_shift_deg = np.rad2deg(phase_shift_rad)
     phase_shift_deg = (phase_shift_deg + 180) % 360 - 180  # wrap to [-180, 180]
@@ -206,5 +213,7 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
         "Power Factor": PF,
         "Phase Angle (deg)": phase_shift_deg,
         "Vrms": Vrms,
-        "Irms": Irms
+        "Irms": Irms,
+        #"Freq_V": v_freq,
+        #"Freq_I": i_freq
     }

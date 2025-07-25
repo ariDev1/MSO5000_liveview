@@ -16,9 +16,8 @@ from gui.channel_info import setup_channel_tab
 from gui.image_display import attach_image_label, update_image, set_ip, start_screenshot_thread
 from gui.scpi_console import setup_scpi_tab
 from gui.logging_controls import setup_logging_tab
-from gui.power_analysis import setup_power_analysis_tab
 from gui.marquee import attach_marquee
-
+from gui.power_analysis import setup_power_analysis_tab
 from utils.debug import attach_debug_widget, start_debug_updater, log_debug
 from scpi.waveform import export_channel_csv
 from scpi.licenses import get_license_options
@@ -192,7 +191,7 @@ def main():
     setup_power_analysis_tab(tabs["Power Analysis"], ip, root)
     power_tab = tabs["Power Analysis"]
     power_shutdown = getattr(power_tab, "_shutdown", lambda: None)
- 
+
     # === Debug Tab ===
     debug_frame = tabs["Debug Log"]
     text_widget = tk.Text(debug_frame, font=("Courier", 9), height=100,
