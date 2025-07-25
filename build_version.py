@@ -1,6 +1,13 @@
 # build_version.py
 import subprocess
-from datetime import datetime, UTC
+from datetime import datetime
+
+# ✅ Compatibility fix for Python <3.11 (Ubuntu 22.04)
+try:
+    from datetime import UTC
+except ImportError:
+    from datetime import timezone
+    UTC = timezone.utc
 
 commit = subprocess.getoutput("git rev-parse --short HEAD")
 version = subprocess.getoutput("git describe --tags --abbrev=0")
