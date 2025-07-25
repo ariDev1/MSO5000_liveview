@@ -59,6 +59,22 @@ bash how-to-install.txt
 
 > 💡 Tested on Ubuntu 24.04 LTS with Python 3.12 and VNC enabled on the Rigol scope.
 
+### 🧓 Ubuntu 22.04 LTS Compatibility
+
+If you're using **Ubuntu 22.04 LTS**:
+
+```bash
+sudo apt install python3 python3-pip python3-tk libxcb-xinerama0
+```
+
+Then install dependencies manually:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install pillow numpy pyvisa pyvisa-py requests vncdotool psutil zeroconf
+```
+
 ---
 
 ## 🐳 Docker Support (X11 and Wayland compatible)
