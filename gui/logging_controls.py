@@ -41,11 +41,11 @@ def setup_logging_tab(tab_frame, ip, root):
     vavg_var = tk.BooleanVar(value=False)
     vrms_var = tk.BooleanVar(value=False)
 
-    tk.Checkbutton(inner_left, text="Include Vavg", variable=vavg_var,
+    tk.Checkbutton(inner_left, text="Log Vavg", variable=vavg_var,
         bg="#2d2d2d", fg="#ffffff", activebackground="#333333",
         selectcolor="#555555", indicatoron=False, relief="raised").pack(fill="x", pady=2)
 
-    tk.Checkbutton(inner_left, text="Include Vrms", variable=vrms_var,
+    tk.Checkbutton(inner_left, text="Log Vrms", variable=vrms_var,
         bg="#2d2d2d", fg="#ffffff", activebackground="#333333",
         selectcolor="#555555", indicatoron=False, relief="raised").pack(fill="x", pady=2)
 
@@ -130,9 +130,9 @@ def setup_logging_tab(tab_frame, ip, root):
         update_log_status("🛑 Stop requested")
         update_log_buttons(state="idle")
 
-    start_button = ttk.Button(btn_frame, text="▶ Start Logging", command=start_log_session)
+    start_button = ttk.Button(btn_frame, text="▶ Begin Session", command=start_log_session)
     pause_button = ttk.Button(btn_frame, text="⏸ Pause", command=toggle_pause)
-    stop_button = ttk.Button(btn_frame, text="⏹ Stop", command=stop_log_session)
+    stop_button = ttk.Button(btn_frame, text="⏹ Stop Session", command=stop_log_session)
 
     start_button.grid(row=0, column=0, padx=5)
     pause_button.grid(row=0, column=1, padx=5)

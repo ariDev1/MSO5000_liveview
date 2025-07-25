@@ -97,10 +97,10 @@ def main():
     marquee = attach_marquee(marquee_frame, file_path="marquee.txt", url="https://aether-research.institute/MSO5000/marquee.txt")
 
     # Buttons to right subframe
-    toggle_btn = ttk.Button(button_frame, text="🖼️ Hide", style="TButton")
+    toggle_btn = ttk.Button(button_frame, text="🗗 Hide", style="TButton")
     toggle_btn.pack(side="left", padx=(10, 5))
 
-    shutdown_btn = ttk.Button(button_frame, text="⏻ Shutdown", style="TButton", command=lambda: shutdown())
+    shutdown_btn = ttk.Button(button_frame, text="⏻ Exit", style="TButton", command=lambda: shutdown())
     shutdown_btn.pack(side="left", padx=(0, 5))
 
     # Toggle screenshot visibility
@@ -123,10 +123,10 @@ def main():
     def toggle_image():
         if img_visible[0]:
             image_frame.pack_forget()
-            toggle_btn.config(text="🖼️ Show")
+            toggle_btn.config(text="🗖 Show")
         else:
             image_frame.pack(before=notebook, fill="x", pady=5)
-            toggle_btn.config(text="🖼️ Hide")
+            toggle_btn.config(text="🗗 Hide")
         img_visible[0] = not img_visible[0]
 
     toggle_btn.config(command=toggle_image)

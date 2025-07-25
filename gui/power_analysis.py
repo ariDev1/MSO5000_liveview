@@ -141,7 +141,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         if not refresh_var.get():  # Means the checkbox is being turned OFF
             stop_auto_refresh()
 
-    refresh_chk = ttk.Checkbutton(control_row, text="Auto Refresh", variable=refresh_var,
+    refresh_chk = ttk.Checkbutton(control_row, text="Auto Measure", variable=refresh_var,
         style="Refresh.TCheckbutton", command=toggle_auto_refresh)
     refresh_chk.grid(row=0, column=3, padx=3)
 
@@ -570,7 +570,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         finally:
             app_state.is_power_analysis_active = False  # ✅ release lock no matter what
     
-    ttk.Button(control_row, text="⚡ Analyze Power", command=analyze_power, style="Action.TButton").grid(row=0, column=1, padx=3)
+    ttk.Button(control_row, text="⚡ Measure Power", command=analyze_power, style="Action.TButton").grid(row=0, column=1, padx=3)
 
     def update_current_scale(*args):
         try:
