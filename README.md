@@ -181,4 +181,16 @@ Not affiliated with Rigol Technologies.
 
 See [CHANGELOG.md](CHANGELOG.md) for full version history.
 
+---
+## 🐶 Fuel This Project With Dogecoin
+
+Much wow. So helpful. Very accurate. If you like what you see:
+
+**DOGE:** `DCeBDHshvL36ZnkctdFzhsZUUhknW1zzbC`  
+[![Donate DOGE](https://img.shields.io/badge/-Donate%20in%20DOGE-yellow?logo=dogecoin)](dogecoin:DCeBDHshvL36ZnkctdFzhsZUUhknW1zzbC)
+
+![Doge QR](https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=dogecoin:DCeBDHshvL36ZnkctdFzhsZUUhknW1zzbC)
+
+---
+
 ![REPO Card](docs/mso5000_repo_card2.png)
