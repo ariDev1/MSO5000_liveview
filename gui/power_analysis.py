@@ -175,9 +175,9 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             return
 
         # Connect to scope
-        scope = connect_scope(ip)
+        from app.app_state import scope
         if not scope:
-            log_debug("❌ Scope not connected for auto-calibration")
+            log_debug("❌ Scope not connected")
             return
 
         # Recalculate base probe scale (without any correction)
@@ -607,7 +607,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 log_debug("⚠️ Missing voltage or current channel input")
                 return
 
-            scope = connect_scope(ip)
+            from app.app_state import scope
             if not scope:
                 show_power_results({"Error": "Scope not connected"})
                 log_debug("❌ Scope not connected")

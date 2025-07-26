@@ -61,8 +61,6 @@ def main():
     set_ip(ip)
     scpi_data["ip"] = ip
 
-
-    from scpi.interface import connect_scope, safe_query
     scope = connect_scope(ip)
     if scope:
         try:
@@ -71,6 +69,10 @@ def main():
             scpi_data["freq_ref"] = freq_ref
         except Exception as e:
             log_debug(f"⚠️ Could not get frequency reference: {e}")
+
+    import app.app_state as app_state
+    app_state.scope = scope
+    app_state.scope_ip = ip
 
     start_scpi_loop(ip)
 
