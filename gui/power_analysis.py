@@ -21,8 +21,15 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     app_state.is_power_analysis_active = False
     #power_csv_path = None
     global_power_csv_path = [None]  # use list for mutability
-
     shutdown_hook = lambda: None  # placeholder
+
+    correction_factor = tk.StringVar(value="1.0")
+    def validate_correction_input(*args):
+        val = correction_factor.get().strip()
+        if val == "":
+            correction_factor.set("1.0")
+
+    correction_factor.trace_add("write", validate_correction_input)
 
     # === Power Analysis Tab ===
     power_frame = tab_frame
@@ -32,7 +39,6 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     # --- Channel Selection (Colored Background Row) ---
     ch_input_frame = tk.Frame(power_frame, bg="#226688")
     ch_input_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
-    ch_input_frame.grid_columnconfigure(5, weight=1)
 
     # Voltage Channel
     tk.Label(ch_input_frame, text="Voltage Ch:", bg="#226688", fg="white").grid(row=0, column=0, sticky="e", padx=(2, 2), pady=4)
@@ -44,13 +50,24 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     entry_ich = ttk.Entry(ch_input_frame, width=8)
     entry_ich.grid(row=0, column=3, sticky="w", padx=(0, 6), pady=4)
 
-    # Reference Info
+    # Correction Factor Field
+    tk.Label(ch_input_frame, text="Correction:", bg="#226688", fg="white").grid(row=0, column=4, sticky="e", padx=(2, 2), pady=4)
+    entry_corr = ttk.Entry(ch_input_frame, width=8, textvariable=correction_factor)
+    entry_corr.grid(row=0, column=5, sticky="w", padx=(0, 6), pady=4)
+
+    expected_power = tk.StringVar(value="")
+    tk.Label(ch_input_frame, text="Expected P (W):", bg="#226688", fg="white").grid(row=0, column=6, sticky="e", padx=(2, 2), pady=4)
+    entry_expected = ttk.Entry(ch_input_frame, width=8, textvariable=expected_power)
+    entry_expected.grid(row=0, column=7, sticky="w", padx=(0, 6), pady=4)
+
+    # Reference Info (shifted right)
     initial_ref = scpi_data.get("freq_ref", "N/A")
     ref_text = tk.StringVar(value=f"Reference: {initial_ref}")
-    tk.Label(ch_input_frame, textvariable=ref_text, bg="#226688", fg="white").grid(row=0, column=4, sticky="w", padx=(10, 0), pady=4)
+    tk.Label(ch_input_frame, textvariable=ref_text, bg="#226688", fg="white").grid(row=0, column=8, sticky="w", padx=(10, 0), pady=4)
 
-    # Stretch last column to consume extra space
-    ch_input_frame.grid_columnconfigure(5, weight=1)
+    # Stretch last column
+    ch_input_frame.grid_columnconfigure(11, weight=1)
+
 
     # --- Probe Scaling Controls ---
     probe_frame = ttk.Frame(power_frame)
@@ -96,7 +113,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     entry_probe_value.insert(0, "1.0")
     entry_probe_value.grid(row=0, column=3, sticky="w", padx=5)
 
-    ttk.Label(probe_frame, text="→ Scaling (A/V):").grid(row=0, column=4, sticky="e", padx=15)
+    ttk.Label(probe_frame, text="→ Base Scale (A/V):").grid(row=0, column=4, sticky="e", padx=15)
     entry_current_scale = ttk.Entry(probe_frame, width=10, state="readonly")
     entry_current_scale.grid(row=0, column=5, sticky="w", padx=5)
 
@@ -143,6 +160,64 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         if not refresh_var.get():  # Means the checkbox is being turned OFF
             stop_auto_refresh()
 
+    def auto_calibrate():
+        log_debug("🧪 Auto-calibrate triggered")
+        log_debug(f"🧪 GUI correction factor entry now = {entry_corr.get()}")
+
+        # Try to read manually entered expected power
+        try:
+            exp_p = float(expected_power.get().strip())
+            if exp_p <= 0:
+                raise ValueError("Expected power must be > 0")
+            log_debug(f"⚙️ Using manually entered expected P = {exp_p:.3f} W")
+        except Exception as e:
+            log_debug(f"⚠️ Invalid expected power: {e}")
+            return
+
+        # Connect to scope
+        scope = connect_scope(ip)
+        if not scope:
+            log_debug("❌ Scope not connected for auto-calibration")
+            return
+
+        # Recalculate base probe scale (without any correction)
+        try:
+            val = float(entry_probe_value.get())
+            mode = probe_type.get()
+            if mode == "shunt":
+                raw_scale = 1.0 / val
+            elif mode == "clamp":
+                raw_scale = 1.0 / (val / 1000.0)
+            else:
+                raw_scale = 1.0
+            log_debug(f"🔎 Raw scale used for calibration: {raw_scale:.4f} A/V")
+        except Exception as e:
+            raw_scale = 1.0
+            log_debug(f"⚠️ Could not calculate raw probe scale — defaulting to 1.0 ({e})")
+
+        # Run actual power analysis using raw scale
+        try:
+            vch = entry_vch.get().strip()
+            ich = entry_ich.get().strip()
+            result = compute_power_from_scope(
+                scope, vch, ich,
+                remove_dc=remove_dc_var.get(),
+                current_scale=raw_scale  # no correction applied!
+            )
+            measured_p = result.get("Real Power (P)", None)
+            if measured_p is None or measured_p <= 0:
+                log_debug("⚠️ Invalid measured power — auto-calibration aborted")
+                return
+
+            log_debug(f"📐 Measured Power = {measured_p:.3f} W  |  Target = {exp_p:.3f} W")
+            new_corr = exp_p / measured_p
+            correction_factor.set(f"{new_corr:.4f}")
+            log_debug(f"✅ Auto-calibrated correction factor: ×{new_corr:.4f}")
+
+        except Exception as e:
+            log_debug(f"❌ Auto-calibration failed: {e}")
+
+
     refresh_chk = ttk.Checkbutton(control_row, text="Auto Measure", variable=refresh_var,
         style="Refresh.TCheckbutton", command=toggle_auto_refresh)
     refresh_chk.grid(row=0, column=3, padx=3)
@@ -170,6 +245,9 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
     ttk.Button(control_row, text="📈 Plot Last Power Log",
            command=plot_last_power_log, style="Action.TButton").grid(row=0, column=2, padx=3)
+    
+    ttk.Button(control_row, text="🧪 Auto-Calibrate", command=auto_calibrate, style="Action.TButton").grid(row=0, column=6, padx=3)
+    log_debug("🧪 Auto-calibrate button created and wired correctly")
 
     ttk.Label(control_row, text="Interval (s):").grid(row=0, column=4, padx=(20, 3), sticky="e")
     ttk.Spinbox(control_row, from_=2, to=60, width=5, textvariable=refresh_interval).grid(row=0, column=5, padx=(0, 5), sticky="w")
@@ -256,6 +334,8 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             dc_status_var.set("DC Offset Removal is ON — results may exclude DC component.")
         else:
             dc_status_var.set("DC Offset Removal is OFF — full waveform is analyzed.")
+        
+        text_result.insert(tk.END, f"{'Correction Factor':<22}: ×{correction_factor.get().strip():<12}\n")
 
         text_result.insert(tk.END, "\n")
 
@@ -525,13 +605,67 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 unit = safe_query(scope, f":CHAN{chnum}:UNIT?", default="VOLT").strip().upper()
                 if unit == "AMP":
                     scaling = 1.0
-                    log_debug(f"⚙️ CH{chnum} unit is AMP — no scaling applied")
+                    log_debug(f"⚙️ CH{chnum} unit is AMP — no probe scaling applied")
                 else:
-                    scaling = float(entry_current_scale.get())
+                    try:
+                        val = float(entry_probe_value.get())
+                        mode = probe_type.get()
+                        if mode == "shunt":
+                            base_scale = 1.0 / val
+                        elif mode == "clamp":
+                            base_scale = 1.0 / (val / 1000.0)
+                        else:
+                            base_scale = 1.0
+                    except Exception as e:
+                        base_scale = 1.0
+                        log_debug(f"⚠️ Failed to get base probe scale — defaulting to 1.0 ({e})")
+
+                    try:
+                        corr = float(correction_factor.get().strip())
+                    except Exception as e:
+                        corr = 1.0
+                        log_debug(f"⚠️ Invalid correction factor — defaulting to 1.0 ({e})")
+
+                    scaling = base_scale * corr
+                    log_debug(f"⚙️ Final scaling = base {base_scale:.4f} × corr {corr:.4f} = {scaling:.4f}")
+
                     log_debug(f"⚙️ CH{chnum} unit is VOLT — using scaling: {scaling:.4f} A/V")
+
+                # ✅ Apply correction factor in both cases
+                try:
+                    user_corr = float(correction_factor.get().strip())
+                    scaling *= user_corr
+                    log_debug(f"🧪 Correction factor applied: ×{user_corr:.4f}")
+                    log_debug(f"⚙️ Final scaling factor (A/V): {scaling:.4f}")
+                except Exception as e:
+                    user_corr = 1.0
+                    log_debug(f"⚠️ Invalid correction factor — defaulting to 1.0 ({e})")
+
             except Exception as e:
                 log_debug(f"⚠️ Could not detect channel unit: {e}")
-                scaling = float(entry_current_scale.get())
+                try:
+                    val = float(entry_probe_value.get())
+                    mode = probe_type.get()
+                    if mode == "shunt":
+                        base_scale = 1.0 / val
+                    elif mode == "clamp":
+                        base_scale = 1.0 / (val / 1000.0)
+                    else:
+                        base_scale = 1.0
+                except Exception as e:
+                    base_scale = 1.0
+                    log_debug(f"⚠️ Failed to get base probe scale — defaulting to 1.0 ({e})")
+
+                try:
+                    corr_raw = correction_factor.get().strip()
+                    corr = float(corr_raw) if corr_raw else 1.0
+                except Exception as e:
+                    corr = 1.0
+                    log_debug(f"⚠️ Invalid correction factor — defaulting to 1.0 ({e})")
+
+                scaling = base_scale * corr
+                log_debug(f"⚙️ Final scaling = base {base_scale:.4f} × corr {corr:.4f} = {scaling:.4f}")
+
 
             result = compute_power_from_scope(
                 scope, vch, ich,
