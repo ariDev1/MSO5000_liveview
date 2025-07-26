@@ -1,21 +1,22 @@
+# #logger/longtime.py
+
 import csv
 import os
 import time
 import threading
 from datetime import datetime, timedelta
-from utils.debug import log_debug
+from utils.debug import log_debug, set_debug_level
 from scpi.waveform import get_channel_waveform_data
 from scpi.interface import safe_query
 from scpi.interface import scpi_lock
 from app.app_state import is_logging_active
 import app.app_state as app_state
 from scpi.interface import connect_scope
+from scpi.data import scpi_data
 
 is_logging = False
 pause_flag = False
 stop_flag = False
-
-from scpi.data import scpi_data
 
 def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled, vrms_enabled, status_callback, current_scale=1.0):
     if app_state.is_power_analysis_active:
@@ -37,8 +38,8 @@ def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled,
     total = int((duration * 3600) // interval)
     end_time = datetime.now() + timedelta(seconds=duration * 3600)
 
-    log_debug(f"📁 Logging to {csv_path}")
-    log_debug(f"🕒 Estimated end time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    log_debug(f"📁 Logging to {csv_path}", level="MINIMAL")
+    log_debug(f"🕒 Estimated end time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}", level="MINIMAL")
 
     is_logging = True
     pause_flag = False
@@ -47,7 +48,7 @@ def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled,
 
     def loop():
         with scpi_lock:
-            log_debug(f"🧪 Logging scope ID: {safe_query(scope, '*IDN?', 'N/A')}")
+            log_debug(f"🧪 Logging scope ID: {safe_query(scope, '*IDN?', 'N/A')}", level="MINIMAL")
         nonlocal csv_path
         try:
             with open(csv_path, "w", newline="") as f:
@@ -66,7 +67,7 @@ def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled,
 
                 for i in range(total):
                     if stop_flag:
-                        log_debug("🛑 Logging stopped by user")
+                        log_debug("🛑 Logging stopped by user", level="MINIMAL")
                         break
 
                     while pause_flag:
@@ -78,7 +79,7 @@ def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled,
                         vpp, vavg, vrms = get_channel_waveform_data(scope, ch, use_simple_calc=True)
                         chname = f"CH{ch}" if isinstance(ch, int) else ch
                         log_debug(f"{chname} ➜ Vpp={vpp:.3f}  Vavg={vavg:.3f}  Vrms={vrms:.3f}")
-                        
+
                         try:
                             chnum = str(ch).replace("CH", "").strip()
                             unit = safe_query(scope, f":CHAN{chnum}:UNIT?", default="VOLT").strip().upper()
@@ -110,12 +111,12 @@ def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled,
                     else:
                         log_debug(f"⚠️ Behind schedule by {-delay:.2f}s")
 
-            log_debug("✅ Logging finished")
+            log_debug("✅ Logging finished", level="MINIMAL")
             status_callback("✅ Logging finished")
-            log_debug("✅ Long-time logging completed successfully")
+            log_debug("✅ Long-time logging completed successfully", level="MINIMAL")
 
         except Exception as e:
-            log_debug(f"❌ Logging error: {e}")
+            log_debug(f"❌ Logging error: {e}", level="MINIMAL")
             status_callback("❌ Error — see Debug Log")
 
         finally:

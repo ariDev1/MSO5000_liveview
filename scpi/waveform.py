@@ -1,8 +1,11 @@
+# scpi/waveform.py
+
 import os
 import time
 import csv
+import math
 import numpy as np
-from utils.debug import log_debug
+from utils.debug import log_debug, set_debug_level
 from config import WAV_POINTS
 from scpi.interface import safe_query
 from scpi.interface import scpi_lock
@@ -125,8 +128,8 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
     chan_v = voltage_ch if str(voltage_ch).startswith("MATH") else f"CHAN{voltage_ch}"
     chan_i = current_ch if str(current_ch).startswith("MATH") else f"CHAN{current_ch}"
 
-    log_debug(f"📊 Analyzing: Voltage = {chan_v}, Current = {chan_i}")
-    log_debug(f"⚙️ Current scaling factor: {current_scale:.4f} A/V")
+    log_debug(f"📊 Analyzing: Voltage = {chan_v}, Current = {chan_i}", level="MINIMAL")
+    log_debug(f"⚙️ Current scaling factor: {current_scale:.4f} A/V", level="MINIMAL")
 
     with scpi_lock:
         scope.write(":WAV:FORM BYTE")
@@ -181,6 +184,7 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
     S = Vrms * Irms
     Q = np.sqrt(max(S**2 - P**2, 0))
     PF = P / S if S != 0 else 0
+    PF = math.copysign(abs(PF), P)  # Ensure PF sign matches P
 
     # Phase shift via FFT (simple method)
     fft_v = np.fft.fft(v)

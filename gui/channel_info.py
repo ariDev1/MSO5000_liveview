@@ -24,16 +24,16 @@ def setup_channel_tab(tab_frame, ip, root):
         root.clipboard_clear()
         root.clipboard_append(full_text)
         root.update()
-        log_debug("📋 Channel Settings copied to clipboard")
+        log_debug("📋 Channel Settings copied to clipboard", level="MINIMAL")
 
     def copy_channel_csv_to_clipboard():
         if is_logging_active:
-            log_debug("❌ Logging in progress — copy disabled")
+            log_debug("❌ Logging in progress — copy disabled", level="MINIMAL")
             return
 
         scope = connect_scope(ip)
         if not scope:
-            log_debug("❌ Not connected — copy aborted")
+            log_debug("❌ Not connected — copy aborted", level="MINIMAL")
             return
 
         output = StringIO()
@@ -50,22 +50,22 @@ def setup_channel_tab(tab_frame, ip, root):
                     output.write(f.read())
                     output.write("\n\n")
             except Exception as e:
-                log_debug(f"⚠️ Export failed for {ch}: {e}")
+                log_debug(f"⚠️ Export failed for {ch}: {e}", level="MINIMAL")
 
         clipboard_data = output.getvalue()
         root.clipboard_clear()
         root.clipboard_append(clipboard_data)
         root.update()
-        log_debug("📋 Channel CSV data copied to clipboard")
+        log_debug("📋 Channel CSV data copied to clipboard", level="MINIMAL")
 
     def on_export():
         if is_logging_active:
-            log_debug("❌ Logging in progress — export disabled")
+            log_debug("❌ Logging in progress — export disabled", level="MINIMAL")
             return
 
         scope = connect_scope(ip)
         if not scope:
-            log_debug("❌ Not connected — export aborted")
+            log_debug("❌ Not connected — export aborted", level="MINIMAL")
             return
 
         for ch in scpi_data.get("channel_info", {}).keys():
@@ -76,7 +76,7 @@ def setup_channel_tab(tab_frame, ip, root):
                 elif ch.startswith("MATH"):
                     export_channel_csv(scope, ch)
             except Exception as e:
-                log_debug(f"⚠️ Export failed for {ch}: {e}")
+                log_debug(f"⚠️ Export failed for {ch}: {e}", level="MINIMAL")
 
     btn_frame = ttk.Frame(tab_frame)
     btn_frame.pack(side="bottom", anchor="e", padx=10, pady=5)

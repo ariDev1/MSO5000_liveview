@@ -1,3 +1,5 @@
+# gui/image_display.py
+
 import os
 import time
 import threading

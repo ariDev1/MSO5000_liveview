@@ -1,3 +1,5 @@
+# utils/debug.py
+
 import time
 from collections import deque
 import tkinter as tk
@@ -6,7 +8,16 @@ debug_log = deque(maxlen=10000)
 debug_paused = False
 debug_widget = None
 
-def log_debug(message):
+# Global debug level: "FULL" or "MINIMAL"
+DEBUG_LEVEL = "FULL"
+
+def set_debug_level(level):
+    global DEBUG_LEVEL
+    DEBUG_LEVEL = level
+
+def log_debug(message, level="FULL"):
+    if DEBUG_LEVEL == "MINIMAL" and level != "MINIMAL":
+        return
     timestamp = time.strftime("%H:%M:%S")
     full_msg = f"[{timestamp}] {message}"
     debug_log.append(full_msg)

@@ -1,5 +1,5 @@
 import requests
-from utils.debug import log_debug
+from utils.debug import log_debug, set_debug_level
 
 def get_license_options(ip_addr):
     """

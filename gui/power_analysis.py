@@ -1,3 +1,5 @@
+# gui/power_analysis.py
+
 import os, csv, math, time
 from datetime import datetime
 import tkinter as tk
@@ -10,7 +12,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from scpi.interface import connect_scope, safe_query
 from scpi.waveform import compute_power_from_scope
 from scpi.data import scpi_data
-from utils.debug import log_debug
+from utils.debug import log_debug, set_debug_level
 
 def setup_power_analysis_tab(tab_frame, ip, root):
     if app_state.is_logging_active:
@@ -171,10 +173,6 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
     ttk.Label(control_row, text="Interval (s):").grid(row=0, column=4, padx=(20, 3), sticky="e")
     ttk.Spinbox(control_row, from_=2, to=60, width=5, textvariable=refresh_interval).grid(row=0, column=5, padx=(0, 5), sticky="w")
-
-    # --- Result Display ---
-    #result_frame = ttk.LabelFrame(power_frame, text="📊 Analysis Output", padding=0)
-    #result_frame.grid(row=3, column=0, columnspan=2, sticky="nsew", padx=5, pady=5)
 
     # --- Custom Header with Inline DC Offset Status ---
     result_header = tk.Frame(power_frame, bg="#1a1a1a")
@@ -509,7 +507,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             vch = entry_vch.get().strip()
             ich = entry_ich.get().strip()
 
-            log_debug(f"📡 Analyzing power for V={vch}, I={ich}")
+            log_debug(f"📡 Analyzing power for V={vch}, I={ich}", level="MINIMAL")
 
             if not vch or not ich:
                 show_power_results({"Error": "Missing channel input"})
@@ -549,8 +547,8 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 if all(map(math.isfinite, [p, q, pf])):
                     pq_trail.append((p, q))
 
-                    log_debug(f"📈 Result — P={p:.3f} W, Q={q:.3f} VAR, PF={pf:.3f}")
-                    log_debug(f"📍 PQ added → now {len(pq_trail)} points")
+                    log_debug(f"📈 Result: P={p:.3f} W, Q={q:.3f} VAR, PF={pf:.3f}", level="MINIMAL")
+                    log_debug(f"📍 PQ now {len(pq_trail)} points")
 
                     if p > 0 and q > 0: quad = "I"
                     elif p < 0 and q > 0: quad = "II"

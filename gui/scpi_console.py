@@ -46,30 +46,28 @@ def setup_scpi_tab(tab_frame, ip):
     ttk.Button(right_frame, text="➡ Insert into Input", command=insert_selected_command).pack(pady=5)
     cmd_listbox.bind("<Double-Button-1>", lambda e: insert_selected_command())
 
-    # --- Load command list from file ---
     def load_known_commands():
         try:
             with open("scpi_command_list.txt", "r") as f:
                 return [line.strip() for line in f if line.strip()]
         except Exception as e:
-            log_debug(f"⚠️ Failed to load commands.txt: {e}")
+            log_debug(f"⚠️ Failed to load commands.txt: {e}", level="MINIMAL")
             return []
 
     for cmd in load_known_commands():
         cmd_listbox.insert(tk.END, cmd)
 
-    # --- Send SCPI command ---
     def send_scpi_command():
         cmd = scpi_input.get().strip()
         if not cmd:
             return
-        log_debug(f"📤 SCPI command sent by user: {cmd}")
+        log_debug(f"📤 SCPI command sent by user: {cmd}", level="MINIMAL")
 
         scope = scpi_data.get("scope")
         if not scope:
             msg = "❌ Not connected to scope"
             scpi_output.insert(tk.END, f"{msg}\n")
-            log_debug(msg)
+            log_debug(msg, level="MINIMAL")
             return
 
         try:
@@ -77,7 +75,7 @@ def setup_scpi_tab(tab_frame, ip):
                 resp = safe_query(scope, cmd, default="(no response)")
         except Exception as e:
             resp = f"❌ Exception: {e}"
-            log_debug(f"❌ Exception during SCPI command: {e}")
+            log_debug(f"❌ Exception during SCPI command: {e}", level="MINIMAL")
 
         scpi_output.insert(tk.END, f"> {cmd}\n{resp}\n\n")
         scpi_output.see(tk.END)

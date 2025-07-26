@@ -18,7 +18,7 @@ from gui.scpi_console import setup_scpi_tab
 from gui.logging_controls import setup_logging_tab
 from gui.marquee import attach_marquee
 from gui.power_analysis import setup_power_analysis_tab
-from utils.debug import attach_debug_widget, start_debug_updater, log_debug
+from utils.debug import attach_debug_widget, start_debug_updater, log_debug, set_debug_level
 from scpi.waveform import export_channel_csv
 from scpi.licenses import get_license_options
 from scpi.loop import start_scpi_loop
@@ -194,6 +194,31 @@ def main():
 
     # === Debug Tab ===
     debug_frame = tabs["Debug Log"]
+
+    debug_level_frame = tk.Frame(debug_frame, bg="#2d2d2d")
+    debug_level_frame.pack(fill="x", padx=5, pady=(5, 0))
+
+    # Left-aligned label
+    tk.Label(debug_level_frame, text="Debug Output Level:",
+             bg="#2d2d2d", fg="#bbbbbb", font=("TkDefaultFont", 9)).pack(side="left", padx=(10, 10))
+
+    # Spacer expands to push buttons right
+    tk.Frame(debug_level_frame, bg="#2d2d2d").pack(side="left", expand=True, fill="x")
+
+    # Right-aligned radio buttons
+    debug_var = tk.StringVar(value="FULL")
+
+    def on_debug_level_change():
+        from utils.debug import set_debug_level
+        set_debug_level(debug_var.get())
+
+    for level, label in [("FULL", "🛠 Full"), ("MINIMAL", "⚠️ Minimal")]:
+        tk.Radiobutton(debug_level_frame, text=label, variable=debug_var, value=level,
+            command=on_debug_level_change,
+            bg="#2d2d2d", fg="#ffffff", selectcolor="#555555",
+            activebackground="#333333", indicatoron=False,
+            relief="raised", width=10).pack(side="left", padx=5)
+
     text_widget = tk.Text(debug_frame, font=("Courier", 9), height=100,
                           bg="#1a1a1a", fg="#ffffff", insertbackground="#ffffff",
                           selectbackground="#333333", state=tk.DISABLED)
