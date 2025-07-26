@@ -59,6 +59,8 @@ def main():
         print("❌ No IP provided. Exiting.")
         return
     set_ip(ip)
+    scpi_data["ip"] = ip
+
 
     from scpi.interface import connect_scope, safe_query
     scope = connect_scope(ip)

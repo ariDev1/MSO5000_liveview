@@ -167,8 +167,8 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         # Try to read manually entered expected power
         try:
             exp_p = float(expected_power.get().strip())
-            if exp_p <= 0:
-                raise ValueError("Expected power must be > 0")
+            if exp_p == 0:
+                raise ValueError("Expected power must not be 0")
             log_debug(f"⚙️ Using manually entered expected P = {exp_p:.3f} W")
         except Exception as e:
             log_debug(f"⚠️ Invalid expected power: {e}")
@@ -213,6 +213,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             new_corr = exp_p / measured_p
             correction_factor.set(f"{new_corr:.4f}")
             log_debug(f"✅ Auto-calibrated correction factor: ×{new_corr:.4f}")
+            analyze_power()
 
         except Exception as e:
             log_debug(f"❌ Auto-calibration failed: {e}")
@@ -284,10 +285,20 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     text_result.config(state=tk.DISABLED)
 
     fig, ax = plt.subplots(figsize=(4, 3), dpi=100, facecolor="#1a1a1a")
-    canvas = FigureCanvasTkAgg(fig, master=power_frame)
+
+    # Create row to hold plot and selector side-by-side
+    pq_row = tk.Frame(power_frame, bg="#1a1a1a")
+    pq_row.grid(row=5, column=0, columnspan=2, sticky="nsew", padx=5, pady=(0, 4))
+    pq_row.columnconfigure(0, weight=1)
+
+    # ✅ Now safe to attach canvas to pq_row
+    canvas = FigureCanvasTkAgg(fig, master=pq_row)
     canvas_widget = canvas.get_tk_widget()
-    canvas_widget.grid(row=5, column=0, columnspan=2, sticky="nsew", padx=5, pady=(0, 4))
-    power_frame.rowconfigure(5, weight=2)  # new line
+    canvas_widget.pack(side="left", fill="both", expand=True)
+
+    # Row weights (important!)
+    power_frame.rowconfigure(5, weight=2)
+
 
     power_frame.rowconfigure(4, weight=1)  # text_result
     power_frame.rowconfigure(5, weight=2)  # PQ plot
@@ -511,7 +522,6 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         ax.set_ylabel("Reactive Power Q (VAR)")
         ax.set_title("PQ Operating Point", fontsize=10)
 
-        # Adaptive zoom range with fallback
         p_range = max(abs(p) * 1.5, 1.0)
         q_range = max(abs(q) * 1.5, 1.0)
         ax.set_xlim(-p_range, p_range)
@@ -550,13 +560,16 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         ax.annotate(f"Q = {q:.2f} VAR", xy=(p + 0.05*p, q/2), color="white", fontsize=9)
         ax.annotate(f"S = {S:.2f} VA", xy=(p/2, q/2), color="white", fontsize=9, ha="center")
 
-        # Annotate angle θ
-        arc_radius = 0.15 * max(p_range, q_range)
-        arc_theta = np.linspace(0, math.radians(theta_deg), 50)
-        arc_x = arc_radius * np.cos(arc_theta)
-        arc_y = arc_radius * np.sin(arc_theta)
-        ax.plot(arc_x, arc_y, color="grey", linewidth=1)
-        ax.text(arc_radius * 0.7, arc_radius * 0.3, f"θ = {theta_deg:.1f}°", color="orange", fontsize=9)
+        # Midpoint of hypotenuse
+        s_x = p / 2
+        s_y = q / 2
+
+        # Apparent Power label (already drawn)
+        ax.annotate(f"S = {S:.2f} VA", xy=(s_x, s_y), color="white", fontsize=9, ha="center")
+
+        # PF Angle label — now shifted further below
+        ax.text(s_x, s_y - 0.1 * q_range, f"θ = {theta_deg:.1f}°", color="orange", fontsize=9, ha="center")
+
 
         # Grid and legend
         ax.grid(True, linestyle="--", color="#444444", alpha=0.5)
@@ -785,4 +798,5 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         power_frame.after(1000, update_refresh_checkbox_state)
 
     update_refresh_checkbox_state()
+    draw_pq_plot(0.0, 0.0)
     tab_frame._shutdown = stop_auto_refresh
