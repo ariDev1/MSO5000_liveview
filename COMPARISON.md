@@ -29,6 +29,8 @@ This project isn't just an open-source alternative — it outperforms many comme
 - ✅ Live VNC screenshot view
 - ✅ Tabbed GUI for controls, logs, and measurement
 - ✅ Robust support for hacked firmware quirks
+- ✅ SCPI Console with self-test and live command injection
+- ✅ Auto-blacklisting of failing SCPI queries for stability
 
 **Commercial Tools:**
 - ❌ Often support only SCPI or screenshot, not both
@@ -61,6 +63,10 @@ This project isn't just an open-source alternative — it outperforms many comme
 - ✅ Real-time debug log
 - ✅ Channel controls, measurement toggles
 - ✅ Pause/resume/stop control
+- ✅ Live debug verbosity toggle (FULL vs MINIMAL)
+- ✅ Auto-calibration of probe correction based on expected power
+- ✅ Real-time energy display: Wh, VARh, VAh
+- ✅ Dynamic PQ plot with quadrant detection and trail fading
 
 **Commercial Tools:**
 - ❌ Outdated WinForms-style UI
@@ -87,13 +93,15 @@ This project isn't just an open-source alternative — it outperforms many comme
 
 ## ✅ Summary Comparison
 
-| Feature                          | This Tool ✅       | Common Commercial ❌       |
-|----------------------------------|--------------------|-----------------------------|
-| CSV export with timestamps       | ✅ Clean, usable    | ❌ Often broken or missing  |
-| Works on Linux / Docker          | ✅ Yes              | ❌ Rare                     |
-| Combined SCPI + screenshot       | ✅ Seamless         | ❌ Fragmented or absent     |
-| Free, open source, reproducible  | ✅ Fully            | ❌ Locked-down, Windows-only|
-| Modular, themed GUI              | ✅ Tkinter+Dark     | ❌ Outdated GUIs            |
+| Feature                          | This Tool ✅                     | Common Commercial ❌          |
+|----------------------------------|----------------------------------|-------------------------------|
+| CSV export with timestamps       | ✅ Single-file, per-sample, scaled | ❌ Often broken or missing     |
+| Works on Linux / Docker          | ✅ Fully portable via Docker      | ❌ Rare or unsupported         |
+| Combined SCPI + screenshot       | ✅ Seamless + tabbed GUI          | ❌ Fragmented or absent        |
+| Power analysis with PQ plot      | ✅ Real-time with θ, energy, PF   | ❌ Expensive add-ons or missing|
+| Logging + Power modes            | ✅ Clean separation + GUI toggles | ❌ One-shot or blocking modes  |
+| Free, open source, reproducible  | ✅ Fully                          | ❌ Locked-down, Windows-only   |
+| Modular, themed GUI              | ✅ Tkinter + Dark Mode            | ❌ Outdated WinForms           |
 
 ---
 

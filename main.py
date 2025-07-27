@@ -23,7 +23,7 @@ from scpi.waveform import export_channel_csv
 from scpi.licenses import get_license_options
 from scpi.loop import start_scpi_loop
 from scpi.data import scpi_data
-from scpi.interface import connect_scope
+from scpi.interface import connect_scope, safe_query
 from logger.longtime import start_logging, pause_resume, stop_logging
 from app.app_state import is_logging_active
 

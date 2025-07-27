@@ -4,6 +4,38 @@ All notable changes to this project are documented here.
 
 ---
 
+## v0.9.7 (2025-07-27)
+
+### ⚙️ Core & Backend Updates
+- Auto-generated `version.py` now uses UTC timestamps and supports Python <3.11
+- Dynamic SCPI blacklist growth based on timeouts and malformed responses
+- Improved IDN parsing and frequency reference handling at startup
+
+### ⚡ Power Analysis Overhaul
+- New PF angle (θ) calculation shown in output and PQ plot
+- Displays real-time energy stats: `Wh`, `VAh`, `VARh`
+- DC offset removal now visually marked in GUI
+- Refined scaling logic for clamp/shunt probes, with GUI feedback
+- Auto-calibration visibly updates correction factor with user feedback
+
+### 📈 Long-Time Measurement Enhancements
+- Channels now scaled using unit detection (Volt vs Amp)
+- Supports Vpp/Vavg/Vrms logging for CHx and MATHx in one CSV
+- Pause/resume logic improved and visually reflected in status area
+- Accurate sample timing via scheduler correction
+
+### 🧪 GUI Features
+- Debug log now supports toggle between FULL and MINIMAL output
+- System Info and Channel Info tabs support clipboard copy
+- New button for copying full CSV snapshot from all channels
+- License tab shows activated/trial options from Rigol scope (via HTTP)
+
+### 🐞 Misc
+- Clean separation between logging and power analysis modes
+- Better SCPI error handling in console and debug log
+
+---
+
 ## v0.9.6 (2025-07-24)
 
 ### 🐳 Docker Integration and GUI Access

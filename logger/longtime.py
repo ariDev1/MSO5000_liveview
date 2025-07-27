@@ -70,9 +70,14 @@ def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled,
                         log_debug("🛑 Logging stopped by user", level="MINIMAL")
                         break
 
-                    while pause_flag:
+                    if pause_flag:
                         status_callback("⏸ Paused")
+                    while pause_flag and not stop_flag:
                         time.sleep(0.5)
+                    if stop_flag:
+                        log_debug("🛑 Logging stopped during pause", level="MINIMAL")
+                        break
+
 
                     row = [datetime.now().isoformat()]
                     for ch in channels:
@@ -104,8 +109,10 @@ def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled,
                     if (i + 1) % 5 == 0 or i == total - 1:
                         status_callback(f"✅ Saved {i+1}/{total}")
 
-                    next_sample = start_time + (i + 1) * interval
+                    actual_sample_time = time.time()
+                    next_sample = actual_sample_time + interval
                     delay = next_sample - time.time()
+
                     if delay > 0:
                         time.sleep(delay)
                     else:

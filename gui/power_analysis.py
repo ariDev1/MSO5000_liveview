@@ -42,22 +42,22 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
     # Voltage Channel
     tk.Label(ch_input_frame, text="Voltage Ch:", bg="#226688", fg="white").grid(row=0, column=0, sticky="e", padx=(2, 2), pady=4)
-    entry_vch = ttk.Entry(ch_input_frame, width=8)
+    entry_vch = ttk.Entry(ch_input_frame, width=6)
     entry_vch.grid(row=0, column=1, sticky="w", padx=(0, 6), pady=4)
 
     # Current Channel
     tk.Label(ch_input_frame, text="Current Ch:", bg="#226688", fg="white").grid(row=0, column=2, sticky="e", padx=(2, 2), pady=4)
-    entry_ich = ttk.Entry(ch_input_frame, width=8)
+    entry_ich = ttk.Entry(ch_input_frame, width=6)
     entry_ich.grid(row=0, column=3, sticky="w", padx=(0, 6), pady=4)
 
     # Correction Factor Field
     tk.Label(ch_input_frame, text="Correction:", bg="#226688", fg="white").grid(row=0, column=4, sticky="e", padx=(2, 2), pady=4)
-    entry_corr = ttk.Entry(ch_input_frame, width=8, textvariable=correction_factor)
+    entry_corr = ttk.Entry(ch_input_frame, width=6, textvariable=correction_factor)
     entry_corr.grid(row=0, column=5, sticky="w", padx=(0, 6), pady=4)
 
     expected_power = tk.StringVar(value="")
     tk.Label(ch_input_frame, text="Expected P (W):", bg="#226688", fg="white").grid(row=0, column=6, sticky="e", padx=(2, 2), pady=4)
-    entry_expected = ttk.Entry(ch_input_frame, width=8, textvariable=expected_power)
+    entry_expected = ttk.Entry(ch_input_frame, width=6, textvariable=expected_power)
     entry_expected.grid(row=0, column=7, sticky="w", padx=(0, 6), pady=4)
 
     # Reference Info (shifted right)
@@ -109,12 +109,12 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         row=1, column=0, columnspan=6, sticky="w", padx=5, pady=(2, 8)
     )
 
-    entry_probe_value = ttk.Entry(probe_frame, width=10)
+    entry_probe_value = ttk.Entry(probe_frame, width=6)
     entry_probe_value.insert(0, "1.0")
     entry_probe_value.grid(row=0, column=3, sticky="w", padx=5)
 
     ttk.Label(probe_frame, text="→ Base Scale (A/V):").grid(row=0, column=4, sticky="e", padx=15)
-    entry_current_scale = ttk.Entry(probe_frame, width=10, state="readonly")
+    entry_current_scale = ttk.Entry(probe_frame, width=6, state="readonly")
     entry_current_scale.grid(row=0, column=5, sticky="w", padx=5)
 
     # Initialize calculated scale
@@ -165,14 +165,19 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         log_debug(f"🧪 GUI correction factor entry now = {entry_corr.get()}")
 
         # Try to read manually entered expected power
+        raw_exp_p = expected_power.get().strip()
+        if not raw_exp_p:
+            log_debug("⚠️ No expected power entered — please provide a value in watts")
+            return
         try:
-            exp_p = float(expected_power.get().strip())
+            exp_p = float(raw_exp_p)
             if exp_p == 0:
                 raise ValueError("Expected power must not be 0")
             log_debug(f"⚙️ Using manually entered expected P = {exp_p:.3f} W")
-        except Exception as e:
-            log_debug(f"⚠️ Invalid expected power: {e}")
+        except ValueError:
+            log_debug(f"⚠️ Invalid expected power input: '{raw_exp_p}' is not a valid number")
             return
+
 
         # Connect to scope
         from app.app_state import scope
@@ -247,11 +252,11 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     ttk.Button(control_row, text="📈 Plot Last Power Log",
            command=plot_last_power_log, style="Action.TButton").grid(row=0, column=2, padx=3)
     
-    ttk.Button(control_row, text="🧪 Auto-Calibrate", command=auto_calibrate, style="Action.TButton").grid(row=0, column=6, padx=3)
+    ttk.Button(control_row, text="⚙ Auto-Calibrate", command=auto_calibrate, style="Action.TButton").grid(row=0, column=6, padx=3)
     log_debug("🧪 Auto-calibrate button created and wired correctly")
 
     ttk.Label(control_row, text="Interval (s):").grid(row=0, column=4, padx=(20, 3), sticky="e")
-    ttk.Spinbox(control_row, from_=2, to=60, width=5, textvariable=refresh_interval).grid(row=0, column=5, padx=(0, 5), sticky="w")
+    ttk.Spinbox(control_row, from_=2, to=60, width=3, textvariable=refresh_interval).grid(row=0, column=5, padx=(0, 5), sticky="w")
 
     # --- Custom Header with Inline DC Offset Status ---
     result_header = tk.Frame(power_frame, bg="#1a1a1a")
@@ -695,7 +700,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                     pq_trail.append((p, q))
 
                     log_debug(f"📈 Result: P={p:.3f} W, Q={q:.3f} VAR, PF={pf:.3f}", level="MINIMAL")
-                    log_debug(f"📍 PQ now {len(pq_trail)} points")
+                    log_debug(f"📍 PQ now {len(pq_trail)} points out of {power_stats['count']} iterations")
 
                     if p > 0 and q > 0: quad = "I"
                     elif p < 0 and q > 0: quad = "II"
@@ -704,7 +709,8 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                     else: quad = "origin"
                     log_debug(f"🧭 Operating Point in Quadrant {quad}")
                 else:
-                    log_debug("⚠️ Non-finite P/Q/PF — skipping log")
+                    log_debug("⚠️ Skipped PQ log — Non-finite values detected:")
+                    log_debug(f"    P = {p}  |  Q = {q}  |  PF = {pf}")
 
             show_power_results(result)
 
