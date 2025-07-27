@@ -5,13 +5,11 @@ import os
 import time
 import threading
 from datetime import datetime, timedelta
-from utils.debug import log_debug, set_debug_level
 from scpi.waveform import get_channel_waveform_data
 from scpi.interface import safe_query
 from scpi.interface import scpi_lock
 from app.app_state import is_logging_active
 import app.app_state as app_state
-from scpi.interface import connect_scope
 from scpi.data import scpi_data
 
 is_logging = False

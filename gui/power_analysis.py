@@ -495,14 +495,23 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         if len(pq_trail) > MAX_TRAIL:
             pq_trail.pop(0)
 
-        draw_pq_plot(avg_p, avg_q)
+        from utils.metadata import get_combined_metadata
+        meta = get_combined_metadata(
+            entry_vch.get().strip(),
+            entry_ich.get().strip(),
+            probe_type.get(),
+            entry_current_scale.get(),
+            remove_dc_var.get()
+        )
+        draw_pq_plot(avg_p, avg_q, metadata=meta)
+
 
         text_result.insert(tk.END, "\n")
         text_result.insert(tk.END, f"Iterations: {power_stats['count']}    Elapsed: {elapsed_hms}\n")
         text_result.config(state=tk.DISABLED)
         tab_frame._shutdown = stop_auto_refresh
 
-    def draw_pq_plot(p, q):
+    def draw_pq_plot(p, q, metadata=None):
         ax.clear()
 
         # Set dark background
@@ -579,6 +588,12 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         # Grid and legend
         ax.grid(True, linestyle="--", color="#444444", alpha=0.5)
         ax.legend(loc="lower right", fontsize=8, facecolor="#1a1a1a", edgecolor="#444444", labelcolor="white")
+
+        # if metadata:
+        #     meta_text = "\n".join([f"{k}: {v}" for k, v in metadata.items()])
+        #     ax.text(1.02, 0.5, meta_text, transform=ax.transAxes,
+        #             fontsize=7, color="white", va="center", ha="left",
+        #             bbox=dict(facecolor="#222", edgecolor="gray", boxstyle="round,pad=0.3"))
 
         canvas.draw()
 
@@ -722,26 +737,6 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             app_state.is_power_analysis_active = False  # ✅ release lock no matter what
     
     ttk.Button(control_row, text="⚡ Measure Power", command=analyze_power, style="Action.TButton").grid(row=0, column=1, padx=3)
-
-    def update_current_scale(*args):
-        try:
-            val = float(entry_probe_value.get())
-            mode = probe_type.get()
-            if mode == "shunt":
-                scale = 1.0 / val
-            elif mode == "clamp":
-                scale = 1.0 / (val / 1000.0)
-            else:
-                scale = 1.0
-            entry_current_scale.configure(state="normal")
-            entry_current_scale.delete(0, tk.END)
-            entry_current_scale.insert(0, f"{scale:.4f}")
-            entry_current_scale.configure(state="readonly")
-        except Exception:
-            entry_current_scale.configure(state="normal")
-            entry_current_scale.delete(0, tk.END)
-            entry_current_scale.insert(0, "ERR")
-            entry_current_scale.configure(state="readonly")
 
     probe_type.trace_add("write", update_current_scale)
     entry_probe_value.bind("<KeyRelease>", update_current_scale)

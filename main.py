@@ -64,6 +64,14 @@ def main():
     scope = connect_scope(ip)
     if scope:
         try:
+            idn = safe_query(scope, "*IDN?")
+            os.makedirs("utils", exist_ok=True)
+            with open("utils/idn.txt", "w") as f:
+                f.write(idn.strip())
+            log_debug(f"📝 IDN saved to utils/idn.txt: {idn.strip()}")
+        except Exception as e:
+            log_debug(f"⚠️ Could not save IDN info to utils/idn.txt: {e}")
+        try:
             freq_ref = safe_query(scope, ":POWer:QUALity:FREQreference?", "N/A")
             log_debug(f"📡 Frequency Reference: {freq_ref}")
             scpi_data["freq_ref"] = freq_ref
@@ -134,53 +142,6 @@ def main():
         img_visible[0] = not img_visible[0]
 
     toggle_btn.config(command=toggle_image)
-
-    def update_status(message):
-        update_log_status(message)
-        if "finished" in message.lower() or "error" in message.lower():
-           update_log_buttons(state="idle")
-
-    def start_log_session():
-        try:
-            raw = entry_channels.get()
-            ch_list = []
-            for item in raw.split(","):
-                item = item.strip().upper()
-                if item.startswith("MATH") and item[4:].isdigit():
-                    ch_list.append(item)
-                elif item.isdigit():
-                    ch_list.append(int(item))
-
-            dur = float(entry_duration.get())
-            inter = float(entry_interval.get())
-
-            assert dur > 0 and inter > 0 and ch_list
-        except Exception as e:
-            update_log_status(f"❌ Invalid input: {e}")
-            return
-
-        update_log_buttons(state="logging", paused=False)
-        pause_button.config(text="⏸ Pause")
-
-        start_logging(None, ip, ch_list, dur, inter,
-                      vavg_var.get(), vrms_var.get(), update_status)
-        update_log_status("🔴 Logging started")
-
-    def toggle_pause():
-        paused = pause_resume()
-        if paused:
-            update_log_status("⏸ Paused")
-            pause_button.config(text="▶ Resume")
-            update_log_buttons(state="paused", paused=True)
-        else:
-            update_log_status("▶ Resumed")
-            pause_button.config(text="⏸ Pause")
-            update_log_buttons(state="logging", paused=False)
-
-    def stop_log_session():
-        stop_logging()
-        update_log_status("🛑 Stop requested")
-        update_log_buttons(state="idle")
 
     setup_licenses_tab(tabs["Licenses"], ip, root)
 

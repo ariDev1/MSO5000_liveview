@@ -9,8 +9,8 @@ from utils.debug import log_debug
 from scpi.waveform import get_channel_waveform_data, compute_power_from_scope
 
 def setup_scpi_tab(tab_frame, ip):
-    tab_frame.columnconfigure(0, weight=3)
-    tab_frame.columnconfigure(1, weight=1)
+    tab_frame.columnconfigure(0, weight=1)  # Left expands
+    tab_frame.columnconfigure(1, weight=0)  # Right fixed
     tab_frame.rowconfigure(0, weight=1)
 
     # --- Left Side (input + output + send) ---
@@ -24,25 +24,34 @@ def setup_scpi_tab(tab_frame, ip):
                           bg="#1a1a1a", fg="#ffffff", insertbackground="#ffffff",
                           selectbackground="#333333", wrap="none")
     scpi_data["scpi_output_widget"] = scpi_output
+    scpi_output.pack(fill="both", expand=True)
 
-    scpi_output.pack(fill="both", expand=False)
+    btn_row = tk.Frame(left_frame, bg="#1a1a1a")
+    btn_row.pack(pady=10, anchor="w", fill="x")
 
-    send_button = ttk.Button(left_frame, text="📡 Send")
-    send_button.pack(pady=10, anchor="w")
+    send_button = ttk.Button(btn_row, text="☢ Send", style="Action.TButton")
+    send_button.pack(side="left", padx=(0, 10), ipadx=8, ipady=2)
 
-    # Self-Test Button
-    selftest_button = ttk.Button(left_frame, text="🧪 Run Self-Test", command=lambda: run_self_test(scpi_output))
-    selftest_button.pack(pady=5, anchor="w")
+    selftest_button = ttk.Button(btn_row, text="✞ Run Self-Test", style="Action.TButton",
+                                 command=lambda: run_self_test(scpi_output))
+    selftest_button.pack(side="left", ipadx=8, ipady=2)
 
     # --- Right Side (command list + insert button) ---
-    right_frame = ttk.Frame(tab_frame)
-    right_frame.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
+    right_frame = tk.Frame(tab_frame, width=420, bg="#1a1a1a", highlightthickness=0)
+    right_frame.grid(row=0, column=1, sticky="ns", padx=5, pady=5)
+    right_frame.grid_propagate(False)
 
-    ttk.Label(right_frame, text="Known Commands:").pack(anchor="w", pady=(0, 5))
+    tk.Label(right_frame, text="Known Commands:",
+             bg="#1a1a1a", fg="#ffffff").pack(anchor="w", pady=(0, 5))
 
-    cmd_listbox = tk.Listbox(right_frame, bg="#1a1a1a", fg="#ffffff", selectbackground="#555555",
-                             height=16, exportselection=False)
-    cmd_listbox.pack(fill="both", expand=True)
+    cmd_listbox = tk.Listbox(
+        right_frame,
+        bg="#1a1a1a", fg="#ffffff",
+        selectbackground="#555555",
+        height=16, exportselection=False,
+        highlightthickness=0, relief="flat"
+    )
+    cmd_listbox.pack(fill="both", expand=True, padx=5, pady=(0, 5))
 
     def insert_selected_command():
         sel = cmd_listbox.curselection()
@@ -51,7 +60,10 @@ def setup_scpi_tab(tab_frame, ip):
             scpi_input.delete(0, tk.END)
             scpi_input.insert(0, selected_cmd)
 
-    ttk.Button(right_frame, text="➡ Insert into Input", command=insert_selected_command).pack(pady=5)
+    insert_button = ttk.Button(right_frame, text="➡ Send to Input", style="Action.TButton",
+                               command=insert_selected_command)
+    insert_button.pack(pady=(0, 10), padx=5, ipadx=8, ipady=2, fill="x")
+
     cmd_listbox.bind("<Double-Button-1>", lambda e: insert_selected_command())
 
     def load_known_commands():

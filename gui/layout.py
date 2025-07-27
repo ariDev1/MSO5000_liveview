@@ -2,6 +2,7 @@
 
 import tkinter as tk
 from tkinter import ttk
+from version import APP_NAME, VERSION, GIT_COMMIT
 
 DARK_BG = "#1a1a1a"
 DARK_FG = "#ffffff"
@@ -97,9 +98,21 @@ def setup_styles():
         ]
     )
 
+    style.configure("SCPI.TButton",
+        background=DARK_TAB_BG,
+        foreground=DARK_FG,
+        padding=6,
+        font=("TkDefaultFont", 10)
+    )
+    style.map("SCPI.TButton",
+        background=[("active", "#aa333")],
+        foreground=[("active", "#ffffff")]
+    )
+
+
 def create_main_gui(container, ip):
     root = container.winfo_toplevel()
-    root.title(f"MSO5000 Live Monitor - {ip}")
+    root.title(f"{APP_NAME} {VERSION} [{GIT_COMMIT}] 🢒 {ip}")
     root.geometry("1200x800")
     root.minsize(800, 600)
     root.configure(bg=DARK_BG)

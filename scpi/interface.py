@@ -23,6 +23,7 @@ def connect_scope(ip):
         # Quick test
         idn = scope.query("*IDN?")
         log_debug(f"✅ Connected: {idn}")
+
         return scope
 
     except Exception as e:
