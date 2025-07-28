@@ -193,6 +193,15 @@ Not affiliated with Rigol Technologies.
 
 ---
 
+## Branches
+
+- `master`: Stable, tested version — always works
+- `testing`: Work-in-progress branch — may break
+
+👉 Please do **not** push directly to `master`. All changes go into `testing` first.
+
+---
+
 ## 📖 Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for full version history.
