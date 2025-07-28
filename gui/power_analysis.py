@@ -299,7 +299,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
     # Output Text Box
     result_frame = tk.Frame(power_frame, bg="#202020", bd=1, relief="solid")
-    result_frame.grid(row=4, column=0, columnspan=2, sticky="nsew", padx=5, pady=(0, 5))
+    result_frame.grid(row=4, column=0, columnspan=2, sticky="nsew", padx=5, pady=(0, 0))
     power_frame.rowconfigure(4, weight=1)
 
     text_container = tk.Frame(result_frame, bg="#202020", padx=6, pady=4)
@@ -315,7 +315,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     # Plot Setup
     fig, ax = plt.subplots(figsize=(4, 3), dpi=100, facecolor="#1a1a1a")
     pq_row = tk.Frame(power_frame, bg="#1a1a1a")
-    pq_row.grid(row=5, column=0, columnspan=2, sticky="nsew", padx=5, pady=(0, 4))
+    pq_row.grid(row=5, column=0, columnspan=2, sticky="nsew", padx=(0, 0), pady=(0, 0))
     pq_row.columnconfigure(0, weight=1)
 
     canvas = FigureCanvasTkAgg(fig, master=pq_row)
@@ -348,7 +348,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         "Irms": ("Irms_sum", "A")
     }
 
-    def show_power_results(result):
+    def show_power_results(result, metadata):
         """Optimized result display with reduced string operations"""
         power_csv_path = global_power_csv_path[0]
 
@@ -401,11 +401,23 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
         # Additional calculations
         output_lines.append("\n")
-        Vrms = result.get("Vrms")
-        Irms = result.get("Irms")
 
-        if isinstance(Vrms, float) and isinstance(Irms, float) and Irms != 0:
+        #Vrms = result.get("Vrms")
+        #Irms = result.get("Irms")
+
+        #if isinstance(Vrms, float) and isinstance(Irms, float) and Irms != 0:
+        #    Z = Vrms / Irms
+        #    metadata["Z"] = Z
+        #    output_lines.append(f"{'Impedance (Z)':<22}: {format_si_optimized(Z, 'Ω'):<12}\n")
+        Vrms = result.get("Vrms", 0.0)
+        Irms = result.get("Irms", 0.0)
+
+        if isinstance(Vrms, float) and isinstance(Irms, float) and Irms > 1e-6:
             Z = Vrms / Irms
+            metadata["Z"] = Z
+            metadata["Vrms"] = Vrms
+            metadata["Irms"] = Irms
+
             output_lines.append(f"{'Impedance (Z)':<22}: {format_si_optimized(Z, 'Ω'):<12}\n")
 
         # Frequency reference
@@ -478,7 +490,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             pq_trail.pop(0)
 
         if optimizer.should_update_plot():
-            draw_pq_plot(avg_p, avg_q)
+            draw_pq_plot(avg_p, avg_q, metadata)
 
     def draw_pq_plot(p, q, metadata=None):
         """Optimized plot drawing with reduced redraws"""
@@ -500,10 +512,15 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         ax.axhline(0, color="#777777", linewidth=1)
         ax.axvline(0, color="#777777", linewidth=1)
 
-        # Labels and title
-        ax.set_xlabel("Real Power P (W)")
-        ax.set_ylabel("Reactive Power Q (VAR)")
-        ax.set_title("PQ Operating Point", fontsize=10)
+        # Axis labels inside
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        ax.text(0.5, 0.02, "Real Power P (W)", transform=ax.transAxes,
+                ha="center", va="bottom", fontsize=8, color="white")
+        ax.text(0.01, 0.97, "Reactive Power Q (VAR)", transform=ax.transAxes,
+                ha="left", va="top", fontsize=8, color="white", rotation="vertical")
+
+        ax.set_title("PQ Operating Point", fontsize=9)
 
         # Set limits
         p_range = max(abs(p) * 1.5, 1.0)
@@ -511,12 +528,10 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         ax.set_xlim(-p_range, p_range)
         ax.set_ylim(-q_range, q_range)
 
-        # Draw trail efficiently
+        # Draw trail with fade
         if len(pq_trail) > 1:
             trail_x, trail_y = zip(*pq_trail)
             ax.plot(trail_x, trail_y, color="#888888", linestyle="-", linewidth=1, alpha=0.4)
-
-            # Draw points with fading effect
             for i, (xp, yq) in enumerate(pq_trail):
                 fade = (i + 1) / len(pq_trail)
                 alpha = max(0.2, min(1.0, 0.2 + 0.8 * fade))
@@ -525,28 +540,71 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         # Quadrant labels
         quad_labels = [("I", 0.9, 0.9), ("II", 0.1, 0.9), ("III", 0.1, 0.1), ("IV", 0.9, 0.1)]
         for label, x, y in quad_labels:
-            ax.text(x, y, label, transform=ax.transAxes, fontsize=10, color="#bbbbbb")
+            ax.text(x, y, label, transform=ax.transAxes, fontsize=9, color="#bbbbbb")
 
-        # Power triangle
+        # Power triangle and angle
         S = math.hypot(p, q)
         theta_deg = math.degrees(math.atan2(q, p))
+        pf = abs(p / S) if S > 0 else 0.0
 
-        # Draw triangle lines
+        # Draw triangle
         ax.plot([0, p], [0, q], color="orange", linestyle="--", linewidth=1, label="PF Angle θ")
         ax.plot([p, p], [0, q], color="lime", linestyle="-", linewidth=1)
         ax.plot([0, p], [0, 0], color="cyan", linestyle="-", linewidth=1)
 
-        # Annotations
-        ax.annotate(f"P = {p:.2f} W", xy=(p/2, -0.07*q_range), color="white", fontsize=9, ha="center")
-        ax.annotate(f"Q = {q:.2f} VAR", xy=(p + 0.05*p_range, q/2), color="white", fontsize=9)
-        ax.annotate(f"S = {S:.2f} VA", xy=(p/2, q/2), color="white", fontsize=9, ha="center")
-        ax.text(p/2, q/2 - 0.1 * q_range, f"θ = {theta_deg:.1f}°", color="orange", fontsize=9, ha="center")
+        # Annotate triangle
+        ax.annotate(f"P = {p:.2f} W", xy=(p / 2, -0.07 * q_range), color="white", fontsize=8, ha="center")
+        ax.annotate(f"Q = {q:.2f} VAR", xy=(p + 0.05 * p_range, q / 2), color="white", fontsize=8)
+        ax.annotate(f"S = {S:.2f} VA", xy=(p / 2, q / 2), color="white", fontsize=8, ha="center")
+        ax.text(p / 2, q / 2 - 0.1 * q_range, f"θ = {theta_deg:.1f}°", color="orange", fontsize=8, ha="center")
+
+        # Compute triangle parameters
+        S = math.hypot(p, q)
+        theta_deg = math.degrees(math.atan2(q, p))
+        pf = abs(p / S) if S > 0 else 0.0
+        cos_theta = p / S if S > 0 else 0.0
+        sin_theta = q / S if S > 0 else 0.0
+
+        # Impedance (requires Vrms and Irms)
+        try:
+            z = metadata.get("Z", 0.0)
+            z_angle = theta_deg  # Same as θ since Z ∝ V/I with angle θ
+        except Exception:
+            z = 0
+            z_angle = 0
+
+        summary_text = (
+            # Group 1 — Power triangle
+            f"PF = {pf:.3f}\n"
+            f"θ = {theta_deg:.1f}°\n"
+            f"S = {S:.2f} VA\n"
+            f"───\n"
+
+            # Group 2 — Complex form + trig
+            f"S → ({p:.2f} + j{q:.2f}) VA\n"
+            f"|S| = {S:.2f} VA\n"
+            f"cos(θ) = {cos_theta:.3f}\n"
+            f"sin(θ) = {sin_theta:.3f}\n"
+            f"───\n"
+
+            # Group 3 — Impedance
+            f"Z = {z:.3f} Ω ∠ {z_angle:.1f}°"
+        )
+
+        ax.text(0.98, 0.98, summary_text,
+                transform=ax.transAxes, ha="right", va="top",
+                fontsize=7.5, color="white", linespacing=1.2,
+                bbox=dict(facecolor="#1a1a1a", edgecolor="#444444", boxstyle="round,pad=0.3"))
 
         # Grid and legend
         ax.grid(True, linestyle="--", color="#444444", alpha=0.5)
-        ax.legend(loc="lower right", fontsize=8, facecolor="#1a1a1a", edgecolor="#444444", labelcolor="white")
+        ax.legend(loc="lower right", fontsize=7, facecolor="#1a1a1a", edgecolor="#444444", labelcolor="white")
+
+        # Balanced spacing
+        fig.subplots_adjust(left=0.08, right=0.92, top=0.94, bottom=0.08)
 
         canvas.draw()
+
 
     def analyze_power():
         """Optimized power analysis with reduced overhead"""
@@ -589,8 +647,13 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
                 if all(map(math.isfinite, [p, q, pf])):
                     log_debug(f"📈 Result: P={p:.3f} W, Q={q:.3f} VAR, PF={pf:.3f}", level="MINIMAL")
+            
+            metadata = {
+                "Vrms": result.get("Vrms", 0),
+                "Irms": result.get("Irms", 0)
+            }
 
-            show_power_results(result)
+            show_power_results(result, metadata)
 
         except Exception as e:
             log_debug(f"⚠️ Power analysis error: {e}")
