@@ -591,14 +591,14 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             f"Z = {z:.3f} Ω ∠ {z_angle:.1f}°"
         )
 
-        ax.text(0.98, 0.98, summary_text,
-                transform=ax.transAxes, ha="right", va="top",
+        ax.text(0.98, 0.05, summary_text,
+                transform=ax.transAxes, ha="right", va="bottom",
                 fontsize=7.5, color="white", linespacing=1.2,
                 bbox=dict(facecolor="#1a1a1a", edgecolor="#444444", boxstyle="round,pad=0.3"))
 
         # Grid and legend
         ax.grid(True, linestyle="--", color="#444444", alpha=0.5)
-        ax.legend(loc="lower right", fontsize=7, facecolor="#1a1a1a", edgecolor="#444444", labelcolor="white")
+        ax.legend(loc="lower left", fontsize=7, facecolor="#1a1a1a", edgecolor="#444444", labelcolor="white")
 
         # Balanced spacing
         fig.subplots_adjust(left=0.08, right=0.92, top=0.94, bottom=0.08)
