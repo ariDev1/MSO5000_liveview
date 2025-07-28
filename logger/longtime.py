@@ -11,6 +11,7 @@ from scpi.interface import scpi_lock
 from app.app_state import is_logging_active
 import app.app_state as app_state
 from scpi.data import scpi_data
+from utils.debug import log_debug, set_debug_level
 
 is_logging = False
 pause_flag = False
