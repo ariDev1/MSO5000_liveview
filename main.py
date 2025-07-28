@@ -4,6 +4,10 @@ import argparse
 import sys
 import time
 import math
+import threading
+import threading
+from gui.activity_monitor import start_meter_thread, draw_meter
+
 from version import APP_NAME, VERSION, GIT_COMMIT, BUILD_DATE
 import csv
 from datetime import datetime
@@ -88,6 +92,29 @@ def main():
     root = tk.Tk()
     main_frame = tk.Frame(root, bg="#1a1a1a")
     main_frame.pack(fill="both", expand=True)
+
+
+    # --- Analog Activity Meter Bar ---
+    activity_meter = tk.Canvas(main_frame, height=10, bg="#181818", highlightthickness=0)
+    activity_meter.pack(fill="x", padx=10, pady=(4, 0))
+
+    from app import app_state
+
+    meter_state = {"level": 0.0, "phase": 0}
+    meter_lock = threading.Lock()
+
+    # Start background thread to update meter_state
+    threading.Thread(target=start_meter_thread, args=(app_state, meter_state, meter_lock), daemon=True).start()
+    def update_meter():
+        with meter_lock:
+            level = meter_state["level"]
+            phase = meter_state["phase"]
+        draw_meter(activity_meter, level, phase)
+        activity_meter.after(50, update_meter)  # redraw every 50ms for smoothness
+
+
+
+
 
     #Top Row
     button_row = tk.Frame(main_frame, bg="#1a1a1a")
@@ -201,6 +228,7 @@ def main():
         stop_logging()            # stop long-time logging if running
         root.destroy()            # close the GUI
 
+    update_meter()
     root.mainloop()
 
 if __name__ == "__main__":
