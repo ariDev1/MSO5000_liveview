@@ -4,6 +4,8 @@ import pyvisa
 from utils.debug import log_debug, set_debug_level
 from config import BLACKLISTED_COMMANDS
 import threading
+import app.app_state as app_state
+
 scpi_lock = threading.Lock()
 
 def connect_scope(ip):
@@ -35,9 +37,12 @@ def safe_query(scope, command, default="N/A"):
         log_debug(f"⚠️ Skipped blacklisted SCPI: {command}")
         return default
     try:
+        app_state.is_scpi_busy = True   #scpi busy now
         response = scope.query(command).strip()
+        app_state.is_scpi_busy = True   #scpi done
         return response if response else default
     except Exception as e:
+        app_state.is_scpi_busy = False  #ensure it's reset on error too!
         log_debug(f"❌ SCPI error [{command}]: {e}")
         if "TMO" in str(e) or "Timeout" in str(e):
             BLACKLISTED_COMMANDS.append(command)

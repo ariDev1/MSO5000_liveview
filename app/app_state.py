@@ -4,3 +4,4 @@ scope_ip = None
 is_logging_active = False
 is_power_analysis_active = False
 power_csv_path = None
+is_scpi_busy = False
