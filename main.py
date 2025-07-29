@@ -43,6 +43,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", action="store_true")
     parser.add_argument("--samples", type=int, help="Override number of waveform points (default: 1200)")
+    parser.add_argument("--noMarquee", action="store_true", help="Disable the marquee text at the top")
     args = parser.parse_args()
 
     if args.version:
@@ -133,7 +134,12 @@ def main():
     button_frame.grid(row=0, column=1, sticky="e")
 
     # Attach marquee to left subframe
-    marquee = attach_marquee(marquee_frame, file_path="marquee.txt", url="https://aether-research.institute/MSO5000/marquee.txt")
+    if not args.noMarquee:
+        marquee = attach_marquee(
+            marquee_frame,
+            file_path="marquee.txt",
+            url="https://aether-research.institute/MSO5000/marquee.txt"
+        )
 
     # Buttons to right subframe
     toggle_btn = ttk.Button(button_frame, text="🗗 Hide", style="TButton")
