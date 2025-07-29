@@ -608,11 +608,14 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
     def analyze_power():
         """Optimized power analysis with reduced overhead"""
+
         if app_state.is_logging_active:
             log_debug("⚠️ Cannot start power analysis during logging")
             return
 
         app_state.is_power_analysis_active = True
+
+        start = time.time()  # ⏱ start timing
 
         try:
             vch = entry_vch.get().strip()
@@ -647,7 +650,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
                 if all(map(math.isfinite, [p, q, pf])):
                     log_debug(f"📈 Result: P={p:.3f} W, Q={q:.3f} VAR, PF={pf:.3f}", level="MINIMAL")
-            
+
             metadata = {
                 "Vrms": result.get("Vrms", 0),
                 "Irms": result.get("Irms", 0)
@@ -660,6 +663,14 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             show_power_results({"Error": str(e)})
 
         finally:
+            elapsed = time.time() - start  # ⏱ end timing
+            interval_s = refresh_interval.get()
+            log_debug(f"⏱ analyze_power() took {elapsed:.2f}s", level="MINIMAL")
+
+            if elapsed > interval_s:
+                lag = elapsed - interval_s
+                log_debug(f"⚠️ Behind schedule by {lag:.2f}s", level="MINIMAL")
+
             app_state.is_power_analysis_active = False
 
     # Button for manual analysis
@@ -668,6 +679,8 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     # Auto-refresh functionality with optimized loop
     def refresh_power_loop():
         nonlocal power_stats
+
+        power_frame.after(refresh_interval.get() * 1000, refresh_power_loop)
 
         if not refresh_var.get():
             # Reset stats when auto-refresh is turned off
@@ -688,9 +701,6 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                     log_debug("⚠️ Auto-refresh paused — logging in progress")
             except Exception as e:
                 log_debug(f"⚠️ Auto-refresh error: {e}")
-
-        # Schedule next refresh
-        power_frame.after(refresh_interval.get() * 1000, refresh_power_loop)
 
     # Start the refresh loop
     refresh_power_loop()
