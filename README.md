@@ -36,6 +36,16 @@ This tool provides a live view and SCPI-based data extraction from a **Rigol MSO
 
 ---
 
+## 📘 Whitepaper: Understanding Accurate Power Measurement
+
+We published a technical whitepaper detailing how to achieve scientifically valid power analysis using the Rigol MSO5000 series oscilloscopes. It compares the internal PQ tool vs. our custom MSO5000 Live Monitor.
+
+🔗 [Read the Whitepaper (Markdown)](docs/Rigol_Power_Analysis_Whitepaper.md)
+
+> Covers probe configuration, scaling errors, and real-world lab results with shunts and differential probes.
+
+---
+
 ## 🛠️ Installation (Tested on Ubuntu 24.04 Noble)
 
 ### 📦 Native Python Setup
