@@ -8,24 +8,53 @@ import app.app_state as app_state
 
 scpi_lock = threading.Lock()
 
-def connect_scope(ip):
-    try:
-        rm = pyvisa.ResourceManager()
-        resources = rm.list_resources()
-        log_debug(f"🔎 VISA resources: {resources}")
+# def connect_scope(ip):
+#     try:
+#         rm = pyvisa.ResourceManager()
+#         resources = rm.list_resources()
+#         log_debug(f"🔎 VISA resources: {resources}")
 
-        resource_str = f"TCPIP0::{ip}::INSTR"
-        log_debug(f"🔌 Trying to connect to: {resource_str}")
-        scope = rm.open_resource(resource_str)
+#         resource_str = f"TCPIP0::{ip}::INSTR"
+#         log_debug(f"🔌 Trying to connect to: {resource_str}")
+#         scope = rm.open_resource(resource_str)
+
+#         # Basic setup
+#         scope.timeout = 5000
+#         scope.chunk_size = 102400
+
+#         # Quick test
+#         idn = scope.query("*IDN?")
+#         log_debug(f"✅ Connected: {idn}")
+
+#         return scope
+
+#     except Exception as e:
+#         log_debug(f"❌ SCPI connect error: {e}")
+#         return None
+
+def connect_scope(ip=None):
+    from pyvisa import ResourceManager
+    rm = ResourceManager()
+    try:
+        if ip:
+            resource_str = f"TCPIP0::{ip}::INSTR"
+            log_debug(f"🔌 Trying LAN: {resource_str}")
+            scope = rm.open_resource(resource_str)
+        else:
+            # USB fallback
+            usb_resources = [r for r in rm.list_resources() if "USB" in r]
+            if not usb_resources:
+                log_debug("❌ No USB devices found")
+                return None
+            resource_str = usb_resources[0]
+            log_debug(f"🔌 Trying USB: {resource_str}")
+            scope = rm.open_resource(resource_str)
 
         # Basic setup
         scope.timeout = 5000
         scope.chunk_size = 102400
-
-        # Quick test
         idn = scope.query("*IDN?")
         log_debug(f"✅ Connected: {idn}")
-
         return scope
 
     except Exception as e:
