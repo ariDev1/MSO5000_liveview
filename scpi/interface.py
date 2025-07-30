@@ -36,25 +36,23 @@ scpi_lock = threading.Lock()
 
 def connect_scope(ip=None):
     import pyvisa
-    rm = pyvisa.ResourceManager()
+    from utils.debug import log_debug
+
     try:
+        rm = pyvisa.ResourceManager('@py')
+
         if ip:
             resource_str = f"TCPIP0::{ip}::INSTR"
             log_debug(f"🔌 Trying LAN: {resource_str}")
-            scope = rm.open_resource(resource_str)
         else:
-            # Try USB device fallback
-            usb_devices = [res for res in rm.list_resources() if "USB" in res and "::INSTR" in res]
-            if not usb_devices:
-                log_debug("❌ No USB VISA devices found")
-                return None
-            resource_str = usb_devices[0]
+            # Manual fallback for known MSO5000 USBTMC ID
+            resource_str = "USB0::0x1AB1::0x04CE::?*::INSTR"
             log_debug(f"🔌 Trying USB: {resource_str}")
-            scope = rm.open_resource(resource_str)
 
-        # Common config
+        scope = rm.open_resource(resource_str)
         scope.timeout = 5000
         scope.chunk_size = 102400
+
         idn = scope.query("*IDN?")
         log_debug(f"✅ Connected: {idn}")
         return scope
