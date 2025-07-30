@@ -8,6 +8,8 @@ import app.app_state as app_state
 
 scpi_lock = threading.Lock()
 
+
+# LAN only
 # def connect_scope(ip):
 #     try:
 #         rm = pyvisa.ResourceManager()
@@ -33,24 +35,24 @@ scpi_lock = threading.Lock()
 #         return None
 
 def connect_scope(ip=None):
-    from pyvisa import ResourceManager
-    rm = ResourceManager()
+    import pyvisa
+    rm = pyvisa.ResourceManager()
     try:
         if ip:
             resource_str = f"TCPIP0::{ip}::INSTR"
             log_debug(f"🔌 Trying LAN: {resource_str}")
             scope = rm.open_resource(resource_str)
         else:
-            # USB fallback
-            usb_resources = [r for r in rm.list_resources() if "USB" in r]
-            if not usb_resources:
-                log_debug("❌ No USB devices found")
+            # Try USB device fallback
+            usb_devices = [res for res in rm.list_resources() if "USB" in res and "::INSTR" in res]
+            if not usb_devices:
+                log_debug("❌ No USB VISA devices found")
                 return None
-            resource_str = usb_resources[0]
+            resource_str = usb_devices[0]
             log_debug(f"🔌 Trying USB: {resource_str}")
             scope = rm.open_resource(resource_str)
 
-        # Basic setup
+        # Common config
         scope.timeout = 5000
         scope.chunk_size = 102400
         idn = scope.query("*IDN?")
