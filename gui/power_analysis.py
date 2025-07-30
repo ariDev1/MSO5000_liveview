@@ -493,14 +493,17 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             draw_pq_plot(avg_p, avg_q, metadata)
 
     def draw_pq_plot(p, q, metadata=None):
-        """Optimized plot drawing with reduced redraws"""
+        import math
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import FancyBboxPatch
+
         ax.clear()
+        fig = ax.get_figure()
 
         # Set dark theme
         ax.set_facecolor("#1a1a1a")
         fig.patch.set_facecolor("#1a1a1a")
 
-        # Style axes
         for spine in ax.spines.values():
             spine.set_color('#cccccc')
         ax.tick_params(axis='both', colors='white')
@@ -508,11 +511,9 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         ax.yaxis.label.set_color('white')
         ax.title.set_color('white')
 
-        # Grid lines
         ax.axhline(0, color="#777777", linewidth=1)
         ax.axvline(0, color="#777777", linewidth=1)
 
-        # Axis labels inside
         ax.set_xlabel("")
         ax.set_ylabel("")
         ax.text(0.5, 0.02, "Real Power P (W)", transform=ax.transAxes,
@@ -522,13 +523,26 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
         ax.set_title("PQ Operating Point", fontsize=9)
 
-        # Set limits
+        # Determine ranges
         p_range = max(abs(p) * 1.5, 1.0)
         q_range = max(abs(q) * 1.5, 1.0)
         ax.set_xlim(-p_range, p_range)
         ax.set_ylim(-q_range, q_range)
 
-        # Draw trail with fade
+        # Determine quadrant
+        def determine_quadrant(p, q):
+            if p >= 0 and q >= 0:
+                return 1
+            elif p < 0 and q >= 0:
+                return 2
+            elif p < 0 and q < 0:
+                return 3
+            else:
+                return 4
+
+        quadrant = determine_quadrant(p, q)
+
+        # Draw trail
         if len(pq_trail) > 1:
             trail_x, trail_y = zip(*pq_trail)
             ax.plot(trail_x, trail_y, color="#888888", linestyle="-", linewidth=1, alpha=0.4)
@@ -542,52 +556,56 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         for label, x, y in quad_labels:
             ax.text(x, y, label, transform=ax.transAxes, fontsize=9, color="#bbbbbb")
 
-        # Power triangle and angle
+        # Power triangle
         S = math.hypot(p, q)
-        theta_deg = math.degrees(math.atan2(q, p))
-        pf = abs(p / S) if S > 0 else 0.0
+        theta_rad = math.atan2(q, p)
+        theta_deg = math.degrees(theta_rad)
+        pf = p / S if S > 0 else 0.0
+        cos_theta = p / S if S > 0 else 0.0
+        sin_theta = q / S if S > 0 else 0.0
 
-        # Draw triangle
+        # Triangle edges
         ax.plot([0, p], [0, q], color="orange", linestyle="--", linewidth=1, label="PF Angle θ")
         ax.plot([p, p], [0, q], color="lime", linestyle="-", linewidth=1)
         ax.plot([0, p], [0, 0], color="cyan", linestyle="-", linewidth=1)
 
-        # Annotate triangle
-        ax.annotate(f"P = {p:.2f} W", xy=(p / 2, -0.07 * q_range), color="white", fontsize=8, ha="center")
-        ax.annotate(f"Q = {q:.2f} VAR", xy=(p + 0.05 * p_range, q / 2), color="white", fontsize=8)
+        # Adaptive label positions
+        if quadrant == 1:
+            ax.annotate(f"P = {p:.2f} W", xy=(p / 2, -0.05 * q_range), color="white", fontsize=8, ha="center")
+            ax.annotate(f"Q = {q:.2f} VAR", xy=(p + 0.05 * p_range, q / 2), color="white", fontsize=8, ha="left")
+        elif quadrant == 2:
+            ax.annotate(f"P = {p:.2f} W", xy=(p / 2, -0.05 * q_range), color="white", fontsize=8, ha="center")
+            ax.annotate(f"Q = {q:.2f} VAR", xy=(p - 0.10 * p_range, q / 2), color="white", fontsize=8, ha="right")
+        elif quadrant == 3:
+            ax.annotate(f"P = {p:.2f} W", xy=(p / 2, +0.05 * q_range), color="white", fontsize=8, ha="center")
+            ax.annotate(f"Q = {q:.2f} VAR", xy=(p - 0.10 * p_range, q / 2), color="white", fontsize=8, ha="right")
+        elif quadrant == 4:
+            ax.annotate(f"P = {p:.2f} W", xy=(p / 2, +0.05 * q_range), color="white", fontsize=8, ha="center")
+            ax.annotate(f"Q = {q:.2f} VAR", xy=(p + 0.05 * p_range, q / 2), color="white", fontsize=8, ha="left")
+
         ax.annotate(f"S = {S:.2f} VA", xy=(p / 2, q / 2), color="white", fontsize=8, ha="center")
         ax.text(p / 2, q / 2 - 0.1 * q_range, f"θ = {theta_deg:.1f}°", color="orange", fontsize=8, ha="center")
 
-        # Compute triangle parameters
-        S = math.hypot(p, q)
-        theta_deg = math.degrees(math.atan2(q, p))
-        pf = abs(p / S) if S > 0 else 0.0
-        cos_theta = p / S if S > 0 else 0.0
-        sin_theta = q / S if S > 0 else 0.0
-
-        # Impedance (requires Vrms and Irms)
+        # Impedance info
         try:
             z = metadata.get("Z", 0.0)
-            z_angle = theta_deg  # Same as θ since Z ∝ V/I with angle θ
+            z_angle = theta_deg
         except Exception:
-            z = 0
-            z_angle = 0
+            z = 0.0
+            z_angle = 0.0
+
+        pf_color = "lime" if pf >= 0 else "red"
 
         summary_text = (
-            # Group 1 — Power triangle
             f"PF = {pf:.3f}\n"
             f"θ = {theta_deg:.1f}°\n"
             f"S = {S:.2f} VA\n"
             f"───\n"
-
-            # Group 2 — Complex form + trig
             f"S → ({p:.2f} + j{q:.2f}) VA\n"
             f"|S| = {S:.2f} VA\n"
             f"cos(θ) = {cos_theta:.3f}\n"
             f"sin(θ) = {sin_theta:.3f}\n"
             f"───\n"
-
-            # Group 3 — Impedance
             f"Z = {z:.3f} Ω ∠ {z_angle:.1f}°"
         )
 
@@ -596,13 +614,9 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 fontsize=7.5, color="white", linespacing=1.2,
                 bbox=dict(facecolor="#1a1a1a", edgecolor="#444444", boxstyle="round,pad=0.3"))
 
-        # Grid and legend
         ax.grid(True, linestyle="--", color="#444444", alpha=0.5)
         ax.legend(loc="lower left", fontsize=7, facecolor="#1a1a1a", edgecolor="#444444", labelcolor="white")
-
-        # Balanced spacing
         fig.subplots_adjust(left=0.08, right=0.92, top=0.94, bottom=0.08)
-
         canvas.draw()
 
 
