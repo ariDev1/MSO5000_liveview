@@ -58,16 +58,14 @@ def main():
         config.WAV_POINTS = args.samples
         print(f"🔧 Overridden WAV_POINTS to {args.samples}")
 
-    ip = input("Enter RIGOL MSO5000 IP address (leave blank for USB): ").strip()
-
+    ip = input("Enter RIGOL MSO5000 IP address: ").strip()
     if not ip:
-        print("🔌 No IP provided — trying USB connection")
-        scope = connect_scope(None)
-        set_ip("USB")
-    else:
-        scope = connect_scope(ip)
-        set_ip(ip)
-        scpi_data["ip"] = ip
+        print("🔌 No IP provided")
+        return
+
+    scope = connect_scope(ip)
+    set_ip(ip)
+    scpi_data["ip"] = ip
 
     if scope:
         try:
@@ -94,7 +92,6 @@ def main():
     app_state.scope_ip = ip
 
     start_scpi_loop(ip if ip else "USB")
-
 
     #Entry Point
     root = tk.Tk()
