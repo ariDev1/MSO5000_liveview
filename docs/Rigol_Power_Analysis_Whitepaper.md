@@ -226,11 +226,9 @@ In this setup, even if the signal is acquired via a differential probe, accurate
 
 This highlights the value of independent measurement pipelines such as MSO5000 Live Monitor: they allow flexibility in probe usage while preserving scientific validity.
 
-## 8. Summary and Checklist for Reliable Power Measurements
-
 ---
 
-## 9. How to Reproduce This Issue (Step-by-Step)
+## 8. How to Reproduce This Issue (Step-by-Step)
 
 To independently verify the Rigol MSO5000's flawed PQ behavior, follow these steps:
 
@@ -271,6 +269,8 @@ To independently verify the Rigol MSO5000's flawed PQ behavior, follow these ste
 This test can be performed without high voltages or complex circuits—just a resistor load, low-voltage supply, and 1mΩ shunt. Screenshots and logs will confirm the tool’s internal misbehavior.
 
 ---
+
+## 9. Summary and Checklist for Reliable Power Measurements
 
 For accurate and meaningful power analysis on the Rigol MSO5000, users should follow this checklist:
 
