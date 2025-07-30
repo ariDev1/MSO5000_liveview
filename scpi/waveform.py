@@ -124,6 +124,7 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
     from scpi.interface import scpi_lock, safe_query
     import numpy as np
     from utils.debug import log_debug
+    import math
 
     chan_v = voltage_ch if str(voltage_ch).startswith("MATH") else f"CHAN{voltage_ch}"
     chan_i = current_ch if str(current_ch).startswith("MATH") else f"CHAN{current_ch}"
@@ -137,6 +138,8 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
 
     log_debug(f"📊 Analyzing: Voltage = {chan_v}, Current = {chan_i}", level="MINIMAL")
     log_debug(f"⚙️ Current scaling factor: {current_scale:.4f} A/V", level="MINIMAL")
+    probe_reported = safe_query(scope, f":{chan_i}:PROB?", "1.0")
+    log_debug(f"🧪 {chan_i} :PROB? = {probe_reported}", level="MINIMAL")
 
     with scpi_lock:
         scope.write(":WAV:FORM BYTE")
@@ -145,8 +148,6 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
 
         # Voltage channel
         scope.write(f":WAV:SOUR {chan_v}")
-        confirmed_vsrc = safe_query(scope, ":WAV:SOUR?")
-        log_debug(f"🧪 Confirmed scope voltage source: {confirmed_vsrc}")
         pre_v = scope.query(":WAV:PRE?").split(",")
         xinc = float(pre_v[4])
         xorig = float(pre_v[5])
@@ -157,8 +158,6 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
 
         # Current channel
         scope.write(f":WAV:SOUR {chan_i}")
-        confirmed_isrc = safe_query(scope, ":WAV:SOUR?")
-        log_debug(f"🧪 Confirmed scope current source: {confirmed_isrc}")
         pre_i = scope.query(":WAV:PRE?").split(",")
         yinc_i = float(pre_i[7])
         yorig_i = float(pre_i[8])
@@ -171,53 +170,35 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
 
     # Decode waveforms
     t = xorig + np.arange(len(raw_v)) * xinc
-
-    probe_v = float(safe_query(scope, f":{chan_v}:PROB?", "1.0"))
     v = ((raw_v - yref_v) * yinc_v + yorig_v)
-    log_debug(f"⚠️ CH{voltage_ch} probe multiplier reported = {probe_v}, but already applied by scope.")
-
     i = ((raw_i - yref_i) * yinc_i + yorig_i) * current_scale
 
     if remove_dc:
         v -= np.mean(v)
         i -= np.mean(i)
 
-
-    # Power calculations
+    # Instantaneous power
     p_inst = v * i
     P = np.mean(p_inst)
     Vrms = np.sqrt(np.mean(v**2))
     Irms = np.sqrt(np.mean(i**2))
     S = Vrms * Irms
-    Q = np.sqrt(max(S**2 - P**2, 0))
-    PF = P / S if S != 0 else 0
-    PF = math.copysign(abs(PF), P)  # Ensure PF sign matches P
 
-    # Phase shift via FFT (simple method)
+    # Phase shift via FFT
     fft_v = np.fft.fft(v)
     fft_i = np.fft.fft(i)
     phase_v = np.angle(fft_v[1])
     phase_i = np.angle(fft_i[1])
-
-    # Frequency estimate via FFT peak detection
-    dt = t[1] - t[0] if len(t) > 1 else 1e-6
-    freqs = np.fft.fftfreq(len(t), d=dt)
-    v_freq = abs(freqs[np.argmax(np.abs(fft_v[1:len(fft_v)//2])) + 1])
-    i_freq = abs(freqs[np.argmax(np.abs(fft_i[1:len(fft_i)//2])) + 1])
-
     phase_shift_rad = phase_v - phase_i
-    phase_shift_deg = np.rad2deg(phase_shift_rad)
-    phase_shift_deg = (phase_shift_deg + 180) % 360 - 180  # wrap to [-180, 180]
+    phase_shift_deg = (np.rad2deg(phase_shift_rad) + 180) % 360 - 180
 
-    log_debug(f"🧪 Analyzer Vrms = {Vrms:.3f} V — Should match CH{voltage_ch}")
-    log_debug(f"🧪 Analyzer Irms = {Irms:.3f} A — Should match CH{current_ch}")
+    Q = S * np.sin(phase_shift_rad)
+    PF = P / S if S != 0 else 0.0
+    PF = math.copysign(abs(PF), P)  # PF sign follows P
+
+    log_debug(f"🧪 Analyzer Vrms = {Vrms:.3f} V — Should match {chan_v}")
+    log_debug(f"🧪 Analyzer Irms = {Irms:.3f} A — Should match {chan_i}")
     log_debug(f"📐 Phase shift (v vs i): {phase_shift_deg:.2f}°")
-
-    log_debug(f"📊 Real Power P = {P:.3f} W", level="MINIMAL")
-    log_debug(f"📊 Apparent Power S = {S:.3f} VA", level="MINIMAL")
-    log_debug(f"📊 Reactive Power Q = {Q:.3f} VAR", level="MINIMAL")
-    log_debug(f"📊 Power Factor PF = {PF:.4f}", level="MINIMAL")
-
 
     return {
         "Time": t,
@@ -230,7 +211,5 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
         "Power Factor": PF,
         "Phase Angle (deg)": phase_shift_deg,
         "Vrms": Vrms,
-        "Irms": Irms,
-        #"Freq_V": v_freq,
-        #"Freq_I": i_freq
+        "Irms": Irms
     }
