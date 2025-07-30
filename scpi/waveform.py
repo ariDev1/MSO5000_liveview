@@ -128,6 +128,13 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
     chan_v = voltage_ch if str(voltage_ch).startswith("MATH") else f"CHAN{voltage_ch}"
     chan_i = current_ch if str(current_ch).startswith("MATH") else f"CHAN{current_ch}"
 
+    # Check if scope channel is already showing current in Amps
+    unit_i = safe_query(scope, f":{chan_i}:UNIT?", "VOLT").strip().upper()
+    log_debug(f"🧪 {chan_i} UNIT? → {unit_i}", level="MINIMAL")
+
+    if unit_i == "AMP" and current_scale != 1.0:
+        log_debug(f"⚠️ {chan_i} is in AMP mode, but current_scale = {current_scale:.4f}. For correct results, set probe value = 1.0", level="FULL")
+
     log_debug(f"📊 Analyzing: Voltage = {chan_v}, Current = {chan_i}", level="MINIMAL")
     log_debug(f"⚙️ Current scaling factor: {current_scale:.4f} A/V", level="MINIMAL")
 
@@ -205,6 +212,12 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
     log_debug(f"🧪 Analyzer Vrms = {Vrms:.3f} V — Should match CH{voltage_ch}")
     log_debug(f"🧪 Analyzer Irms = {Irms:.3f} A — Should match CH{current_ch}")
     log_debug(f"📐 Phase shift (v vs i): {phase_shift_deg:.2f}°")
+
+    log_debug(f"📊 Real Power P = {P:.3f} W", level="MINIMAL")
+    log_debug(f"📊 Apparent Power S = {S:.3f} VA", level="MINIMAL")
+    log_debug(f"📊 Reactive Power Q = {Q:.3f} VAR", level="MINIMAL")
+    log_debug(f"📊 Power Factor PF = {PF:.4f}", level="MINIMAL")
+
 
     return {
         "Time": t,
