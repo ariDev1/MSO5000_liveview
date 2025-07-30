@@ -35,30 +35,50 @@ scpi_lock = threading.Lock()
 #         return None
 
 def connect_scope(ip=None):
-    import pyvisa
+    from types import SimpleNamespace
     from utils.debug import log_debug
+    import time
+
+    if ip:
+        log_debug("🔌 LAN requested — using VISA connection")
+        import pyvisa
+        rm = pyvisa.ResourceManager()
+        resource_str = f"TCPIP0::{ip}::INSTR"
+        try:
+            scope = rm.open_resource(resource_str)
+            scope.timeout = 5000
+            scope.chunk_size = 102400
+            log_debug(f"✅ Connected: {scope.query('*IDN?')}")
+            return scope
+        except Exception as e:
+            log_debug(f"❌ LAN connect error: {e}")
+            return None
+
+    # Raw USB fallback
+    log_debug("🔌 Trying raw USB via /dev/usbtmc0")
+
+    def write(cmd):
+        with open("/dev/usbtmc0", "wb", buffering=0) as f:
+            f.write((cmd.strip() + '\n').encode())
+
+    def query(cmd, timeout=1.0):
+        with open("/dev/usbtmc0", "wb+", buffering=0) as f:
+            f.write((cmd.strip() + '\n').encode())
+            time.sleep(timeout)
+            return f.read(512).decode(errors="ignore").strip()
+
+    scope = SimpleNamespace()
+    scope.query = query
+    scope.write = write
+    scope.timeout = 1000
+    scope.chunk_size = 102400
 
     try:
-        rm = pyvisa.ResourceManager('@py')
-
-        if ip:
-            resource_str = f"TCPIP0::{ip}::INSTR"
-            log_debug(f"🔌 Trying LAN: {resource_str}")
-        else:
-            # Manual fallback for known MSO5000 USBTMC ID
-            resource_str = "USB0::0x1AB1::0x04CE::?*::INSTR"
-            log_debug(f"🔌 Trying USB: {resource_str}")
-
-        scope = rm.open_resource(resource_str)
-        scope.timeout = 5000
-        scope.chunk_size = 102400
-
         idn = scope.query("*IDN?")
-        log_debug(f"✅ Connected: {idn}")
+        log_debug(f"✅ Connected (raw USB): {idn}")
         return scope
-
     except Exception as e:
-        log_debug(f"❌ SCPI connect error: {e}")
+        log_debug(f"❌ USB /dev/usbtmc0 error: {e}")
         return None
 
 def safe_query(scope, command, default="N/A"):
