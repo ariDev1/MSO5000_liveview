@@ -40,28 +40,28 @@ def connect_scope(ip=None):
     import time
 
     if ip:
-        log_debug("🔌 LAN requested — using VISA connection")
+        # Normal LAN connection
         import pyvisa
         rm = pyvisa.ResourceManager()
-        resource_str = f"TCPIP0::{ip}::INSTR"
         try:
-            scope = rm.open_resource(resource_str)
+            scope = rm.open_resource(f"TCPIP0::{ip}::INSTR")
             scope.timeout = 5000
             scope.chunk_size = 102400
-            log_debug(f"✅ Connected: {scope.query('*IDN?')}")
+            idn = scope.query("*IDN?")
+            log_debug(f"✅ Connected (LAN): {idn}")
             return scope
         except Exception as e:
             log_debug(f"❌ LAN connect error: {e}")
             return None
 
-    # Raw USB fallback
-    log_debug("🔌 Trying raw USB via /dev/usbtmc0")
+    # Raw USB via /dev/usbtmc0
+    log_debug("🔌 Attempting raw USB /dev/usbtmc0 fallback")
 
     def write(cmd):
         with open("/dev/usbtmc0", "wb", buffering=0) as f:
             f.write((cmd.strip() + '\n').encode())
 
-    def query(cmd, timeout=1.0):
+    def query(cmd, timeout=0.2):
         with open("/dev/usbtmc0", "wb+", buffering=0) as f:
             f.write((cmd.strip() + '\n').encode())
             time.sleep(timeout)
@@ -70,12 +70,12 @@ def connect_scope(ip=None):
     scope = SimpleNamespace()
     scope.query = query
     scope.write = write
-    scope.timeout = 1000
+    scope.timeout = 5000
     scope.chunk_size = 102400
 
     try:
         idn = scope.query("*IDN?")
-        log_debug(f"✅ Connected (raw USB): {idn}")
+        log_debug(f"✅ Connected (USB raw): {idn}")
         return scope
     except Exception as e:
         log_debug(f"❌ USB /dev/usbtmc0 error: {e}")
