@@ -609,10 +609,25 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             f"Z = {z:.3f} Ω ∠ {z_angle:.1f}°"
         )
 
-        ax.text(0.98, 0.05, summary_text,
-                transform=ax.transAxes, ha="right", va="bottom",
+        # Choose corner position based on quadrant
+        if quadrant == 1:
+            box_x, box_y = 0.05, 0.10
+            ha, va = "left", "bottom"
+        elif quadrant == 2:
+            box_x, box_y = 0.95, 0.10
+            ha, va = "right", "bottom"
+        elif quadrant == 3:
+            box_x, box_y = 0.98, 0.90
+            ha, va = "right", "top"
+        elif quadrant == 4:
+            box_x, box_y = 0.05, 0.90
+            ha, va = "left", "top"
+
+        ax.text(box_x, box_y, summary_text,
+                transform=ax.transAxes, ha=ha, va=va,
                 fontsize=7.5, color="white", linespacing=1.2,
                 bbox=dict(facecolor="#1a1a1a", edgecolor="#444444", boxstyle="round,pad=0.3"))
+
 
         ax.grid(True, linestyle="--", color="#444444", alpha=0.5)
         ax.legend(loc="lower left", fontsize=7, facecolor="#1a1a1a", edgecolor="#444444", labelcolor="white")

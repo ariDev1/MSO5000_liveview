@@ -131,15 +131,15 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
 
     # Check if scope channel is already showing current in Amps
     unit_i = safe_query(scope, f":{chan_i}:UNIT?", "VOLT").strip().upper()
-    log_debug(f"🧪 {chan_i} UNIT? → {unit_i}", level="MINIMAL")
+    log_debug(f"🧪 {chan_i} UNIT? → {unit_i}")
 
     if unit_i == "AMP" and current_scale != 1.0:
         log_debug(f"⚠️ {chan_i} is in AMP mode, but current_scale = {current_scale:.4f}. For correct results, set probe value = 1.0", level="FULL")
 
     log_debug(f"📊 Analyzing: Voltage = {chan_v}, Current = {chan_i}", level="MINIMAL")
-    log_debug(f"⚙️ Current scaling factor: {current_scale:.4f} A/V", level="MINIMAL")
+    log_debug(f"⚙️ Current scaling factor: {current_scale:.4f} A/V")
     probe_reported = safe_query(scope, f":{chan_i}:PROB?", "1.0")
-    log_debug(f"🧪 {chan_i} :PROB? = {probe_reported}", level="MINIMAL")
+    log_debug(f"🧪 {chan_i} :PROB? = {probe_reported}")
 
     with scpi_lock:
         scope.write(":WAV:FORM BYTE")
