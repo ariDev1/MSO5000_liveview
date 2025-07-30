@@ -7,6 +7,13 @@ This tool provides a live view and SCPI-based data extraction from a **Rigol MSO
 
 ![Screenshot](docs/screenshot.png)
 
+
+**True power computation** is performed via pointwise multiplication of voltage and current waveforms followed by averaging:
+
+# $P = \frac{1}{N} \sum_{n=1}^{N} v_n \cdot i_n$
+
+This method remains accurate for arbitrary waveshapes and is not dependent on sinusoidal assumptions.
+
 ---
 
 ## 🧩 Features

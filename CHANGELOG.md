@@ -1,6 +1,33 @@
 # 📖 Changelog
 
 All notable changes to this project are documented here.
+---
+
+## v0.9.8 (2025-07-30)
+
+### 🧠 Power Factor Polarity Fix & PQ Accuracy
+- ✅ Fixed: PF polarity and PF angle (θ) sign now correctly reflect real/reactive power direction
+- 📐 Accurate quadrant labeling with signed PF and θ, based on FFT phase shift
+- 🔼 Impedance `Z` and angle now shown in summary (Vrms / Irms with ∠θ)
+- 🔃 Heatmap-style PQ plot enhanced with trailing fade and quadrant visuals
+
+### 📈 Real-Time Analyzer Improvements
+- 📝 PNG summary plots now include operator name, scope model/serial/firmware
+- 🕒 Power logging timestamped with ISO-8601 format
+- 🗜️ Optimized SCPI waveform fetch logic to reduce overhead and sync issues
+- 🧪 Vrms/Irms/P/S/Q/PF/Z computations match Rigol results even for distorted waveforms
+
+### ⚡ GUI Refinements & Usability
+- 👁️ Power tab uses refined SI formatting for better readability
+- 🧮 Auto-calibration now auto-corrects using entered expected power
+- 🛑 Live power analysis disables conflicting long-time logging safely
+- 📤 CSV export includes all energy metrics and PF angle history
+
+### 🐞 Stability & Edge Case Handling
+- Fixed: edge-case NaN values in PF angle
+- Fixed: probe multiplier warning clarified to avoid confusion
+- Improved error resilience during scope disconnect or empty waveform fetch
+- Internal debug logs include phase trace and FFT-derived frequency
 
 ---
 

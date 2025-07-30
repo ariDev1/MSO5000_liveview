@@ -5,7 +5,6 @@ import sys
 import time
 import math
 import threading
-import threading
 from gui.activity_monitor import start_meter_thread, draw_meter
 
 from version import APP_NAME, VERSION, GIT_COMMIT, BUILD_DATE
@@ -61,12 +60,13 @@ def main():
 
     ip = input("Enter RIGOL MSO5000 IP address: ").strip()
     if not ip:
-        print("❌ No IP provided. Exiting.")
+        print("🔌 No IP provided")
         return
+
+    scope = connect_scope(ip)
     set_ip(ip)
     scpi_data["ip"] = ip
 
-    scope = connect_scope(ip)
     if scope:
         try:
             idn = safe_query(scope, "*IDN?")
@@ -82,12 +82,16 @@ def main():
             scpi_data["freq_ref"] = freq_ref
         except Exception as e:
             log_debug(f"⚠️ Could not get frequency reference: {e}")
+    else:
+        print("❌ Could not connect to scope — exiting.")
+        return
 
+    # Now safe to set scope globally
     import app.app_state as app_state
     app_state.scope = scope
     app_state.scope_ip = ip
 
-    start_scpi_loop(ip)
+    start_scpi_loop(ip if ip else "USB")
 
     #Entry Point
     root = tk.Tk()
