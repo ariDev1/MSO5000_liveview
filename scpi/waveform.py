@@ -10,6 +10,54 @@ from config import WAV_POINTS
 from scpi.interface import safe_query
 from scpi.interface import scpi_lock
 
+def fetch_waveform_with_fallback(scope, chan):
+    from scpi.interface import scpi_lock
+    import numpy as np
+    import app.app_state as app_state
+
+    with scpi_lock:
+        if not app_state.raw_mode_failed_once:
+            try:
+                scope.write(":WAV:FORM BYTE")
+                scope.write(":WAV:MODE RAW")
+                scope.write(":WAV:POIN:MODE RAW")
+                scope.write(f":WAV:POIN {WAV_POINTS}")
+                scope.write(f":WAV:SOUR {chan}")
+                scope.query(":WAV:PRE?")
+                time.sleep(0.2)
+                pre = scope.query(":WAV:PRE?").split(",")
+                xinc = float(pre[4])
+                xorig = float(pre[5])
+                yinc = float(pre[7])
+                yorig = float(pre[8])
+                yref = float(pre[9])
+                raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
+                if len(raw) < WAV_POINTS * 0.8:
+                    log_debug(f"⚠️ RAW mode gave only {len(raw)} samples — falling back to screen mode")
+                    raise RuntimeError("RAW_INCOMPLETE")
+                return raw, xinc, xorig, yinc, yorig, yref
+
+            except Exception as e:
+                log_debug(f"⚠️ RAW failed: {e} — fallback to NORM")
+                app_state.raw_mode_failed_once = True
+
+        # fallback mode
+        scope.write(":WAV:MODE NORM")
+        scope.write(":WAV:POIN:MODE RAW")
+        scope.write(f":WAV:POIN {WAV_POINTS}")
+        scope.write(f":WAV:SOUR {chan}")
+        scope.query(":WAV:PRE?")
+        time.sleep(0.1)
+        pre = scope.query(":WAV:PRE?").split(",")
+        xinc = float(pre[4])
+        xorig = float(pre[5])
+        yinc = float(pre[7])
+        yorig = float(pre[8])
+        yref = float(pre[9])
+        raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
+        return raw, xinc, xorig, yinc, yorig, yref
+
+
 def export_channel_csv(scope, channel, outdir="oszi_csv"):
     chan = channel if str(channel).startswith("MATH") else f"CHAN{channel}"
     try:
@@ -17,34 +65,16 @@ def export_channel_csv(scope, channel, outdir="oszi_csv"):
             return None
 
         with scpi_lock:
-            scope.write(":WAV:FORM BYTE")
-            scope.write(":WAV:MODE NORM")
-            scope.write(":WAV:POIN:MODE RAW")
-            scope.write(f":WAV:POIN {WAV_POINTS}")
-            scope.write(f":WAV:SOUR {chan}")
-            scope.query(":WAV:PRE?")  # Rigol quirk workaround
-            time.sleep(0.1)
-
-            pre = scope.query(":WAV:PRE?").split(",")
-            xinc = float(pre[4])
-            xorig = float(pre[5])
-            yinc = float(pre[7])
-            yorig = float(pre[8])
-            yref = float(pre[9])
-            probe = float(safe_query(scope, f":{chan}:PROB?", "1.0"))
-
-            raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
+            raw, xinc, xorig, yinc, yorig, yref = fetch_waveform_with_fallback(scope, chan)
 
         if len(raw) == 0:
             log_debug(f"⚠️ No waveform data for {chan}")
             return None
 
-        times = xorig + np.arange(len(raw)) * xinc
-        volts = ((raw - yref) * yinc + yorig) * probe
-
-
-        times = xorig + np.arange(len(raw)) * xinc
         probe = float(safe_query(scope, f":{chan}:PROB?", "1.0"))
+
+        times = xorig + np.arange(len(raw)) * xinc
+        
         volts = ((raw - yref) * yinc + yorig) * probe
 
         os.makedirs(outdir, exist_ok=True)
@@ -71,27 +101,18 @@ def export_channel_csv(scope, channel, outdir="oszi_csv"):
         log_debug(f"❌ Error exporting {chan}: {e}")
         return None
 
-
 def get_channel_waveform_data(scope, channel, use_simple_calc=True):
     try:
         chan = channel if str(channel).startswith("MATH") else f"CHAN{channel}"
         with scpi_lock:
-            if safe_query(scope, f":{chan}:DISP?") != "1":
+            raw, _, _, yinc, yorig, yref = fetch_waveform_with_fallback(scope, chan)
+            if len(raw) == 0:
                 return None, None, None
-
-            scope.write(":WAV:FORM BYTE")
-            scope.write(":WAV:MODE NORM")
-            scope.write(":WAV:POIN:MODE RAW")
-            scope.write(f":WAV:POIN {WAV_POINTS}")
-            scope.write(f":WAV:SOUR {chan}")
-            scope.query(":WAV:PRE?")  # Rigol quirk workaround
-            time.sleep(0.1)
-
-            pre = scope.query(":WAV:PRE?").split(",")
-            yinc = float(pre[7])
-            yorig = float(pre[8])
-            yref = float(pre[9])
-            raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
+            volts = (raw - yref) * yinc + yorig
+            vpp = volts.max() - volts.min()
+            vavg = volts.mean()
+            vrms = np.sqrt(np.mean(np.square(volts)))
+            return vpp, vavg, vrms
 
         if len(raw) == 0:
             return None, None, None
@@ -129,40 +150,58 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
     chan_v = voltage_ch if str(voltage_ch).startswith("MATH") else f"CHAN{voltage_ch}"
     chan_i = current_ch if str(current_ch).startswith("MATH") else f"CHAN{current_ch}"
 
-    # Check if scope channel is already showing current in Amps
     unit_i = safe_query(scope, f":{chan_i}:UNIT?", "VOLT").strip().upper()
     log_debug(f"🧪 {chan_i} UNIT? → {unit_i}")
-
     if unit_i == "AMP" and current_scale != 1.0:
-        log_debug(f"⚠️ {chan_i} is in AMP mode, but current_scale = {current_scale:.4f}. For correct results, set probe value = 1.0", level="FULL")
+        log_debug(f"⚠️ {chan_i} is in AMP mode, but current_scale = {current_scale:.4f}. Set probe = 1.0", level="FULL")
 
     log_debug(f"📊 Analyzing: Voltage = {chan_v}, Current = {chan_i}", level="MINIMAL")
     log_debug(f"⚙️ Current scaling factor: {current_scale:.4f} A/V")
     probe_reported = safe_query(scope, f":{chan_i}:PROB?", "1.0")
     log_debug(f"🧪 {chan_i} :PROB? = {probe_reported}")
 
-    with scpi_lock:
-        scope.write(":WAV:FORM BYTE")
-        scope.write(":WAV:MODE NORM")
-        scope.write(":WAV:POIN:MODE RAW")
+    def fetch_waveform(channel):
+        try:
+            scope.write(":WAV:FORM BYTE")
+            scope.write(":WAV:MODE RAW")
+            scope.write(":WAV:POIN:MODE RAW")
+            scope.write(f":WAV:POIN {WAV_POINTS}")
+            scope.write(f":WAV:SOUR {channel}")
+            scope.query(":WAV:PRE?")
+            time.sleep(0.2)
+            pre = scope.query(":WAV:PRE?").split(",")
+            xinc = float(pre[4])
+            xorig = float(pre[5])
+            yinc = float(pre[7])
+            yorig = float(pre[8])
+            yref = float(pre[9])
+            raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
+            if len(raw) < WAV_POINTS * 0.8:
+                log_debug(f"⚠️ RAW mode returned only {len(raw)} of {WAV_POINTS} samples — falling back to screen mode.")
+                raise RuntimeError("RAW_MODE_FAILED")
 
-        # Voltage channel
-        scope.write(f":WAV:SOUR {chan_v}")
-        pre_v = scope.query(":WAV:PRE?").split(",")
-        xinc = float(pre_v[4])
-        xorig = float(pre_v[5])
-        yinc_v = float(pre_v[7])
-        yorig_v = float(pre_v[8])
-        yref_v = float(pre_v[9])
-        raw_v = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
+            return raw, xinc, xorig, yinc, yorig, yref
+        except Exception as e:
+            log_debug(f"⚠️ RAW mode failed for {channel}: {e}")
+            # Fallback to NORM mode
+            scope.write(":WAV:MODE NORM")
+            scope.write(":WAV:POIN:MODE RAW")
+            scope.write(f":WAV:POIN {WAV_POINTS}")
+            scope.write(f":WAV:SOUR {channel}")
+            scope.query(":WAV:PRE?")
+            time.sleep(0.1)
+            pre = scope.query(":WAV:PRE?").split(",")
+            xinc = float(pre[4])
+            xorig = float(pre[5])
+            yinc = float(pre[7])
+            yorig = float(pre[8])
+            yref = float(pre[9])
+            raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
+            return raw, xinc, xorig, yinc, yorig, yref
 
-        # Current channel
-        scope.write(f":WAV:SOUR {chan_i}")
-        pre_i = scope.query(":WAV:PRE?").split(",")
-        yinc_i = float(pre_i[7])
-        yorig_i = float(pre_i[8])
-        yref_i = float(pre_i[9])
-        raw_i = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
+    raw_v, xinc, xorig, yinc_v, yorig_v, yref_v = fetch_waveform_with_fallback(scope, chan_v)
+    raw_i, _,    _,     yinc_i, yorig_i, yref_i = fetch_waveform_with_fallback(scope, chan_i)
+
 
     if len(raw_v) == 0 or len(raw_i) == 0:
         log_debug("⚠️ Empty waveform data — aborting power analysis")
@@ -177,14 +216,12 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
         v -= np.mean(v)
         i -= np.mean(i)
 
-    # Instantaneous power
     p_inst = v * i
     P = np.mean(p_inst)
     Vrms = np.sqrt(np.mean(v**2))
     Irms = np.sqrt(np.mean(i**2))
     S = Vrms * Irms
 
-    # Phase shift via FFT
     fft_v = np.fft.fft(v)
     fft_i = np.fft.fft(i)
     phase_v = np.angle(fft_v[1])
@@ -194,8 +231,9 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
 
     Q = S * np.sin(phase_shift_rad)
     PF = P / S if S != 0 else 0.0
-    PF = math.copysign(abs(PF), P)  # PF sign follows P
+    PF = math.copysign(abs(PF), P)
 
+    log_debug(f"🔢 Received {len(raw_v)} V-samples, {len(raw_i)} I-samples")
     log_debug(f"🧪 Analyzer Vrms = {Vrms:.3f} V — Should match {chan_v}")
     log_debug(f"🧪 Analyzer Irms = {Irms:.3f} A — Should match {chan_i}")
     log_debug(f"📐 Phase shift (v vs i): {phase_shift_deg:.2f}°")

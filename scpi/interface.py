@@ -19,7 +19,7 @@ def connect_scope(ip):
         scope = rm.open_resource(resource_str)
 
         # Basic setup
-        scope.timeout = 5000
+        scope.timeout = 10000
         scope.chunk_size = 102400
 
         # Quick test

@@ -710,7 +710,9 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
         except Exception as e:
             log_debug(f"⚠️ Power analysis error: {e}")
-            show_power_results({"Error": str(e)})
+            #show_power_results({"Error": str(e)})
+            show_power_results({"Error": str(e)}, {})
+
 
         finally:
             elapsed = time.time() - start  # ⏱ end timing
