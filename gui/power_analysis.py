@@ -294,8 +294,12 @@ def setup_power_analysis_tab(tab_frame, ip, root):
              bg="#1a1a1a", fg="white").grid(row=0, column=0, sticky="w")
 
     dc_status_var = tk.StringVar(value="DC Offset Removal is OFF — full waveform is analyzed.")
+    offset_status_var = tk.StringVar(value="")
     tk.Label(result_header, textvariable=dc_status_var, bg="#1a1a1a", fg="#cccccc",
              font=("TkDefaultFont", 9)).grid(row=0, column=1, sticky="e", padx=(10, 5))
+    offset_status_label = tk.Label(result_header, textvariable=offset_status_var,
+        bg="#1a1a1a", fg="#ff9999", font=("TkDefaultFont", 9))
+    offset_status_label.grid(row=1, column=1, sticky="e", padx=(10, 5))
 
     # Output Text Box
     result_frame = tk.Frame(power_frame, bg="#202020", bd=1, relief="solid")
@@ -658,6 +662,23 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             if not scope:
                 show_power_results({"Error": "Scope not connected"})
                 return
+
+            chan_v = vch if vch.startswith("MATH") else f"CHAN{vch}"
+            chan_i = ich if ich.startswith("MATH") else f"CHAN{ich}"
+            try:
+                v_offset = float(safe_query(scope, f":{chan_v}:OFFS?", "0"))
+                i_offset = float(safe_query(scope, f":{chan_i}:OFFS?", "0"))
+            except Exception as e:
+                log_debug(f"⚠️ Failed to read channel offset: {e}")
+                v_offset, i_offset = 0.0, 0.0
+
+            if abs(v_offset) > 0.01 or abs(i_offset) > 0.01:
+                log_debug(f"⚠️ Offset active! Voltage Ch={chan_v} = {v_offset:.3f} V, Current Ch={chan_i} = {i_offset:.3f} V — results may be distorted!", level="MINIMAL")
+                offset_status_var.set(f"⚠ Offset active: V={v_offset:.2f} V, I={i_offset:.2f} V — waveform is shifted!")
+                offset_status_label.config(fg="#ff9999")
+            else:
+                offset_status_var.set("✓ No active offset — raw signal used.")
+                offset_status_label.config(fg="#00dd88")
 
             # Use cached scaling calculation
             scaling = optimizer.get_cached_scale(

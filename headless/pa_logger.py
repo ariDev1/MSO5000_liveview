@@ -58,6 +58,22 @@ def main():
     app_state.scope = scope
     app_state.scope_ip = args.ip
 
+    vch = args.vch if args.vch.startswith("MATH") else f"CHAN{args.vch}"
+    ich = args.ich if args.ich.startswith("MATH") else f"CHAN{args.ich}"
+
+    try:
+        v_offset = float(safe_query(scope, f":{vch}:OFFS?", "0"))
+        i_offset = float(safe_query(scope, f":{ich}:OFFS?", "0"))
+    except Exception as e:
+        log_debug(f"⚠️ Failed to read offset: {e}")
+        v_offset, i_offset = 0.0, 0.0
+
+    if abs(v_offset) > 0.01 or abs(i_offset) > 0.01:
+        log_debug(f"⚠️ Offset active! Vch={vch} = {v_offset:.2f} V, Ich={ich} = {i_offset:.2f} V — results may be distorted!", level="MINIMAL")
+        print(f"⚠️ WARNING: Channel offset is active! V={v_offset:.2f} V, I={i_offset:.2f} V — power analysis may be inaccurate.")
+    else:
+        print("✓ No active channel offset detected.")
+
     if args.output:
         csv_path = args.output
     else:
