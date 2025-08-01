@@ -120,6 +120,7 @@ def run_self_test(output):
     try:
         idn = safe_query(scope, "*IDN?", "N/A")
         write(f"✅ Scope ID: {idn}")
+        scope.write(":STOP")
         time.sleep(0.5)
 
         for ch in [1]:
@@ -129,12 +130,15 @@ def run_self_test(output):
             write(f"✅ CH{ch}: Scale={scale}, Unit={unit}, Probe={prob}x")
             time.sleep(0.5)
 
-        vpp, vavg, vrms = get_channel_waveform_data(scope, 1)
-        if vrms is not None:
-            write(f"✅ Vrms = {vrms:.3f} V")
-            time.sleep(0.5)
-        else:
-            write("❌ Failed to fetch waveform data from CH1")
+        try:
+            vpp, vavg, vrms = get_channel_waveform_data(scope, 1)
+            if vrms is not None:
+                write(f"✅ Vrms = {vrms:.3f} V")
+            else:
+                write("❌ Vrms value was None")
+        except Exception as e:
+            write(f"❌ Exception during waveform fetch: {e}")
+
 
         result = compute_power_from_scope(scope, 1, 2)
         if result:

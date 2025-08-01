@@ -10,21 +10,19 @@ from config import WAV_POINTS
 from scpi.interface import safe_query
 from scpi.interface import scpi_lock
 
-def fetch_waveform_with_fallback(scope, chan):
-    from scpi.interface import scpi_lock
-    import numpy as np
+def fetch_waveform_with_fallback(scope, chan, retries=1):
     import app.app_state as app_state
 
-    with scpi_lock:
-        if not app_state.raw_mode_failed_once:
-            try:
+    def try_fetch(mode_label):
+        try:
+            with scpi_lock:
                 scope.write(":WAV:FORM BYTE")
-                scope.write(":WAV:MODE RAW")
+                scope.write(f":WAV:MODE {mode_label}")
                 scope.write(":WAV:POIN:MODE RAW")
                 scope.write(f":WAV:POIN {WAV_POINTS}")
                 scope.write(f":WAV:SOUR {chan}")
                 scope.query(":WAV:PRE?")
-                time.sleep(0.2)
+                time.sleep(0.1)
                 pre = scope.query(":WAV:PRE?").split(",")
                 xinc = float(pre[4])
                 xorig = float(pre[5])
@@ -32,114 +30,133 @@ def fetch_waveform_with_fallback(scope, chan):
                 yorig = float(pre[8])
                 yref = float(pre[9])
                 raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
-                if len(raw) < WAV_POINTS * 0.8:
-                    log_debug(f"⚠️ RAW mode gave only {len(raw)} samples — falling back to screen mode")
-                    raise RuntimeError("RAW_INCOMPLETE")
                 return raw, xinc, xorig, yinc, yorig, yref
+        except Exception as e:
+            log_debug(f"❌ {mode_label} fetch failed: {e}")
+            return None
 
-            except Exception as e:
-                log_debug(f"⚠️ RAW failed: {e} — fallback to NORM")
-                app_state.raw_mode_failed_once = True
+    # 👇 Disable RAW completely during long-time logging
+    if app_state.is_logging_active:
+        log_debug("⚠️ Skipping RAW mode during long-time logging")
+        app_state.raw_mode_failed_once = True  # avoid future RAW attempts
 
-        # fallback mode
-        scope.write(":WAV:MODE NORM")
-        scope.write(":WAV:POIN:MODE RAW")
-        scope.write(f":WAV:POIN {WAV_POINTS}")
-        scope.write(f":WAV:SOUR {chan}")
-        scope.query(":WAV:PRE?")
-        time.sleep(0.1)
-        pre = scope.query(":WAV:PRE?").split(",")
-        xinc = float(pre[4])
-        xorig = float(pre[5])
-        yinc = float(pre[7])
-        yorig = float(pre[8])
-        yref = float(pre[9])
-        raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
-        return raw, xinc, xorig, yinc, yorig, yref
+    # --- Try RAW mode ---
+    if not app_state.raw_mode_failed_once:
+        for attempt in range(retries):
+            result = try_fetch("RAW")
+            if result is None or len(result[0]) < WAV_POINTS * 0.8:
+                log_debug(f"⚠️ RAW attempt {attempt+1} failed or incomplete")
+                continue
+            return result
+        log_debug("⚠️ RAW mode failed — fallback to NORM")
+        app_state.raw_mode_failed_once = True
 
+    # --- Always fallback to NORM ---
+    result = try_fetch("NORM")
+    if result:
+        return result
+    else:
+        raise RuntimeError("🛑 Both RAW and NORM fetch failed")
 
-def export_channel_csv(scope, channel, outdir="oszi_csv"):
+def export_channel_csv(scope, channel, outdir="oszi_csv", retries=2):
+    from .interface import scpi_lock, safe_query
+    import numpy as np
+    import os, time, csv
+    from utils.debug import log_debug
+
     chan = channel if str(channel).startswith("MATH") else f"CHAN{channel}"
-    try:
-        if safe_query(scope, f":{chan}:DISP?") != "1":
-            return None
+    
+    for attempt in range(1, retries + 2):
+        try:
+            with scpi_lock:
+                scope.write(":STOP")
+                time.sleep(0.2)
+                scope.write(":WAV:FORM BYTE")
+                scope.write(":WAV:MODE NORM")
+                scope.write(":WAV:POIN:MODE RAW")
+                scope.write(f":WAV:POIN {WAV_POINTS}")
+                scope.write(f":WAV:SOUR {chan}")
+                scope.query(":WAV:PRE?")  # Rigol quirk workaround
+                time.sleep(0.1)
 
-        with scpi_lock:
-            raw, xinc, xorig, yinc, yorig, yref = fetch_waveform_with_fallback(scope, chan)
+                pre = scope.query(":WAV:PRE?").split(",")
+                xinc = float(pre[4])
+                xorig = float(pre[5])
+                yinc = float(pre[7])
+                yorig = float(pre[8])
+                yref = float(pre[9])
+                probe = float(safe_query(scope, f":{chan}:PROB?", "1.0"))
 
-        if len(raw) == 0:
-            log_debug(f"⚠️ No waveform data for {chan}")
-            return None
+                raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
 
-        probe = float(safe_query(scope, f":{chan}:PROB?", "1.0"))
-
-        times = xorig + np.arange(len(raw)) * xinc
-        
-        volts = ((raw - yref) * yinc + yorig) * probe
-
-        os.makedirs(outdir, exist_ok=True)
-        timestamp = time.strftime("%Y-%m-%dT%H-%M-%S")
-        filename = f"{chan}_{timestamp}.csv"
-        path = os.path.join(outdir, filename)
-
-        with open(path, "w", newline="") as f:
-            f.write(f"# Device: {safe_query(scope, '*IDN?', 'Unknown')}\n")
-            f.write(f"# Channel: {chan}\n")
-            f.write(f"# Timebase: {safe_query(scope, ':TIMebase:SCALe?', 'N/A')} s/div\n")
-            f.write(f"# Scale: {safe_query(scope, f':{chan}:SCALe?', 'N/A')} V/div\n")
-            f.write(f"# Offset: {safe_query(scope, f':{chan}:OFFS?', 'N/A')} V\n")
-            f.write(f"# Trigger: {safe_query(scope, ':TRIGger:STATus?', 'N/A')}\n")
-            f.write(f"# Timestamp: {timestamp}\n")
-            writer = csv.writer(f)
-            writer.writerow(["Time (s)", "Voltage (V)"])
-            writer.writerows(zip(times, volts))
-
-        log_debug(f"✅ Exported {chan} waveform to {path}")
-        return path
-
-    except Exception as e:
-        log_debug(f"❌ Error exporting {chan}: {e}")
-        return None
-
-def get_channel_waveform_data(scope, channel, use_simple_calc=True):
-    try:
-        chan = channel if str(channel).startswith("MATH") else f"CHAN{channel}"
-        with scpi_lock:
-            raw, _, _, yinc, yorig, yref = fetch_waveform_with_fallback(scope, chan)
             if len(raw) == 0:
+                log_debug(f"⚠️ Empty waveform data on attempt {attempt} for {chan}")
+                continue
+
+            times = xorig + np.arange(len(raw)) * xinc
+            volts = ((raw - yref) * yinc + yorig) * probe
+
+            os.makedirs(outdir, exist_ok=True)
+            timestamp = time.strftime("%Y-%m-%dT%H-%M-%S")
+            filename = f"{chan}_{timestamp}.csv"
+            path = os.path.join(outdir, filename)
+
+            with open(path, "w", newline="") as f:
+                f.write(f"# Device: {safe_query(scope, '*IDN?', 'Unknown')}\n")
+                f.write(f"# Channel: {chan}\n")
+                f.write(f"# Timebase: {safe_query(scope, ':TIMebase:SCALe?', 'N/A')} s/div\n")
+                f.write(f"# Scale: {safe_query(scope, f':{chan}:SCALe?', 'N/A')} V/div\n")
+                f.write(f"# Offset: {safe_query(scope, f':{chan}:OFFS?', 'N/A')} V\n")
+                f.write(f"# Trigger: {safe_query(scope, ':TRIGger:STATus?', 'N/A')}\n")
+                f.write(f"# Timestamp: {timestamp}\n")
+                writer = csv.writer(f)
+                writer.writerow(["Time (s)", "Voltage (V)"])
+                writer.writerows(zip(times, volts))
+
+            log_debug(f"✅ Exported {chan} waveform to {path}")
+            return path
+
+        except Exception as e:
+            log_debug(f"❌ Attempt {attempt} failed for {chan}: {e}")
+            time.sleep(0.3)
+
+    log_debug(f"🛑 All attempts failed to export {chan}")
+    return None
+
+def get_channel_waveform_data(scope, channel, use_simple_calc=True, retries=1):
+    import numpy as np
+    from utils.debug import log_debug
+    from .interface import scpi_lock, safe_query
+    from .waveform import fetch_waveform_with_fallback
+
+    chan = channel if str(channel).startswith("MATH") else f"CHAN{channel}"
+
+    for attempt in range(1, retries + 2):
+        try:
+            if safe_query(scope, f":{chan}:DISP?") != "1":
+                log_debug(f"⚠️ Channel {chan} not displayed")
                 return None, None, None
+
+            # Try waveform fetch with fallback logic
+            raw, xinc, xorig, yinc, yorig, yref = fetch_waveform_with_fallback(scope, chan)
+            if len(raw) == 0:
+                log_debug(f"⚠️ Empty waveform on attempt {attempt} for {chan}")
+                continue
+
             volts = (raw - yref) * yinc + yorig
             vpp = volts.max() - volts.min()
             vavg = volts.mean()
             vrms = np.sqrt(np.mean(np.square(volts)))
             return vpp, vavg, vrms
 
-        if len(raw) == 0:
-            return None, None, None
+        except Exception as e:
+            log_debug(f"❌ Attempt {attempt} failed for {chan}: {e}")
+            import time
+            time.sleep(0.3)
 
-        volts = (raw - yref) * yinc + yorig
+    log_debug(f"🛑 All waveform fetch attempts failed for {chan}")
+    return None, None, None
 
-        vpp = volts.max() - volts.min()
-        vavg = volts.mean()
-        vrms = np.sqrt(np.mean(np.square(volts)))
-        return vpp, vavg, vrms
-
-        with scpi_lock:
-            pre = scope.query(":WAV:PRE?").split(",")
-        xinc = float(pre[4])
-        yinc = float(pre[7])
-        yorig = float(pre[8])
-        yref = float(pre[9])
-
-        volts = (raw - yref) * yinc + yorig
-        vpp = volts.max() - volts.min()
-        vavg = volts.mean()
-        vrms = np.sqrt(np.mean(np.square(volts)))
-        return vpp, vavg, vrms
-
-    except Exception as e:
-        log_debug(f"❌ Error reading waveform for CH{channel}: {e}")
-        return None, None, None
 
 def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, current_scale=1.0, use_25m_v=False, use_25m_i=False):
     from scpi.interface import scpi_lock, safe_query
