@@ -199,7 +199,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     update_current_scale()
 
     # Control Variables
-    remove_dc_var = tk.BooleanVar(value=True)
+    remove_dc_var = tk.BooleanVar(value=False)
     refresh_var = tk.BooleanVar(value=False)
     refresh_interval = tk.IntVar(value=5)
 
@@ -265,7 +265,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         row=0, column=9, sticky="w", padx=(10, 5), pady=4
     )
 
-    refresh_chk = ttk.Checkbutton(control_row, text="Auto", variable=refresh_var, command=toggle_auto_refresh)
+    refresh_chk = ttk.Checkbutton(control_row, text="Power Analysis", variable=refresh_var, command=toggle_auto_refresh)
     refresh_chk.grid(row=0, column=3, padx=3)
 
     def plot_last_power_log():
@@ -805,6 +805,11 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     # Initialize
     update_refresh_checkbox_state()
     draw_pq_plot(0.0, 0.0)
+
+    dc_status_var.set("DC Offset Removal is ON — results may exclude DC component." 
+        if remove_dc_var.get() else 
+        "DC Offset Removal is OFF — full waveform is analyzed.")
+
     tab_frame._shutdown = stop_auto_refresh
 
 # Additional Performance Tips for the broader codebase:
