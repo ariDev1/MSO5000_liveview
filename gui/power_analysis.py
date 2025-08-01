@@ -97,6 +97,8 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     correction_factor.trace_add("write", validate_correction_input)
 
     power_duration = tk.IntVar(value=0)  # 0 = unlimited
+    use_25m_v_var = tk.BooleanVar(value=False)
+    use_25m_i_var = tk.BooleanVar(value=False)
 
     # === UI Setup (keeping original structure but with optimizations) ===
     power_frame = tab_frame
@@ -293,6 +295,10 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     ttk.Label(control_row, text="Duration (s):").grid(row=0, column=6, padx=(10, 3), sticky="e")
     ttk.Entry(control_row, width=4, textvariable=power_duration).grid(row=0, column=7, padx=(0, 5), sticky="w")
 
+    #ttk.Checkbutton(control_row, text="25M Points", variable=use_25m_var).grid(row=0, column=8, padx=3)
+    ttk.Checkbutton(control_row, text="25M Voltage", variable=use_25m_v_var).grid(row=0, column=8, padx=3)
+    ttk.Checkbutton(control_row, text="25M Current", variable=use_25m_i_var).grid(row=0, column=9, padx=3)
+
     # Result Display Setup
     result_header = tk.Frame(power_frame, bg="#1a1a1a")
     result_header.grid(row=3, column=0, columnspan=2, sticky="ew", padx=5, pady=(5, 0))
@@ -415,13 +421,6 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         # Additional calculations
         output_lines.append("\n")
 
-        #Vrms = result.get("Vrms")
-        #Irms = result.get("Irms")
-
-        #if isinstance(Vrms, float) and isinstance(Irms, float) and Irms != 0:
-        #    Z = Vrms / Irms
-        #    metadata["Z"] = Z
-        #    output_lines.append(f"{'Impedance (Z)':<22}: {format_si_optimized(Z, 'Ω'):<12}\n")
         Vrms = result.get("Vrms", 0.0)
         Irms = result.get("Irms", 0.0)
 
@@ -699,7 +698,9 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             result = compute_power_from_scope(
                 scope, vch, ich,
                 remove_dc=remove_dc_var.get(),
-                current_scale=scaling
+                current_scale=scaling,
+                use_25m_v=use_25m_v_var.get(),
+                use_25m_i=use_25m_i_var.get()
             )
 
             if result:
@@ -732,6 +733,9 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 lag = elapsed - interval_s
                 log_debug(f"⚠️ Behind schedule by {lag:.2f}s", level="MINIMAL")
 
+            if use_25m_v_var.get() or use_25m_i_var.get():
+                log_debug(f"🧪 Full 25M waveform mode — V: {use_25m_v_var.get()} | I: {use_25m_i_var.get()}", level="MINIMAL")
+            
             app_state.is_power_analysis_active = False
 
     # Button for manual analysis

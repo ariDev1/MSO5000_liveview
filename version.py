@@ -1,6 +1,6 @@
 APP_NAME = "MSO5000 Live Monitor"
 VERSION = "v0.9.8c"
-GIT_COMMIT = "17dfd32"
-BUILD_DATE = "2025-07-31 22:33 UTC"
+GIT_COMMIT = "cd321ed"
+BUILD_DATE = "2025-08-01 12:03 UTC"
 AUTHOR = "ariDev1"
 PROJECT_URL = "https://github.com/ariDev1/MSO5000_liveview"
