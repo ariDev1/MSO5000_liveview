@@ -96,6 +96,8 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
     correction_factor.trace_add("write", validate_correction_input)
 
+    power_duration = tk.IntVar(value=0)  # 0 = unlimited
+
     # === UI Setup (keeping original structure but with optimizations) ===
     power_frame = tab_frame
     power_frame.columnconfigure(0, weight=1)
@@ -107,14 +109,14 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
     # UI Elements (keeping original layout)
     tk.Label(ch_input_frame, text="Voltage Ch:", bg="#226688", fg="white").grid(row=0, column=0, sticky="e", padx=(2, 2), pady=4)
-    entry_vch = ttk.Entry(ch_input_frame, width=6)
+    entry_vch = ttk.Entry(ch_input_frame, width=3)
     entry_vch.grid(row=0, column=1, sticky="w", padx=(0, 6), pady=4)
 
     tk.Label(ch_input_frame, text="Current Ch:", bg="#226688", fg="white").grid(row=0, column=2, sticky="e", padx=(2, 2), pady=4)
-    entry_ich = ttk.Entry(ch_input_frame, width=6)
+    entry_ich = ttk.Entry(ch_input_frame, width=3)
     entry_ich.grid(row=0, column=3, sticky="w", padx=(0, 6), pady=4)
 
-    tk.Label(ch_input_frame, text="Correction:", bg="#226688", fg="white").grid(row=0, column=4, sticky="e", padx=(2, 2), pady=4)
+    tk.Label(ch_input_frame, text="Corr:", bg="#226688", fg="white").grid(row=0, column=4, sticky="e", padx=(2, 2), pady=4)
     entry_corr = ttk.Entry(ch_input_frame, width=6, textvariable=correction_factor)
     entry_corr.grid(row=0, column=5, sticky="w", padx=(0, 6), pady=4)
 
@@ -124,7 +126,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     entry_expected.grid(row=0, column=7, sticky="w", padx=(0, 6), pady=4)
 
     initial_ref = scpi_data.get("freq_ref", "N/A")
-    ref_text = tk.StringVar(value=f"Reference: {initial_ref}")
+    ref_text = tk.StringVar(value=f"Ref: {initial_ref}")
     tk.Label(ch_input_frame, textvariable=ref_text, bg="#226688", fg="white").grid(row=0, column=8, sticky="w", padx=(10, 0), pady=4)
 
     ch_input_frame.grid_columnconfigure(11, weight=1)
@@ -206,7 +208,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     control_row.grid(row=2, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 10))
     control_row.columnconfigure((0, 1, 2, 3, 4, 5), weight=1)
 
-    ttk.Checkbutton(control_row, text="Remove DC Offset", variable=remove_dc_var).grid(row=0, column=0, padx=3)
+    ttk.Checkbutton(control_row, text="DC Offset", variable=remove_dc_var).grid(row=0, column=0, padx=3)
     
     def toggle_auto_refresh():
         if not refresh_var.get():
@@ -259,7 +261,11 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         except Exception as e:
             log_debug(f"❌ Auto-calibration failed: {e}")
 
-    refresh_chk = ttk.Checkbutton(control_row, text="Auto Measure", variable=refresh_var, command=toggle_auto_refresh)
+    ttk.Button(ch_input_frame, text="⚙ Cal", command=auto_calibrate).grid(
+        row=0, column=9, sticky="w", padx=(10, 5), pady=4
+    )
+
+    refresh_chk = ttk.Checkbutton(control_row, text="Auto", variable=refresh_var, command=toggle_auto_refresh)
     refresh_chk.grid(row=0, column=3, padx=3)
 
     def plot_last_power_log():
@@ -278,11 +284,14 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         log_debug(f"📊 Launching plot for {latest_file}")
         subprocess.Popen(["python3", "utils/plot_rigol_csv.py", latest_file, "--scale", str(scale)])
 
-    ttk.Button(control_row, text="📈 Plot Last Power Log", command=plot_last_power_log).grid(row=0, column=2, padx=3)
-    ttk.Button(control_row, text="⚙ Auto-Calibrate", command=auto_calibrate).grid(row=0, column=6, padx=3)
+    ttk.Button(control_row, text="📈 Plot Last", command=plot_last_power_log).grid(row=0, column=2, padx=3)
+    #ttk.Button(control_row, text="⚙ Auto-Calibrate", command=auto_calibrate).grid(row=0, column=6, padx=3)
 
     ttk.Label(control_row, text="Interval (s):").grid(row=0, column=4, padx=(20, 3), sticky="e")
     ttk.Spinbox(control_row, from_=2, to=60, width=3, textvariable=refresh_interval).grid(row=0, column=5, padx=(0, 5), sticky="w")
+
+    ttk.Label(control_row, text="Duration (s):").grid(row=0, column=6, padx=(10, 3), sticky="e")
+    ttk.Entry(control_row, width=4, textvariable=power_duration).grid(row=0, column=7, padx=(0, 5), sticky="w")
 
     # Result Display Setup
     result_header = tk.Frame(power_frame, bg="#1a1a1a")
@@ -726,7 +735,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             app_state.is_power_analysis_active = False
 
     # Button for manual analysis
-    ttk.Button(control_row, text="⚡ Measure Power", command=analyze_power).grid(row=0, column=1, padx=3)
+    ttk.Button(control_row, text="⚡ Measure", command=analyze_power).grid(row=0, column=1, padx=3)
 
     # Auto-refresh functionality with optimized loop
     def refresh_power_loop():
@@ -748,6 +757,16 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         if refresh_var.get():
             try:
                 if not app_state.is_logging_active:
+
+                    # Stop auto-refresh after user-defined duration
+                    duration_limit = power_duration.get()
+                    if duration_limit > 0 and power_stats["start_time"]:
+                        elapsed = time.time() - power_stats["start_time"]
+                        if elapsed >= duration_limit:
+                            log_debug("🛑 Auto-measure duration reached, stopping")
+                            stop_auto_refresh()
+                            return
+
                     analyze_power()
                 else:
                     log_debug("⚠️ Auto-refresh paused — logging in progress")
