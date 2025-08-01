@@ -14,6 +14,9 @@ from scpi.waveform import compute_power_from_scope
 from scpi.data import scpi_data
 from utils.debug import log_debug, set_debug_level
 
+from gui.power.formulas import compute_power, method_options
+
+
 # Performance optimizations
 class PowerAnalysisOptimizer:
     """Class to handle optimizations for power analysis"""
@@ -102,10 +105,6 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     
     #Power method selector
     power_method = tk.StringVar(value="standard")
-    method_options = {
-        "Instantaneous (v·i mean)": "standard",
-        "Vrms × Irms × cos(φ)": "rms_cos_phi"
-    }
 
     # === UI Setup (keeping original structure but with optimizations) ===
     power_frame = tab_frame
@@ -185,9 +184,9 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     entry_current_scale = ttk.Entry(probe_frame, width=6, state="readonly")
     entry_current_scale.grid(row=0, column=5, sticky="w", padx=5)
 
-    ttk.Label(probe_frame, text="⚡ Formula:").grid(row=0, column=6, padx=(10, 3), sticky="e")
+    ttk.Label(probe_frame, text="⚡").grid(row=0, column=6, padx=(10, 3), sticky="e")
     method_menu = ttk.Combobox(probe_frame, textvariable=power_method, state="readonly", width=18)
-    method_menu['values'] = list(method_options.keys())
+    method_menu['values'] = ["Formula"] + list(method_options.keys())
     method_menu.current(0)
     method_menu.grid(row=0, column=7, padx=(0, 5), sticky="ew")
 
@@ -387,7 +386,8 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         "Irms": ("Irms_sum", "A")
     }
 
-    def show_power_results(result, metadata):
+    def show_power_results(result, metadata, method_id="standard"):
+
         """Optimized result display with reduced string operations"""
         power_csv_path = global_power_csv_path[0]
 
@@ -482,8 +482,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         energy_varh = avg_q * elapsed_hr
 
         # Show selected method
-        selected_label = power_method.get()
-        output_lines.append(f"{'Method':<22}: {selected_label:<12}\n\n")
+        output_lines.append(f"{'Method':<22}: {method_id:<12}\n\n")
 
         output_lines.extend([
             f"{'Real Energy':<22}: {format_si_optimized(energy_wh, 'Wh'):<12}\n",
@@ -719,15 +718,48 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 correction_factor.get()
             )
 
-            result = compute_power_from_scope(
-                scope, vch, ich,
-                remove_dc=remove_dc_var.get(),
-                current_scale=scaling,
-                use_25m_v=use_25m_v_var.get(),
-                use_25m_i=use_25m_i_var.get(),
-                method=method_options.get(power_method.get(), "standard")
+            from scpi.waveform import fetch_waveform_with_fallback
 
+            raw_v = fetch_waveform_with_fallback(scope, vch, use_25m_v_var.get())
+            raw_i = fetch_waveform_with_fallback(scope, ich, use_25m_i_var.get())
+
+            if isinstance(raw_v, tuple):
+                raw_v = raw_v[0]
+            if isinstance(raw_i, tuple):
+                raw_i = raw_i[0]
+
+            voltage = np.array(raw_v, dtype=np.float64)
+            current = np.array(raw_i, dtype=np.float64)
+
+            assert isinstance(voltage, np.ndarray), f"⚠️ Voltage is {type(voltage)} not ndarray"
+            assert isinstance(current, np.ndarray), f"⚠️ Current is {type(current)} not ndarray"
+
+            if remove_dc_var.get():
+                voltage = voltage - np.mean(voltage)
+                current = current - np.mean(current)
+
+
+
+            if remove_dc_var.get():
+                voltage = voltage - np.mean(voltage)
+                current = current - np.mean(current)
+
+            log_debug(f"🧮 Using method: {power_method.get()} → {method_options.get(power_method.get(), 'standard')}")
+
+            label = power_method.get()
+            if label not in method_options:
+                log_debug(f"⚠️ Invalid method selection: {label}")
+                return
+
+            method_id = method_options[label]
+            log_debug(f"🧮 Using method: {label} → {method_id}")
+
+            result = compute_power(
+                voltage * 1.0,
+                current * scaling,
+                method=method_id
             )
+
 
             if result:
                 p = result.get("Real Power (P)", 0)
@@ -742,11 +774,10 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 "Irms": result.get("Irms", 0)
             }
 
-            show_power_results(result, metadata)
+            show_power_results(result, metadata, method_id)
 
         except Exception as e:
             log_debug(f"⚠️ Power analysis error: {e}")
-            #show_power_results({"Error": str(e)})
             show_power_results({"Error": str(e)}, {})
 
 
