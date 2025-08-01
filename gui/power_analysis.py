@@ -99,6 +99,13 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     power_duration = tk.IntVar(value=0)  # 0 = unlimited
     use_25m_v_var = tk.BooleanVar(value=False)
     use_25m_i_var = tk.BooleanVar(value=False)
+    
+    #Power method selector
+    power_method = tk.StringVar(value="standard")
+    method_options = {
+        "Instantaneous (v·i mean)": "standard",
+        "Vrms × Irms × cos(φ)": "rms_cos_phi"
+    }
 
     # === UI Setup (keeping original structure but with optimizations) ===
     power_frame = tab_frame
@@ -137,7 +144,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     probe_frame = ttk.Frame(power_frame)
     probe_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
 
-    ttk.Label(probe_frame, text="Current Probe Type:").grid(row=0, column=0, sticky="e", padx=5)
+    ttk.Label(probe_frame, text="Current Probe:").grid(row=0, column=0, sticky="e", padx=5)
 
     probe_type = tk.StringVar(value="shunt")
 
@@ -161,7 +168,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         activebackground="#333333", indicatoron=False, width=6, relief="raised")
     btn_clamp.pack(side="left", padx=1)
 
-    ttk.Label(probe_frame, text="Probe Value (Ω or A/V):").grid(row=0, column=2, sticky="e", padx=15)
+    ttk.Label(probe_frame, text="Value (Ω or A/V):").grid(row=0, column=2, sticky="e", padx=15)
     
     ttk.Label(
         probe_frame,
@@ -174,9 +181,19 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     entry_probe_value.insert(0, "1.0")
     entry_probe_value.grid(row=0, column=3, sticky="w", padx=5)
 
-    ttk.Label(probe_frame, text="→ Base Scale (A/V):").grid(row=0, column=4, sticky="e", padx=15)
+    ttk.Label(probe_frame, text="→ Scale (A/V):").grid(row=0, column=4, sticky="e", padx=15)
     entry_current_scale = ttk.Entry(probe_frame, width=6, state="readonly")
     entry_current_scale.grid(row=0, column=5, sticky="w", padx=5)
+
+    ttk.Label(probe_frame, text="⚡ Formula:").grid(row=0, column=6, padx=(10, 3), sticky="e")
+    method_menu = ttk.Combobox(probe_frame, textvariable=power_method, state="readonly", width=18)
+    method_menu['values'] = list(method_options.keys())
+    method_menu.current(0)
+    method_menu.grid(row=0, column=7, padx=(0, 5), sticky="ew")
+
+    for col in [3, 5, 7]:
+        probe_frame.columnconfigure(col, weight=1)
+
 
     # Optimized scale calculation with caching
     def update_current_scale(*args):
@@ -202,6 +219,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
     # Control Variables
     remove_dc_var = tk.BooleanVar(value=False)
+
     refresh_var = tk.BooleanVar(value=False)
     refresh_interval = tk.IntVar(value=5)
 
@@ -209,6 +227,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     control_row = ttk.Frame(power_frame)
     control_row.grid(row=2, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 10))
     control_row.columnconfigure((0, 1, 2, 3, 4, 5), weight=1)
+
 
     ttk.Checkbutton(control_row, text="DC Offset", variable=remove_dc_var).grid(row=0, column=0, padx=3)
     
@@ -248,7 +267,8 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             result = compute_power_from_scope(
                 scope, vch, ich,
                 remove_dc=remove_dc_var.get(),
-                current_scale=raw_scale
+                current_scale=raw_scale,
+                method=method_options.get(power_method.get(), "standard")
             )
             measured_p = result.get("Real Power (P)", None)
             if measured_p is None or measured_p <= 0:
@@ -460,6 +480,10 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         energy_wh = avg_p * elapsed_hr
         energy_vah = avg_s * elapsed_hr
         energy_varh = avg_q * elapsed_hr
+
+        # Show selected method
+        selected_label = power_method.get()
+        output_lines.append(f"{'Method':<22}: {selected_label:<12}\n\n")
 
         output_lines.extend([
             f"{'Real Energy':<22}: {format_si_optimized(energy_wh, 'Wh'):<12}\n",
@@ -700,7 +724,9 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 remove_dc=remove_dc_var.get(),
                 current_scale=scaling,
                 use_25m_v=use_25m_v_var.get(),
-                use_25m_i=use_25m_i_var.get()
+                use_25m_i=use_25m_i_var.get(),
+                method=method_options.get(power_method.get(), "standard")
+
             )
 
             if result:

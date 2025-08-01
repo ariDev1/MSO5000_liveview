@@ -158,7 +158,7 @@ def get_channel_waveform_data(scope, channel, use_simple_calc=True, retries=1):
     return None, None, None
 
 
-def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, current_scale=1.0, use_25m_v=False, use_25m_i=False):
+def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, current_scale=1.0, use_25m_v=False, use_25m_i=False, method="standard"):
     from scpi.interface import scpi_lock, safe_query
     import numpy as np
     from utils.debug import log_debug
@@ -166,6 +166,8 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
 
     chan_v = voltage_ch if str(voltage_ch).startswith("MATH") else f"CHAN{voltage_ch}"
     chan_i = current_ch if str(current_ch).startswith("MATH") else f"CHAN{current_ch}"
+
+    log_debug(f"🧮 Power method: {method}")
 
     unit_i = safe_query(scope, f":{chan_i}:UNIT?", "VOLT").strip().upper()
     log_debug(f"🧪 {chan_i} UNIT? → {unit_i}")
@@ -218,7 +220,7 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
         except Exception as e:
             log_debug(f"❌ fetch_waveform() failed for {channel}: {e}")
             return [], 1.0, 0.0, 1.0, 0.0, 0.0
-
+            
     raw_v, xinc, xorig, yinc_v, yorig_v, yref_v = fetch_waveform(chan_v, use_25m_v)
     raw_i, _,    _,     yinc_i, yorig_i, yref_i = fetch_waveform(chan_i, use_25m_i)
 
@@ -245,18 +247,27 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
         elif len(i) > len(v):
             i = np.interp(np.linspace(0, len(i)-1, len(v)), np.arange(len(i)), i)
 
-    p_inst = v * i
-    P = np.mean(p_inst)
-    Vrms = np.sqrt(np.mean(v**2))
-    Irms = np.sqrt(np.mean(i**2))
-    S = Vrms * Irms
-
+    # Compute FFT and phase info first
     fft_v = np.fft.fft(v)
     fft_i = np.fft.fft(i)
     phase_v = np.angle(fft_v[1])
     phase_i = np.angle(fft_i[1])
     phase_shift_rad = phase_v - phase_i
     phase_shift_deg = (np.rad2deg(phase_shift_rad) + 180) % 360 - 180
+
+    # Always compute RMS values before using them
+    Vrms = np.sqrt(np.mean(v**2))
+    Irms = np.sqrt(np.mean(i**2))
+    S = Vrms * Irms
+
+    # Compute power based on method
+    p_inst = v * i  # always compute for logging and plotting
+    if method == "standard":
+        P = np.mean(p_inst)
+    elif method == "rms_cos_phi":
+        P = Vrms * Irms * math.cos(phase_shift_rad)
+    else:
+        raise ValueError(f"Unsupported power method: {method}")
 
     Q = S * np.sin(phase_shift_rad)
     PF = P / S if S != 0 else 0.0
