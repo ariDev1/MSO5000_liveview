@@ -289,15 +289,15 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     ttk.Button(control_row, text="📈 Plot Last", command=plot_last_power_log).grid(row=0, column=2, padx=3)
     #ttk.Button(control_row, text="⚙ Auto-Calibrate", command=auto_calibrate).grid(row=0, column=6, padx=3)
 
-    ttk.Label(control_row, text="Interval (s):").grid(row=0, column=4, padx=(20, 3), sticky="e")
+    ttk.Label(control_row, text="Int(s):").grid(row=0, column=4, padx=(20, 3), sticky="e")
     ttk.Spinbox(control_row, from_=2, to=60, width=3, textvariable=refresh_interval).grid(row=0, column=5, padx=(0, 5), sticky="w")
 
-    ttk.Label(control_row, text="Duration (s):").grid(row=0, column=6, padx=(10, 3), sticky="e")
+    ttk.Label(control_row, text="Dur(s):").grid(row=0, column=6, padx=(10, 3), sticky="e")
     ttk.Entry(control_row, width=4, textvariable=power_duration).grid(row=0, column=7, padx=(0, 5), sticky="w")
 
     #ttk.Checkbutton(control_row, text="25M Points", variable=use_25m_var).grid(row=0, column=8, padx=3)
-    ttk.Checkbutton(control_row, text="25M Voltage", variable=use_25m_v_var).grid(row=0, column=8, padx=3)
-    ttk.Checkbutton(control_row, text="25M Current", variable=use_25m_i_var).grid(row=0, column=9, padx=3)
+    ttk.Checkbutton(control_row, text="25M[v]", variable=use_25m_v_var).grid(row=0, column=8, padx=3)
+    ttk.Checkbutton(control_row, text="25M[i]", variable=use_25m_i_var).grid(row=0, column=9, padx=3)
 
     # Result Display Setup
     result_header = tk.Frame(power_frame, bg="#1a1a1a")

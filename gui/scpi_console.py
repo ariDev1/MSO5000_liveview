@@ -110,7 +110,6 @@ def run_self_test(output):
         output.see(tk.END)
 
     scope = connect_scope(scpi_data.get("ip", ""))
-
     if not scope:
         write("❌ Not connected to scope")
         return
@@ -123,39 +122,67 @@ def run_self_test(output):
         scope.write(":STOP")
         time.sleep(0.5)
 
-        for ch in [1]:
-            scale = safe_query(scope, f":CHAN{ch}:SCALe?")
-            unit  = safe_query(scope, f":CHAN{ch}:UNIT?")
-            prob  = safe_query(scope, f":CHAN{ch}:PROB?")
-            write(f"✅ CH{ch}: Scale={scale}, Unit={unit}, Probe={prob}x")
-            time.sleep(0.5)
+        # 🚫 Disable RAW mode to avoid slow or failed fetches during test
+        import app.app_state as app_state
+        app_state.raw_mode_failed_once = True
 
-        try:
-            vpp, vavg, vrms = get_channel_waveform_data(scope, 1)
-            if vrms is not None:
-                write(f"✅ Vrms = {vrms:.3f} V")
-            else:
-                write("❌ Vrms value was None")
-        except Exception as e:
-            write(f"❌ Exception during waveform fetch: {e}")
+        # 🔍 Detect active CH1–CH4 channels
+        active_ch = []
+        for ch in range(1, 5):
+            if safe_query(scope, f":CHAN{ch}:DISP?") == "1":
+                active_ch.append(ch)
+                scale = safe_query(scope, f":CHAN{ch}:SCALe?")
+                unit  = safe_query(scope, f":CHAN{ch}:UNIT?")
+                prob  = safe_query(scope, f":CHAN{ch}:PROB?")
+                write(f"✅ CH{ch}: Scale={scale}, Unit={unit}, Probe={prob}x")
+                time.sleep(0.2)
 
-
-        result = compute_power_from_scope(scope, 1, 2)
-        if result:
-            p = result.get("Real Power (P)", None)
-            if p is not None:
-                write(f"✅ Power Estimate = {p:.2f} W")
-                time.sleep(0.5)
+        if not active_ch:
+            write("⚠️ No active channels — skipping waveform test")
         else:
-            write("❌ Power analysis failed")
+            # 🧪 Always try Vrms on the first active channel
+            try:
+                vch = active_ch[0]
+                vpp, vavg, vrms = get_channel_waveform_data(scope, vch)
+                if vrms is not None:
+                    write(f"✅ CH{vch} Vrms = {vrms:.3f} V")
+                else:
+                    write(f"❌ CH{vch} Vrms was None")
+            except Exception as e:
+                write(f"❌ Vrms fetch error: {e}")
 
+        # ⚡ Try power analysis if at least 2 active channels
+        if len(active_ch) >= 2:
+            vch, ich = active_ch[0], active_ch[1]
+            write(f"🔌 Power test: V=CH{vch}, I=CH{ich}")
+            result = compute_power_from_scope(scope, vch, ich, use_25m_v=False, use_25m_i=False)
+            if result:
+                p = result.get("Real Power (P)", None)
+                if p is not None:
+                    write(f"✅ Power Estimate = {p:.2f} W")
+                    time.sleep(0.5)
+            else:
+                write("❌ Power analysis failed")
+        else:
+            write("⚠️ Not enough active channels for power test")
+
+        # ✅ SCPI loop check
         if scpi_data.get("idn", None):
             write("✅ SCPI loop is active")
-            time.sleep(0.5)
         else:
             write("⚠️ SCPI loop IDN not set")
+
+        # ▶ Resume acquisition
+        scope.write(":RUN")
+        time.sleep(0.3)
+        trig_status = safe_query(scope, ":TRIGger:STATus?")
+        write(f"▶️ Scope acquisition resumed — Trigger Status: {trig_status}")
 
         write("✅ Self-Test Passed ✅")
 
     except Exception as e:
         write(f"❌ Error: {e}")
+        try:
+            scope.write(":RUN")
+        except:
+            pass
