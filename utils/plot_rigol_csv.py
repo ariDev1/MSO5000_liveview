@@ -64,7 +64,13 @@ def is_power_log(path):
     except Exception:
         return False
 
-def plot_waveform_csv(path, smooth=False, window=5, spline=False):
+def plot_waveform_csv(path, smooth=False, window=5, spline=False, scale=1.0):
+    import os
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from scipy.interpolate import make_interp_spline
+
     try:
         df = pd.read_csv(path, comment="#")
         if "Time (s)" not in df.columns or "Voltage (V)" not in df.columns:
@@ -74,12 +80,18 @@ def plot_waveform_csv(path, smooth=False, window=5, spline=False):
         print(f"❌ Error reading waveform CSV: {e}")
         return
 
-    plt.figure(figsize=(12, 6))
-    plt.plot(df["Time (s)"], df["Voltage (V)"], label=os.path.basename(path), alpha=0.9)
+    # ⚠️ Apply user-defined scale (e.g. 0.1 for 10x probe or shunt scaling)
+    voltage_raw = df["Voltage (V)"]
+    voltage_scaled = voltage_raw * scale
+    time_data = df["Time (s)"]
 
+    plt.figure(figsize=(12, 6))
+    plt.plot(time_data, voltage_scaled, label=f"{os.path.basename(path)} (scale ×{scale})", alpha=0.9)
+
+    # Optional smoothing or spline interpolation
     if smooth or spline:
-        y = df["Voltage (V)"].rolling(window=window, center=True).mean() if smooth else df["Voltage (V)"]
-        x = df["Time (s)"]
+        y = voltage_scaled.rolling(window=window, center=True).mean() if smooth else voltage_scaled
+        x = time_data
 
         if spline and y.notna().sum() > 3:
             x_vals = x[y.notna()]
@@ -91,17 +103,21 @@ def plot_waveform_csv(path, smooth=False, window=5, spline=False):
         else:
             plt.plot(x, y, linestyle="dotted", label="Smoothed")
 
-    #print(f"Time delta between first 2 samples: {df['Time (s)'].iloc[1] - df['Time (s)'].iloc[0]}")
-    #print(f"Total duration: {df['Time (s)'].iloc[-1] - df['Time (s)'].iloc[0]}")
-
+    # Axis and labels
     plt.axhline(0, color='gray', linestyle='--', linewidth=1)
     plt.title("Waveform Preview")
     plt.xlabel("Time (s)")
-    plt.ylabel("Voltage (V)")
+    plt.ylabel("Voltage (V, real-world)")
+
+    # Optional: Force symmetrical y-limits to improve visual accuracy
+    vabs_max = voltage_scaled.abs().max()
+    plt.ylim(-vabs_max * 1.1, vabs_max * 1.1)
+
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
     plt.show()
+
 
 def plot_session_log(path, smooth=False, window=5, spline=False):
     try:
@@ -278,7 +294,7 @@ def main():
         sys.exit(1)
 
     if is_waveform_csv(path):
-        plot_waveform_csv(path, smooth=args.smooth, window=args.window, spline=args.spline)
+        plot_waveform_csv(path, smooth=args.smooth, window=args.window, spline=args.spline, scale=args.scale)
 
     elif is_power_log(path):
         plot_power_log(path, smooth=args.smooth, window=args.window, spline=args.spline, scale=args.scale)

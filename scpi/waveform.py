@@ -63,38 +63,43 @@ def export_channel_csv(scope, channel, outdir="oszi_csv", retries=2):
     import numpy as np
     import os, time, csv
     from utils.debug import log_debug
+    from config import WAV_POINTS
 
     chan = channel if str(channel).startswith("MATH") else f"CHAN{channel}"
     
     for attempt in range(1, retries + 2):
         try:
             with scpi_lock:
-                scope.write(":STOP")
-                time.sleep(0.2)
-                scope.write(":WAV:FORM BYTE")
-                scope.write(":WAV:MODE NORM")
-                scope.write(":WAV:POIN:MODE RAW")
-                scope.write(f":WAV:POIN {WAV_POINTS}")
-                scope.write(f":WAV:SOUR {chan}")
-                scope.query(":WAV:PRE?")  # Rigol quirk workaround
-                time.sleep(0.1)
+                try:
+                    scope.write(":STOP")
+                    time.sleep(0.2)
+                    scope.write(":WAV:FORM BYTE")
+                    scope.write(":WAV:MODE NORM")
+                    scope.write(":WAV:POIN:MODE RAW")
+                    scope.write(f":WAV:POIN {WAV_POINTS}")
+                    scope.write(f":WAV:SOUR {chan}")
+                    scope.query(":WAV:PRE?")  # Rigol quirk workaround
+                    time.sleep(0.1)
 
-                pre = scope.query(":WAV:PRE?").split(",")
-                xinc = float(pre[4])
-                xorig = float(pre[5])
-                yinc = float(pre[7])
-                yorig = float(pre[8])
-                yref = float(pre[9])
-                probe = float(safe_query(scope, f":{chan}:PROB?", "1.0"))
+                    pre = scope.query(":WAV:PRE?").split(",")
+                    xinc = float(pre[4])
+                    xorig = float(pre[5])
+                    yinc = float(pre[7])
+                    yorig = float(pre[8])
+                    yref = float(pre[9])
+                    probe = float(safe_query(scope, f":{chan}:PROB?", "1.0"))
 
-                raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
+                    raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
+                finally:
+                    scope.write(":RUN")
+                    log_debug("▶️ Scope acquisition resumed after export")
 
             if len(raw) == 0:
                 log_debug(f"⚠️ Empty waveform data on attempt {attempt} for {chan}")
                 continue
 
             times = xorig + np.arange(len(raw)) * xinc
-            volts = ((raw - yref) * yinc + yorig) * probe
+            volts = ((raw - yref) * yinc + yorig)
 
             os.makedirs(outdir, exist_ok=True)
             timestamp = time.strftime("%Y-%m-%dT%H-%M-%S")
@@ -113,6 +118,7 @@ def export_channel_csv(scope, channel, outdir="oszi_csv", retries=2):
                 writer.writerow(["Time (s)", "Voltage (V)"])
                 writer.writerows(zip(times, volts))
 
+            log_debug(f"🔍 Probe factor for {chan} = {probe}")
             log_debug(f"✅ Exported {chan} waveform to {path}")
             return path
 
