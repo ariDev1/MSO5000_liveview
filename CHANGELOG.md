@@ -1,6 +1,30 @@
 # 📖 Changelog
 
 All notable changes to this project are documented here.
+
+## v0.9.8e-stable (2025-08-02)
+
+### 🐳 Docker & CI Workflow Overhaul
+- ✅ GitHub Actions now build Docker containers **only for stable tags** (`v*stable*`)
+- 🧪 Removed accidental builds from `testing` and `master` pushes
+- 🐳 New Docker image: `aridev1/mso5000_liveview:v0.9.8e-stable` + `latest`
+
+### 📈 Power Analysis & GUI Polishing
+- ⚙️ Improved auto-calibration scaling with better feedback
+- 🧮 More accurate signed PF angle (θ) and impedance tracking
+- 📐 PQ plot logic now avoids label overlap based on quadrant prediction
+- 🖼️ PNG plot footer now includes probe config and system metadata
+
+### 🛠️ Developer UX & CLI Improvements
+- 🛡️ Git tagging strategy improved (`vX.Y.Z-stable` only triggers builds)
+- 🧹 Cleanup: branch protection clarified, and `release/` workflow standardized
+- ✨ Added CLI-friendly fallback mode for raw waveform failures
+
+### 📚 Docs & Project Maintenance
+- 📝 `README.md` updated with correct badges, links, and visual refinements
+- 📸 Screenshot refreshed for GUI overview
+- ✅ Cleaned up outdated tags, stale branches, and clarified release process
+
 ---
 
 ## v0.9.8 (2025-07-30)
