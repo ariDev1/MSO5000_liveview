@@ -2,8 +2,7 @@ name: Docker Build & Push
 
 on:
   push:
-    tags: [ 'v*stable*' ]  #Only run when pushing a tag like v0.9.6-stable
-    branches: [master]  #Only if tag is pushed from master branch
+    tags: [ 'v*stable*' ]  # ✅ Only trigger for tags like v0.9.8e-stable
 
 jobs:
   build-and-push:
