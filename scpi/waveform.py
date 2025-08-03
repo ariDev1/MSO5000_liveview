@@ -180,6 +180,9 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
     log_debug(f"🧪 {chan_i} UNIT? → {unit_i}")
     if unit_i == "AMP" and current_scale != 1.0:
         log_debug(f"⚠️ {chan_i} is in AMP mode, but current_scale = {current_scale:.4f}. Set probe = 1.0", level="FULL")
+    if unit_i == "AMP":
+        current_scale = 1.0
+        log_debug(f"⚠️ {chan_i} is in AMP mode — forcing current_scale = 1.0 to prevent double-scaling", level="MINIMAL")
 
     log_debug(f"📊 Analyzing: Voltage = {chan_v}, Current = {chan_i}", level="MINIMAL")
     log_debug(f"⚙️ Current scaling factor: {current_scale:.4f} A/V")
@@ -242,7 +245,7 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
     t = xorig + np.arange(len(raw_v)) * xinc
     v = ((raw_v - yref_v) * yinc_v + yorig_v)
     i = ((raw_i - yref_i) * yinc_i + yorig_i) * current_scale
-
+    log_debug(f"🧪 Raw CH3 stats: max = {np.max(i):.4f} A, min = {np.min(i):.4f} A, RMS = {np.sqrt(np.mean(i**2)):.4f} A")
     if remove_dc:
         v -= np.mean(v)
         i -= np.mean(i)
