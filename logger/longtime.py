@@ -82,7 +82,7 @@ def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled,
                     for ch in channels:
                         vpp, vavg, vrms = get_channel_waveform_data(scope, ch, use_simple_calc=True)
                         chname = f"CH{ch}" if isinstance(ch, int) else ch
-                        log_debug(f"{chname} ➜ Vpp={vpp:.3f}  Vavg={vavg:.3f}  Vrms={vrms:.3f}")
+                        log_debug(f"{chname} ➜ Vpp={vpp:.3f}  Vavg={vavg:.3f}  Vrms={vrms:.3f}", level="MINIMAL")
 
                         try:
                             chnum = str(ch).replace("CH", "").strip()
@@ -94,7 +94,7 @@ def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled,
                                 scale = current_scale
                                 log_debug(f"⚙️ {chname} is in VOLT — applying scale {scale}")
                         except Exception as e:
-                            log_debug(f"⚠️ Unit detection failed for {chname}: {e}")
+                            log_debug(f"⚠️ Unit detection failed for {chname}: {e}", level="MINIMAL")
                             scale = current_scale
 
                         row.append(f"{vpp * scale:.4f}" if vpp is not None else "")

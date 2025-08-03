@@ -9,6 +9,7 @@ from utils.debug import log_debug, set_debug_level
 from config import WAV_POINTS
 from scpi.interface import safe_query
 from scpi.interface import scpi_lock
+from scpi.power_formulas import compute_power_standard, compute_power_rms_cos_phi
 
 def fetch_waveform_with_fallback(scope, chan, retries=1):
     import app.app_state as app_state
@@ -35,7 +36,7 @@ def fetch_waveform_with_fallback(scope, chan, retries=1):
             log_debug(f"❌ {mode_label} fetch failed: {e}")
             return None
 
-    # 👇 Disable RAW completely during long-time logging
+    #Disable RAW completely during long-time logging
     if app_state.is_logging_active:
         log_debug("⚠️ Skipping RAW mode during long-time logging")
         app_state.raw_mode_failed_once = True  # avoid future RAW attempts
@@ -267,11 +268,10 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
     S = Vrms * Irms
 
     # Compute power based on method
-    p_inst = v * i  # always compute for logging and plotting
     if method == "standard":
-        P = np.mean(p_inst)
+        p_inst, P = compute_power_standard(v, i, xinc)
     elif method == "rms_cos_phi":
-        P = Vrms * Irms * math.cos(phase_shift_rad)
+        p_inst, P = compute_power_rms_cos_phi(v, i, xinc)
     else:
         raise ValueError(f"Unsupported power method: {method}")
 

@@ -61,6 +61,14 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     app_state.is_power_analysis_active = False
     global_power_csv_path = [None]
     optimizer = PowerAnalysisOptimizer()  # Initialize optimizer
+
+    # Power formula selection logic
+    method_options = {
+        "Instantaneous (v·i mean)": "standard",
+        "Vrms × Irms × cos(φ)": "rms_cos_phi"
+    }
+    power_method_label = tk.StringVar(value="Instantaneous (v·i mean)")
+
     
     # Pre-compile format strings for better performance
     SI_FORMATS = {
@@ -136,8 +144,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     # Probe Scaling Controls
     probe_frame = ttk.Frame(power_frame)
     probe_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
-
-    ttk.Label(probe_frame, text="Current Probe Type:").grid(row=0, column=0, sticky="e", padx=5)
+    ttk.Label(probe_frame, text="Probe Type:").grid(row=0, column=0, sticky="e", padx=(0, 2))
 
     probe_type = tk.StringVar(value="shunt")
 
@@ -146,7 +153,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         update_current_scale()
 
     probe_mode_frame = ttk.Frame(probe_frame)
-    probe_mode_frame.grid(row=0, column=1, sticky="w", padx=5)
+    probe_mode_frame.grid(row=0, column=1, sticky="w", padx=(0, 2))
 
     # Radio buttons for probe type
     btn_shunt = tk.Radiobutton(probe_mode_frame, text="Shunt", variable=probe_type, value="shunt",
@@ -161,7 +168,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         activebackground="#333333", indicatoron=False, width=6, relief="raised")
     btn_clamp.pack(side="left", padx=1)
 
-    ttk.Label(probe_frame, text="Probe Value (Ω or A/V):").grid(row=0, column=2, sticky="e", padx=15)
+    ttk.Label(probe_frame, text="Value (Ω or A/V):").grid(row=0, column=2, sticky="e", padx=(0, 2))
     
     ttk.Label(
         probe_frame,
@@ -170,13 +177,29 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         wraplength=720, font=("TkDefaultFont", 8)
     ).grid(row=1, column=0, columnspan=6, sticky="w", padx=5, pady=(2, 8))
 
-    entry_probe_value = ttk.Entry(probe_frame, width=6)
+    entry_probe_value = ttk.Entry(probe_frame, width=3)
     entry_probe_value.insert(0, "1.0")
-    entry_probe_value.grid(row=0, column=3, sticky="w", padx=5)
+    entry_probe_value.grid(row=0, column=3, sticky="ew", padx=(0, 2))
 
-    ttk.Label(probe_frame, text="→ Base Scale (A/V):").grid(row=0, column=4, sticky="e", padx=15)
+    ttk.Label(probe_frame, text="Scale (A/V):").grid(row=0, column=4, sticky="e", padx=(0, 2))
+    ttk.Label(probe_frame, text="⚡ Formula").grid(row=0, column=6, sticky="e", padx=(0, 2))
+    method_menu = ttk.Combobox(probe_frame, textvariable=power_method_label, state="readonly", width=0)
+    method_menu['values'] = list(method_options.keys())
+    method_menu.current(0)
+    method_menu.grid(row=0, column=7, sticky="ew", padx=(0, 5))
     entry_current_scale = ttk.Entry(probe_frame, width=6, state="readonly")
-    entry_current_scale.grid(row=0, column=5, sticky="w", padx=5)
+    entry_current_scale.grid(row=0, column=5, sticky="ew", padx=(0, 5))
+
+    # Layout rules for each column in probe_frame
+    probe_frame.columnconfigure(0, weight=1, minsize=60)
+    probe_frame.columnconfigure(1, weight=1, minsize=50)
+    probe_frame.columnconfigure(2, weight=1, minsize=60)
+    probe_frame.columnconfigure(3, weight=1, minsize=30)
+    probe_frame.columnconfigure(4, weight=1, minsize=60)
+    probe_frame.columnconfigure(5, weight=1, minsize=50)
+    probe_frame.columnconfigure(6, weight=1, minsize=60)
+    probe_frame.columnconfigure(7, weight=2, minsize=100)  # dropdown expands/shrinks
+
 
     # Optimized scale calculation with caching
     def update_current_scale(*args):
@@ -700,8 +723,10 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 remove_dc=remove_dc_var.get(),
                 current_scale=scaling,
                 use_25m_v=use_25m_v_var.get(),
-                use_25m_i=use_25m_i_var.get()
+                use_25m_i=use_25m_i_var.get(),
+                method=method_options.get(power_method_label.get(), "standard")
             )
+
 
             if result:
                 p = result.get("Real Power (P)", 0)
