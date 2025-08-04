@@ -179,10 +179,10 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
     unit_i = safe_query(scope, f":{chan_i}:UNIT?", "VOLT").strip().upper()
     log_debug(f"🧪 {chan_i} UNIT? → {unit_i}")
     if unit_i == "AMP" and current_scale != 1.0:
-        log_debug(f"⚠️ {chan_i} is in AMP mode, but current_scale = {current_scale:.4f}. Set probe = 1.0", level="FULL")
+        log_debug(f"⚠️ {chan_i} is in AMP mode, but current_scale = {current_scale:.4f}. Set probe = 1.0")
     if unit_i == "AMP":
         current_scale = 1.0
-        log_debug(f"⚠️ {chan_i} is in AMP mode — forcing current_scale = 1.0 to prevent double-scaling", level="MINIMAL")
+        log_debug(f"⚠️ {chan_i} is in AMP mode — forcing current_scale = 1.0 to prevent double-scaling")
 
     log_debug(f"📊 Analyzing: Voltage = {chan_v}, Current = {chan_i}", level="MINIMAL")
     log_debug(f"⚙️ Current scaling factor: {current_scale:.4f} A/V")

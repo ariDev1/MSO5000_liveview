@@ -322,22 +322,40 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     ttk.Checkbutton(control_row, text="25M[v]", variable=use_25m_v_var).grid(row=0, column=8, padx=3)
     ttk.Checkbutton(control_row, text="25M[i]", variable=use_25m_i_var).grid(row=0, column=9, padx=3)
 
-    # Result Display Setup
+    #Analysis Output Header (1-row grid layout)
     result_header = tk.Frame(power_frame, bg="#1a1a1a")
     result_header.grid(row=3, column=0, columnspan=2, sticky="ew", padx=5, pady=(5, 0))
     result_header.grid_columnconfigure(0, weight=0)
     result_header.grid_columnconfigure(1, weight=1)
+    result_header.grid_columnconfigure(2, weight=0)
+    result_header.grid_columnconfigure(3, weight=0)
 
     tk.Label(result_header, text="📊 Analysis Output", font=("TkDefaultFont", 10, "bold"),
              bg="#1a1a1a", fg="white").grid(row=0, column=0, sticky="w")
 
+    # DC Offset status (left-aligned)
+    global dc_status_var, dc_status_label
     dc_status_var = tk.StringVar(value="DC Offset Removal is OFF — full waveform is analyzed.")
+    dc_status_label = tk.Label(result_header, textvariable=dc_status_var,
+                               bg="#1a1a1a", fg="#cccccc", font=("TkDefaultFont", 9))
+    dc_status_label.grid(row=0, column=1, sticky="e", padx=(10, 5))
+
+    # Offset warning (middle-right)
+    global offset_status_var, offset_status_label
     offset_status_var = tk.StringVar(value="")
-    tk.Label(result_header, textvariable=dc_status_var, bg="#1a1a1a", fg="#cccccc",
-             font=("TkDefaultFont", 9)).grid(row=0, column=1, sticky="e", padx=(10, 5))
     offset_status_label = tk.Label(result_header, textvariable=offset_status_var,
-        bg="#1a1a1a", fg="#ff9999", font=("TkDefaultFont", 9))
-    offset_status_label.grid(row=1, column=1, sticky="e", padx=(10, 5))
+                                   bg="#1a1a1a", fg="#ff9999", font=("TkDefaultFont", 9))
+    offset_status_label.grid(row=0, column=2, sticky="e", padx=(10, 5))
+
+    # Unit/probe warning (rightmost)
+    global unit_status_var, unit_status_label
+    unit_status_var = tk.StringVar(value="")
+    unit_status_label = tk.Label(result_header, textvariable=unit_status_var,
+                                 bg="#1a1a1a", fg="#ffaa00", font=("TkDefaultFont", 9))
+    unit_status_label.grid(row=0, column=3, sticky="e", padx=(10, 5))
+
+
+
 
     # Output Text Box
     result_frame = tk.Frame(power_frame, bg="#202020", bd=1, relief="solid")
@@ -702,14 +720,79 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             except Exception as e:
                 log_debug(f"⚠️ Failed to read channel offset: {e}")
                 v_offset, i_offset = 0.0, 0.0
+            
+            scope_probe = None
+            #Unit check + probe mismatch detection
+            try:
+                unit_info = safe_query(scope, f":{chan_i}:UNIT?", "VOLT").strip().upper()
+                log_debug(f"🧪 {chan_i} unit = {unit_info}")
 
+                if unit_info == "AMP":
+                    unit_status_var.set(f"{chan_i} unit = AMP — scaling disabled (real current used)")
+                    unit_status_label.config(fg="#99ccff")
+
+                elif unit_info == "VOLT":
+                    msg = f"⚠ {chan_i} unit = VOLT — scaling applied (check probe + shunt!)"
+
+                    chan_info_all = scpi_data.get("channel_info", {})
+                    log_debug(f"📋 [Check] channel_info keys: {list(chan_info_all.keys())}")
+                    chan_info = chan_info_all.get(chan_i, None)
+
+                    if not chan_info:
+                        log_debug(f"⚠️ chan_info for {chan_i} not found — skipping probe mismatch check")
+                    else:
+                        log_debug(f"🧪 chan_info for {chan_i} = {chan_info}")
+                        try:
+                            scope_probe = float(chan_info.get("probe", 1.0))
+                            log_debug(f"🧪 scope_probe = {scope_probe}")
+                        except Exception as e:
+                            log_debug(f"⚠️ Could not parse probe value: {e}")
+                            scope_probe = None
+
+                        ptype = probe_type.get().strip().lower()
+                        log_debug(f"🧪 probe_type = {ptype}")
+
+                        try:
+                            probe_val = float(entry_probe_value.get())
+                        except Exception:
+                            probe_val = 1.0  # fallback
+
+                        # Mismatch detection
+                        if scope_probe is not None:
+                            if ptype == "shunt" and abs(scope_probe - 1.0) > 0.5:
+                                log_debug(f"⚠️ Detected shunt probe mismatch — scope_probe={scope_probe}")
+                                msg += f"  |  ⚠ Mismatch: scope={scope_probe}× — expected 1× for shunt"
+                            elif ptype == "clamp" and scope_probe < 2.0:
+                                log_debug(f"⚠️ Detected clamp probe mismatch — scope_probe={scope_probe}")
+                                msg += f"  |  ⚠ Mismatch: scope={scope_probe}× — clamp probes often need 10×+"
+
+                    unit_status_var.set(msg)
+                    unit_status_label.config(fg="#ffaa00")
+                    unit_status_label.update_idletasks()
+
+                else:
+                    unit_status_var.set("")
+
+            except Exception as e:
+                log_debug(f"⚠️ Unit/probe mismatch check failed: {e}")
+                unit_status_var.set("")
+
+
+
+            # ✅ Offset status message
             if abs(v_offset) > 0.01 or abs(i_offset) > 0.01:
-                log_debug(f"⚠️ Offset active! Voltage Ch={chan_v} = {v_offset:.3f} V, Current Ch={chan_i} = {i_offset:.3f} V — results may be distorted!", level="MINIMAL")
-                offset_status_var.set(f"⚠ Offset active: V={v_offset:.2f} V, I={i_offset:.2f} V — waveform is shifted!")
+                log_debug(
+                    f"⚠️ Offset active! Voltage Ch={chan_v} = {v_offset:.3f} V, Current Ch={chan_i} = {i_offset:.3f} V — results may be distorted!",
+                    level="MINIMAL"
+                )
+                offset_status_var.set(
+                    f"⚠ Offset active: V={v_offset:.2f} V, I={i_offset:.2f} V — waveform is shifted!"
+                )
                 offset_status_label.config(fg="#ff9999")
             else:
-                offset_status_var.set("✓ No active offset — raw signal used.")
+                offset_status_var.set("✓ No active offset")
                 offset_status_label.config(fg="#00dd88")
+
 
             # Use cached scaling calculation
             scaling = optimizer.get_cached_scale(
@@ -753,6 +836,10 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             elapsed = time.time() - start  # ⏱ end timing
             interval_s = refresh_interval.get()
             log_debug(f"⏱ analyze_power() took {elapsed:.2f}s", level="MINIMAL")
+            log_debug(f"📋 [Check] probe_type = {probe_type.get()}")
+            log_debug(f"📋 [Check] entry_probe_value = {entry_probe_value.get()}")
+            log_debug(f"📋 [Check] scope_probe = {scope_probe}")
+            log_debug(f"📋 [Check] unit_status_var = {unit_status_var.get()}")
 
             if elapsed > interval_s:
                 lag = elapsed - interval_s
