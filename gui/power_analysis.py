@@ -728,11 +728,11 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 log_debug(f"🧪 {chan_i} unit = {unit_info}")
 
                 if unit_info == "AMP":
-                    unit_status_var.set(f"{chan_i} unit = AMP — scaling disabled (real current used)")
+                    unit_status_var.set(f"{chan_i} Unit:A — scaling disabled. Script expects true current waveform")
                     unit_status_label.config(fg="#99ccff")
 
                 elif unit_info == "VOLT":
-                    msg = f"⚠ {chan_i} unit = VOLT — scaling applied (check probe + shunt!)"
+                    msg = f"⚠ {chan_i} Unit:V — scaling applied (check probe + shunt!)"
 
                     chan_info_all = scpi_data.get("channel_info", {})
                     log_debug(f"📋 [Check] channel_info keys: {list(chan_info_all.keys())}")
