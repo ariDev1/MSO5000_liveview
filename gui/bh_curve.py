@@ -305,13 +305,13 @@ def setup_bh_curve_tab(tab_frame, ip, root):
             flux = np.cumsum(V_waveform) * dt
             B = flux / (N * Ae)
             return H, B
-
+        log_debug(f"[BH-Curve] N={N} Ae={Ae:.2e} le={le:.2e} probe={probe_mode} value={probe_val} samples={samples} dt={dt:.2e}")
         try:
             H, B = calculate_bh_curve(Iwave_cyc, Vwave_cyc, dt, N, Ae, le)
             if len(H) == 0 or len(B) == 0:
                 status_var.set("Computed arrays are empty!")
                 return
-
+            log_debug(f"[BH-Curve] Peak H={np.max(H):.3g} A/m  Peak B={np.max(B):.3g} T  Min H={np.min(H):.3g} A/m  Min B={np.min(B):.3g} T")
             # --- Data panel update ---
             data_text.config(state=tk.NORMAL)
             data_text.delete(1.0, tk.END)
@@ -335,6 +335,10 @@ def setup_bh_curve_tab(tab_frame, ip, root):
             with np.errstate(divide='ignore', invalid='ignore'):
                 mu_r_arr = np.abs(B / (H + 1e-12)) / mu0
                 mu_r_max = np.nanmax(mu_r_arr[np.isfinite(mu_r_arr) & (np.abs(H) > 1e-4)])
+            log_debug(f"[BH-Curve] Coercivity Hc={Hc:.3g} A/m  Remanence Br={Br:.3g} T  Loop Area={loop_area:.3g} J/m³")
+            log_debug(f"[BH-Curve] Max Rel. Permeability μr={mu_r_max:.3g}")
+            if hasattr(do_acquire_and_plot, "csv_path"):
+                log_debug(f"[BH-Curve] Appended to {do_acquire_and_plot.csv_path} run_index={do_acquire_and_plot.run_index}")
             data_text.insert(tk.END, f"Coercivity Hc={Hc:.3g} A/m  Remanence Br={Br:.3g} T  Loop Area={loop_area:.3g} J/m³\n")
             data_text.insert(tk.END, f"Max Rel. Permeability μr={mu_r_max:.3g}\n")
             data_text.insert(tk.END, "H (A/m): " + np.array2string(H[:8], precision=3, separator=", "))
