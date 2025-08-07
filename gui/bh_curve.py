@@ -1,14 +1,40 @@
 # gui/bh_curve.py
+import os
+import csv
+from datetime import datetime
 
 import tkinter as tk
 from tkinter import ttk
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from scpi.interface import connect_scope, safe_query, scpi_lock
 from utils.debug import log_debug
 import app.app_state as app_state
+
+mu0 = 4 * np.pi * 1e-7  # H/m, permeability of free space
+
+
+def extract_one_cycle(waveform):
+    """
+    Extract indices for one full period in the waveform, based on zero-crossings
+    with the same slope (best for periodic signals like current).
+    Returns (start_idx, end_idx) inclusive of start, exclusive of end.
+    """
+    waveform = np.asarray(waveform)
+    crossings = np.where(np.diff(np.signbit(waveform)))[0]
+    if len(crossings) < 2:
+        return 0, len(waveform)
+    # Try to find two zero-crossings with the same direction (rising/rising or falling/falling)
+    for i in range(1, len(crossings)):
+        s0 = np.sign(waveform[crossings[0]+1] - waveform[crossings[0]])
+        si = np.sign(waveform[crossings[i]+1] - waveform[crossings[i]])
+        if si == s0:
+            return crossings[0], crossings[i]
+    # Fallback: just use first two crossings
+    return crossings[0], crossings[1]
 
 def calculate_bh_curve(I_waveform, V_waveform, dt, N, Ae, le):
     H = (N * I_waveform) / le
@@ -47,26 +73,28 @@ def fetch_waveform_custom(scope, chan, samples, mode="NORM", stop_scope=True):
     return raw, xinc, xorig, yinc, yorig, yref, probe
 
 def setup_bh_curve_tab(tab_frame, ip, root):
-    tab_frame.columnconfigure(0, weight=1)
-    tab_frame.rowconfigure(2, weight=1)
+    import numpy as np
+    import tkinter as tk
+    from tkinter import ttk
 
-    # -- Polished header strip like Power Analysis tab --
+    tab_frame.columnconfigure(0, weight=1)
+    tab_frame.rowconfigure(3, weight=1)  # plot area grows
+
+    # -- Header strip --
     header_frame = tk.Frame(tab_frame, bg="#226688", padx=8, pady=8)
     header_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(12, 2))
-    for col in range(12):
+    for col in range(16):
         header_frame.grid_columnconfigure(col, weight=1 if col != 0 else 0)
 
-    # Inputs: white text for contrast
+    # Inputs
     tk.Label(header_frame, text="N (turns):", bg="#226688", fg="white").grid(row=0, column=0, sticky="e", padx=(0,2))
     entry_N = ttk.Entry(header_frame, width=6)
     entry_N.insert(0, "20")
     entry_N.grid(row=0, column=1, sticky="w", padx=(0,8))
-
     tk.Label(header_frame, text="Ae (mm²):", bg="#226688", fg="white").grid(row=0, column=2, sticky="e", padx=(0,2))
     entry_Ae = ttk.Entry(header_frame, width=8)
     entry_Ae.insert(0, "25")
     entry_Ae.grid(row=0, column=3, sticky="w", padx=(0,8))
-
     tk.Label(header_frame, text="le (mm):", bg="#226688", fg="white").grid(row=0, column=4, sticky="e", padx=(0,2))
     entry_le = ttk.Entry(header_frame, width=8)
     entry_le.insert(0, "50")
@@ -74,12 +102,11 @@ def setup_bh_curve_tab(tab_frame, ip, root):
 
     tk.Label(header_frame, text="Current Ch:", bg="#226688", fg="white").grid(row=1, column=0, sticky="e", padx=(0,2))
     entry_ich = ttk.Entry(header_frame, width=6)
-    entry_ich.insert(0, "1")
+    entry_ich.insert(0, "3")
     entry_ich.grid(row=1, column=1, sticky="w", padx=(0,8))
-
     tk.Label(header_frame, text="Voltage Ch:", bg="#226688", fg="white").grid(row=1, column=2, sticky="e", padx=(0,2))
     entry_vch = ttk.Entry(header_frame, width=6)
-    entry_vch.insert(0, "2")
+    entry_vch.insert(0, "1")
     entry_vch.grid(row=1, column=3, sticky="w", padx=(0,8))
 
     tk.Label(header_frame, text="Probe Type:", bg="#226688", fg="white").grid(row=1, column=4, sticky="e", padx=(0,2))
@@ -90,7 +117,6 @@ def setup_bh_curve_tab(tab_frame, ip, root):
     rb_clamp = tk.Radiobutton(header_frame, text="Clamp", variable=probe_type, value="clamp",
         bg="#226688", fg="white", selectcolor="#3388aa", activebackground="#3388aa", indicatoron=False, width=7)
     rb_clamp.grid(row=1, column=6, sticky="w", padx=(2,8))
-
     tk.Label(header_frame, text="Value (Ω or A/V):", bg="#226688", fg="white").grid(row=1, column=7, sticky="e", padx=(0,2))
     entry_probe_value = ttk.Entry(header_frame, width=8)
     entry_probe_value.insert(0, "0.1")
@@ -101,7 +127,6 @@ def setup_bh_curve_tab(tab_frame, ip, root):
     entry_samples = ttk.Entry(header_frame, width=8)
     entry_samples.insert(0, "1000")
     entry_samples.grid(row=2, column=1, sticky="w", padx=(0,8))
-
     tk.Label(header_frame, text="Mode:", bg="#226688", fg="white").grid(row=2, column=2, sticky="e", padx=(0,2))
     point_mode_var = tk.StringVar(value="NORM")
     point_mode_box = ttk.Combobox(header_frame, textvariable=point_mode_var, values=["NORM", "RAW"], width=6, state="readonly")
@@ -110,26 +135,43 @@ def setup_bh_curve_tab(tab_frame, ip, root):
     stop_scope_var = tk.BooleanVar(value=True)
     stop_scope_check = ttk.Checkbutton(header_frame, text="Stop scope for fetch", variable=stop_scope_var)
     stop_scope_check.grid(row=2, column=4, columnspan=2, sticky="w", padx=(0,8))
-
     overlay_var = tk.BooleanVar(value=False)
     overlay_check = ttk.Checkbutton(header_frame, text="Overlay previous", variable=overlay_var)
     overlay_check.grid(row=2, column=6, columnspan=2, sticky="w", padx=(0,8))
-
     btn_acquire = ttk.Button(header_frame, text="Acquire & Plot")
     btn_acquire.grid(row=2, column=8, sticky="e", padx=(0,10))
+    auto_cycle_var = tk.BooleanVar(value=False)
+    auto_cycle_check = ttk.Checkbutton(header_frame, text="Auto one cycle", variable=auto_cycle_var)
+    auto_cycle_check.grid(row=2, column=9, columnspan=2, sticky="w", padx=(4,0))
 
-    # --- Status bar, like Power Analysis ---
+    # ---- Auto refresh controls ----
+    auto_var = tk.BooleanVar(value=False)
+    auto_check = ttk.Checkbutton(header_frame, text="Auto", variable=auto_var)
+    auto_check.grid(row=2, column=11, sticky="w", padx=(4,0))
+    interval_var = tk.IntVar(value=5)
+    interval_spin = ttk.Spinbox(header_frame, from_=1, to=60, width=3, textvariable=interval_var)
+    interval_spin.grid(row=2, column=12, sticky="w")
+    tk.Label(header_frame, text="s", bg="#226688", fg="white").grid(row=2, column=13, sticky="w")
+
+    # --- Status bar
     status_var = tk.StringVar(value="")
     status_label = tk.Label(tab_frame, textvariable=status_var,
         fg="#bbbbbb", bg="#1a1a1a", font=("TkDefaultFont", 9))
     status_label.grid(row=1, column=0, sticky="ew", padx=10, pady=(3, 2))
 
-    # --- Plot frame, dark bg and subtle border ---
+    # --- Data output panel
+    data_text = tk.Text(tab_frame, height=7, font=("Courier", 9), bg="#181818", fg="#eeeeee", wrap="none")
+    data_text.grid(row=2, column=0, sticky="ew", padx=10, pady=(0,2))
+    data_text.config(state=tk.DISABLED)
+
+    # --- Plot frame
     plot_frame = tk.Frame(tab_frame, bg="#202020", bd=1, relief="solid")
-    plot_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=(2,8))
+    plot_frame.grid(row=3, column=0, sticky="nsew", padx=10, pady=(2,8))
     plot_frame.rowconfigure(0, weight=1)
     plot_frame.columnconfigure(0, weight=1)
 
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
     fig, ax = plt.subplots(figsize=(5, 4), dpi=100, facecolor="#1a1a1a")
     canvas = FigureCanvasTkAgg(fig, master=plot_frame)
     canvas_widget = canvas.get_tk_widget()
@@ -139,11 +181,20 @@ def setup_bh_curve_tab(tab_frame, ip, root):
     ax.set_ylabel("B (T)")
     last_HB = [None, None]
 
+    # --- Heatmap history buffer ---
+    history = []
+
+    # --- Main acquisition/plot function ---
     def do_acquire_and_plot():
+        import numpy as np
+        from scpi.interface import safe_query, scpi_lock
+        from app.app_state import scope
+        from time import sleep
+
         try:
             N = int(entry_N.get())
-            Ae = float(entry_Ae.get()) * 1e-6  # mm² to m²
-            le = float(entry_le.get()) * 1e-3  # mm to m
+            Ae = float(entry_Ae.get()) * 1e-6
+            le = float(entry_le.get()) * 1e-3
             ich = entry_ich.get().strip()
             vch = entry_vch.get().strip()
             probe_val = float(entry_probe_value.get())
@@ -156,12 +207,11 @@ def setup_bh_curve_tab(tab_frame, ip, root):
             status_var.set(f"Invalid input: {e}")
             return
 
-        from app.app_state import scope
         if not scope:
             status_var.set("Scope not connected.")
             return
 
-        # --- Fetch current waveform ---
+        # Fetch current waveform
         try:
             chan_i = ich if ich.startswith("MATH") else f"CHAN{ich}"
             disp_status_i = safe_query(scope, f":{chan_i}:DISP?")
@@ -188,7 +238,7 @@ def setup_bh_curve_tab(tab_frame, ip, root):
             status_var.set(f"Failed to fetch current: {e}")
             return
 
-        # --- Fetch voltage waveform ---
+        # Fetch voltage waveform
         try:
             chan_v = vch if vch.startswith("MATH") else f"CHAN{vch}"
             disp_status_v = safe_query(scope, f":{chan_v}:DISP?")
@@ -204,23 +254,133 @@ def setup_bh_curve_tab(tab_frame, ip, root):
             if len(raw_v) < samples:
                 status_var.set(f"⚠️ Only {len(raw_v)} of {samples} points received for {chan_v}. Try slower timebase or increase memory depth.")
             Vwave = ((raw_v - yref_v) * yinc_v + yorig_v) * probe_v
+            Vwave = Vwave - np.mean(Vwave)
         except Exception as e:
             status_var.set(f"Failed to fetch voltage: {e}")
             return
 
-        # --- Sanity check: sample intervals match ---
+        # Check sample interval
         dt = xinc
         if abs(xinc - xinc_v) > 1e-9:
             status_var.set("Sample intervals for current and voltage do not match! (adjust timebase?)")
             return
 
-        # --- Compute B and H ---
+        # Auto-extract one cycle if enabled
+        def extract_one_cycle(waveform):
+            waveform = np.asarray(waveform)
+            crossings = np.where(np.diff(np.signbit(waveform)))[0]
+            if len(crossings) < 2:
+                return 0, len(waveform)
+            for i in range(1, len(crossings)):
+                s0 = np.sign(waveform[crossings[0]+1] - waveform[crossings[0]])
+                si = np.sign(waveform[crossings[i]+1] - waveform[crossings[i]])
+                if si == s0:
+                    return crossings[0], crossings[i]
+            return crossings[0], crossings[1]
+
+        if auto_cycle_var.get():
+            idx0, idx1 = extract_one_cycle(Iwave)
+            idx0 = max(0, idx0)
+            idx1 = min(len(Iwave)-1, idx1)
+            if idx1 - idx0 > 20:
+                Iwave_cyc = Iwave[idx0:idx1]
+                Vwave_cyc = Vwave[idx0:idx1]
+                samples_cyc = idx1 - idx0
+                msg = f"Auto one cycle: {samples_cyc} points"
+            else:
+                Iwave_cyc = Iwave
+                Vwave_cyc = Vwave
+                msg = "⚠️ Could not detect full cycle—showing all data"
+        else:
+            Iwave_cyc = Iwave
+            Vwave_cyc = Vwave
+
+        # Compute B and H
+        def calculate_bh_curve(I_waveform, V_waveform, dt, N, Ae, le):
+            H = (N * I_waveform) / le
+            flux = np.cumsum(V_waveform) * dt
+            B = flux / (N * Ae)
+            return H, B
+
         try:
-            H, B = calculate_bh_curve(Iwave, Vwave, dt, N, Ae, le)
+            H, B = calculate_bh_curve(Iwave_cyc, Vwave_cyc, dt, N, Ae, le)
             if len(H) == 0 or len(B) == 0:
                 status_var.set("Computed arrays are empty!")
                 return
-            # Reduce points for plotting (still calculating with full resolution)
+
+            # --- Data panel update ---
+            data_text.config(state=tk.NORMAL)
+            data_text.delete(1.0, tk.END)
+            data_text.insert(tk.END, f"N={N}  Ae={Ae:.2e} m²  le={le:.2e} m  Probe:{probe_mode} {probe_val}  Samples:{samples}  dt={dt:.2e} s\n")
+            data_text.insert(tk.END, f"Peak H={np.max(H):.3g} A/m  Peak B={np.max(B):.3g} T  Min H={np.min(H):.3g} A/m  Min B={np.min(B):.3g} T\n")
+
+            mu0 = 4 * np.pi * 1e-7
+            def interpolate_crossing(x, y):
+                idxs = np.where(np.diff(np.signbit(y)))[0]
+                if not len(idxs):
+                    return np.nan
+                i = idxs[0]
+                x0, x1 = x[i], x[i+1]
+                y0, y1 = y[i], y[i+1]
+                if y1 == y0:
+                    return x0
+                return x0 + (0 - y0) * (x1 - x0) / (y1 - y0)
+            Hc = interpolate_crossing(H, B)
+            Br = interpolate_crossing(B, H)
+            loop_area = np.abs(np.trapz(B, H))
+            with np.errstate(divide='ignore', invalid='ignore'):
+                mu_r_arr = np.abs(B / (H + 1e-12)) / mu0
+                mu_r_max = np.nanmax(mu_r_arr[np.isfinite(mu_r_arr) & (np.abs(H) > 1e-4)])
+            data_text.insert(tk.END, f"Coercivity Hc={Hc:.3g} A/m  Remanence Br={Br:.3g} T  Loop Area={loop_area:.3g} J/m³\n")
+            data_text.insert(tk.END, f"Max Rel. Permeability μr={mu_r_max:.3g}\n")
+            data_text.insert(tk.END, "H (A/m): " + np.array2string(H[:8], precision=3, separator=", "))
+            if len(H) > 16:
+                data_text.insert(tk.END, " ... ")
+                data_text.insert(tk.END, np.array2string(H[-8:], precision=3, separator=", "))
+            data_text.insert(tk.END, "\nB (T):   " + np.array2string(B[:8], precision=5, separator=", "))
+            if len(B) > 16:
+                data_text.insert(tk.END, " ... ")
+                data_text.insert(tk.END, np.array2string(B[-8:], precision=5, separator=", "))
+            data_text.config(state=tk.DISABLED)
+
+            # --- CSV logging for bh-curve data ---
+            if not hasattr(do_acquire_and_plot, "csv_path"):
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                bh_folder = os.path.join("oszi_csv", "bh-curve")
+                os.makedirs(bh_folder, exist_ok=True)
+                do_acquire_and_plot.csv_path = os.path.join(bh_folder, f"bhcurve_log_{timestamp}.csv")
+                do_acquire_and_plot.run_index = 0
+
+            csv_path = do_acquire_and_plot.csv_path
+            do_acquire_and_plot.run_index += 1
+
+            write_header = not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0
+
+            with open(csv_path, "a", newline="") as f:
+                writer = csv.writer(f)
+                if write_header:
+                    writer.writerow(["# BH-curve data log"])
+                    #writer.writerow(["# N", N, "Ae (m²)", Ae, "le (m)", le, "Probe", probe_mode, probe_val, "Samples", samples, "dt (s)", dt])
+                    writer.writerow([
+                        "# N", N, 
+                        "Ae (m²)", Ae, 
+                        "le (m)", le, 
+                        "Probe", probe_mode, 
+                        "Probe Value", probe_val, 
+                        "Samples", samples, 
+                        "dt (s)", dt
+                    ])
+
+                    writer.writerow(["# Columns: run_index, time_iso, H (A/m), B (T)"])
+                for idx, (hval, bval) in enumerate(zip(H, B)):
+                    writer.writerow([
+                        do_acquire_and_plot.run_index,
+                        datetime.now().isoformat(),
+                        hval, bval
+                    ])
+                writer.writerow([])  # blank line between runs            
+
+            # --- Heatmap/plotting ---
             MAX_PLOT = 5000
             if len(H) > MAX_PLOT:
                 step = len(H) // MAX_PLOT
@@ -229,7 +389,13 @@ def setup_bh_curve_tab(tab_frame, ip, root):
             else:
                 H_plot, B_plot = H, B
 
-            # --- Plot (true dark mode) ---
+            # Update history for heatmap if auto is on
+            if auto_var.get():
+                if len(history) > 30:   # Keep last 30 traces
+                    history.pop(0)
+                history.append((np.copy(H_plot), np.copy(B_plot)))
+
+            # Plot
             ax.clear()
             fig = ax.get_figure()
             ax.set_facecolor("#1a1a1a")
@@ -245,9 +411,26 @@ def setup_bh_curve_tab(tab_frame, ip, root):
             ax.yaxis.label.set_color('white')
             ax.title.set_color('white')
 
+            # --- Heatmap: faded history traces ---
+            if auto_var.get() and len(history) > 1:
+                cmap = cm.get_cmap('plasma')
+                for i, (h_hist, b_hist) in enumerate(history[:-1]):
+                    t = i / (len(history) - 2 + 1e-6)
+                    color = cmap(t)
+                    ax.plot(h_hist, b_hist, color=color, linewidth=1.3, alpha=0.7)
+
+            if auto_var.get() and len(history) > 1:
+                # In auto mode with history: show current as yellow dots
+                ax.plot(H_plot, B_plot, color='yellow', marker='o', linestyle='None', markersize=3, label="Current")
+
+            else:
+                # In manual/one-shot mode: show current as electric blue line
+                ax.plot(H_plot, B_plot, color='#00eaff', lw=1.8, label="Current")
+
+
+            # Overlay previous (optional)
             if overlay and last_HB[0] is not None and last_HB[1] is not None:
                 ax.plot(last_HB[0], last_HB[1], color="red", alpha=0.5, label="Previous")
-            ax.plot(H_plot, B_plot, color="magenta", lw=1, linestyle="--", marker="o", markersize=2, markerfacecolor="white", alpha=0.8, label="Current")
 
             leg = ax.legend(loc="upper left", facecolor="#1a1a1a", edgecolor="#444444", labelcolor="white", fontsize=9)
             if leg:
@@ -255,11 +438,22 @@ def setup_bh_curve_tab(tab_frame, ip, root):
                     text.set_color("white")
             canvas.draw()
 
+
             last_HB[0], last_HB[1] = (H, B)
         except Exception as e:
             status_var.set(f"Failed to compute B/H: {e}")
             return
 
-        status_var.set(f"Points: {len(H)}  |  Peak H: {np.max(np.abs(H)):.2f} A/m, Peak B: {np.max(np.abs(B)):.4f} T")
+        status_var.set(
+            (msg if auto_cycle_var.get() else "") +
+            f" | Peak H: {np.max(np.abs(H)):.2f} A/m, Peak B: {np.max(np.abs(B)):.4f} T"
+        )
+
+    # --- Auto-refresh loop ---
+    def auto_refresh_loop():
+        if auto_var.get():
+            do_acquire_and_plot()
+        tab_frame.after(interval_var.get() * 1000, auto_refresh_loop)
+    auto_refresh_loop()
 
     btn_acquire.config(command=do_acquire_and_plot)
