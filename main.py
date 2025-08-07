@@ -29,6 +29,7 @@ from scpi.data import scpi_data
 from scpi.interface import connect_scope, safe_query
 from logger.longtime import start_logging, pause_resume, stop_logging
 from app.app_state import is_logging_active
+from gui.bh_curve import setup_bh_curve_tab
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
@@ -193,6 +194,8 @@ def main():
     setup_power_analysis_tab(tabs["Power Analysis"], ip, root)
     power_tab = tabs["Power Analysis"]
     power_shutdown = getattr(power_tab, "_shutdown", lambda: None)
+
+    setup_bh_curve_tab(tabs["BH Curve"], ip, root)
 
     # === Debug Tab ===
     debug_frame = tabs["Debug Log"]
