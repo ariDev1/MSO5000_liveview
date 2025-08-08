@@ -16,7 +16,6 @@ import app.app_state as app_state
 
 mu0 = 4 * np.pi * 1e-7  # H/m, permeability of free space
 
-
 def extract_one_cycle(waveform):
     """
     Extract indices for one full period in the waveform, based on zero-crossings
@@ -91,7 +90,7 @@ def setup_bh_curve_tab(tab_frame, ip, root):
         header_frame.grid_columnconfigure(col, weight=1 if col != 0 else 0)
 
     # Inputs
-    tk.Label(header_frame, text="N (turns):", bg="#226688", fg="white").grid(row=0, column=0, sticky="e", padx=(0,2))
+    tk.Label(header_frame, text="N:", bg="#226688", fg="white").grid(row=0, column=0, sticky="e", padx=(0,2))
     entry_N = ttk.Entry(header_frame, width=6)
     entry_N.insert(0, "20")
     entry_N.grid(row=0, column=1, sticky="w", padx=(0,8))
@@ -104,16 +103,16 @@ def setup_bh_curve_tab(tab_frame, ip, root):
     entry_le.insert(0, "50")
     entry_le.grid(row=0, column=5, sticky="w", padx=(0,8))
 
-    tk.Label(header_frame, text="Current Ch:", bg="#226688", fg="white").grid(row=1, column=0, sticky="e", padx=(0,2))
+    tk.Label(header_frame, text="[i]Ch:", bg="#226688", fg="white").grid(row=1, column=0, sticky="e", padx=(0,2))
     entry_ich = ttk.Entry(header_frame, width=6)
     entry_ich.insert(0, "3")
     entry_ich.grid(row=1, column=1, sticky="w", padx=(0,8))
-    tk.Label(header_frame, text="Voltage Ch:", bg="#226688", fg="white").grid(row=1, column=2, sticky="e", padx=(0,2))
+    tk.Label(header_frame, text="[v]Ch:", bg="#226688", fg="white").grid(row=1, column=2, sticky="e", padx=(0,2))
     entry_vch = ttk.Entry(header_frame, width=6)
     entry_vch.insert(0, "1")
     entry_vch.grid(row=1, column=3, sticky="w", padx=(0,8))
 
-    tk.Label(header_frame, text="Probe Type:", bg="#226688", fg="white").grid(row=1, column=4, sticky="e", padx=(0,2))
+    tk.Label(header_frame, text="Type:", bg="#226688", fg="white").grid(row=1, column=4, sticky="e", padx=(0,2))
     probe_type = tk.StringVar(value="shunt")
     rb_shunt = tk.Radiobutton(header_frame, text="Shunt", variable=probe_type, value="shunt",
         bg="#226688", fg="white", selectcolor="#3388aa", activebackground="#3388aa", indicatoron=False, width=7)
@@ -127,7 +126,7 @@ def setup_bh_curve_tab(tab_frame, ip, root):
     entry_probe_value.grid(row=1, column=8, sticky="w", padx=(0,8))
 
     # Sampling options row
-    tk.Label(header_frame, text="Points:", bg="#226688", fg="white").grid(row=2, column=0, sticky="e", padx=(0,2))
+    tk.Label(header_frame, text="Pts:", bg="#226688", fg="white").grid(row=2, column=0, sticky="e", padx=(0,2))
     entry_samples = ttk.Entry(header_frame, width=8)
     entry_samples.insert(0, "1000")
     entry_samples.grid(row=2, column=1, sticky="w", padx=(0,8))
@@ -137,15 +136,15 @@ def setup_bh_curve_tab(tab_frame, ip, root):
     point_mode_box.grid(row=2, column=3, sticky="w", padx=(0,8))
 
     stop_scope_var = tk.BooleanVar(value=True)
-    stop_scope_check = ttk.Checkbutton(header_frame, text="Stop scope for fetch", variable=stop_scope_var)
+    stop_scope_check = ttk.Checkbutton(header_frame, text="Stop/Fetch", variable=stop_scope_var)
     stop_scope_check.grid(row=2, column=4, columnspan=2, sticky="w", padx=(0,8))
     overlay_var = tk.BooleanVar(value=False)
-    overlay_check = ttk.Checkbutton(header_frame, text="Overlay previous", variable=overlay_var)
+    overlay_check = ttk.Checkbutton(header_frame, text="Overlay prev.", variable=overlay_var)
     overlay_check.grid(row=2, column=6, columnspan=2, sticky="w", padx=(0,8))
     btn_acquire = ttk.Button(header_frame, text="Acquire & Plot")
     btn_acquire.grid(row=2, column=8, sticky="e", padx=(0,10))
     auto_cycle_var = tk.BooleanVar(value=False)
-    auto_cycle_check = ttk.Checkbutton(header_frame, text="Auto one cycle", variable=auto_cycle_var)
+    auto_cycle_check = ttk.Checkbutton(header_frame, text="T=1", variable=auto_cycle_var)
     auto_cycle_check.grid(row=2, column=9, columnspan=2, sticky="w", padx=(4,0))
 
     # ---- Auto refresh controls ----
@@ -188,6 +187,26 @@ def setup_bh_curve_tab(tab_frame, ip, root):
     # --- Heatmap history buffer ---
     history = []
 
+    def reset_history():
+        history.clear()
+        last_HB[0], last_HB[1] = None, None
+        if hasattr(do_acquire_and_plot, "csv_path"):
+            delattr(do_acquire_and_plot, "csv_path")
+        if hasattr(do_acquire_and_plot, "run_index"):
+            delattr(do_acquire_and_plot, "run_index")
+        ax.clear()
+        fig = ax.get_figure()
+        ax.set_facecolor("#1a1a1a")
+        fig.patch.set_facecolor("#1a1a1a")
+        ax.set_xlabel("H (A/m)")
+        ax.set_ylabel("B (T)")
+        ax.set_title("B-H (Hysteresis) Curve")
+        canvas.draw()
+        status_var.set("Plot and history cleared.")
+
+    btn_reset = ttk.Button(header_frame, text="⭮ Clear", command=reset_history)
+    btn_reset.grid(row=2, column=14, sticky="e", padx=(8, 0))  # adjust column if needed
+
     # --- Main acquisition/plot function ---
     def do_acquire_and_plot():
         import numpy as np
@@ -210,7 +229,10 @@ def setup_bh_curve_tab(tab_frame, ip, root):
         except Exception as e:
             status_var.set(f"Invalid input: {e}")
             return
-
+        
+        if not auto_var.get() and not overlay:
+            reset_history()
+        
         if not scope:
             status_var.set("Scope not connected.")
             return
