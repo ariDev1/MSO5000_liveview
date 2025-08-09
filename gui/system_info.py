@@ -43,6 +43,24 @@ def setup_system_info_tab(tab_frame, root):
     last_system_text = [""]
 
     def update_system_info():
+        import tkinter as tk
+        try:
+            from app import app_state
+            shutting_down = getattr(app_state, "is_shutting_down", False)
+        except Exception:
+            shutting_down = False
+
+        # Bail early if shutting down or widgets are gone
+        if shutting_down or not text_widget.winfo_exists():
+            return
+
+        # If scrollbar is already destroyed, unhook yscrollcommand to avoid '...scroll' errors
+        try:
+            if not scrollbar.winfo_exists():
+                text_widget.configure(yscrollcommand=None)
+        except tk.TclError:
+                return
+
         meta_info = (
             f"\n\n{'-'*60}\n"
             f"{APP_NAME} {VERSION}\n"
@@ -59,22 +77,28 @@ def setup_system_info_tab(tab_frame, root):
 
         full_text = base_info + meta_info
 
-        if full_text != last_system_text[0]:
-            scroll_position = text_widget.yview()
-            sel_start = text_widget.index(tk.SEL_FIRST) if text_widget.tag_ranges(tk.SEL) else None
-            sel_end   = text_widget.index(tk.SEL_LAST)  if text_widget.tag_ranges(tk.SEL) else None
+        try:
+            if full_text != last_system_text[0]:
+                scroll_position = text_widget.yview()
+                sel_start = text_widget.index(tk.SEL_FIRST) if text_widget.tag_ranges(tk.SEL) else None
+                sel_end   = text_widget.index(tk.SEL_LAST)  if text_widget.tag_ranges(tk.SEL) else None
 
-            text_widget.config(state=tk.NORMAL)
-            text_widget.delete("1.0", tk.END)
-            text_widget.insert(tk.END, full_text)
-            text_widget.config(state=tk.DISABLED)
+                text_widget.config(state=tk.NORMAL)
+                text_widget.delete("1.0", tk.END)
+                text_widget.insert(tk.END, full_text)
+                text_widget.config(state=tk.DISABLED)
 
-            if sel_start and sel_end:
-                text_widget.tag_add(tk.SEL, sel_start, sel_end)
-            text_widget.yview_moveto(scroll_position[0])
+                if sel_start and sel_end and text_widget.winfo_exists():
+                    text_widget.tag_add(tk.SEL, sel_start, sel_end)
+                text_widget.yview_moveto(scroll_position[0])
 
-            last_system_text[0] = full_text
+                last_system_text[0] = full_text
+        except tk.TclError:
+            return
 
-        root.after(2000, update_system_info)
+        # Re-schedule only if still alive
+        if not shutting_down and text_widget.winfo_exists():
+            root.after(2000, update_system_info)
+
 
     update_system_info()

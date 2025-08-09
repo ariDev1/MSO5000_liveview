@@ -89,6 +89,23 @@ def setup_channel_tab(tab_frame, ip, root):
     last_text = [""]
 
     def update_channel_info():
+        import tkinter as tk
+        try:
+            from app import app_state
+            shutting_down = getattr(app_state, "is_shutting_down", False)
+        except Exception:
+            shutting_down = False
+
+        if shutting_down or not text_widget.winfo_exists():
+            return
+
+        # If scrollbar died, unhook to prevent '...scroll' errors
+        try:
+            if not scrollbar.winfo_exists():
+                text_widget.configure(yscrollcommand=None)
+        except tk.TclError:
+            return
+
         lines = []
         for ch, info in scpi_data["channel_info"].items():
             if ch.startswith("MATH"):
@@ -98,22 +115,27 @@ def setup_channel_tab(tab_frame, ip, root):
 
         full_text = "\n".join(lines) if lines else "⚠️ No active channels"
 
-        if full_text != last_text[0]:
-            scroll_position = text_widget.yview()
-            sel_start = text_widget.index(tk.SEL_FIRST) if text_widget.tag_ranges(tk.SEL) else None
-            sel_end   = text_widget.index(tk.SEL_LAST)  if text_widget.tag_ranges(tk.SEL) else None
+        try:
+            if full_text != last_text[0]:
+                scroll_position = text_widget.yview()
+                sel_start = text_widget.index(tk.SEL_FIRST) if text_widget.tag_ranges(tk.SEL) else None
+                sel_end   = text_widget.index(tk.SEL_LAST)  if text_widget.tag_ranges(tk.SEL) else None
 
-            text_widget.config(state=tk.NORMAL)
-            text_widget.delete("1.0", tk.END)
-            text_widget.insert(tk.END, full_text)
-            text_widget.config(state=tk.DISABLED)
+                text_widget.config(state=tk.NORMAL)
+                text_widget.delete("1.0", tk.END)
+                text_widget.insert(tk.END, full_text)
+                text_widget.config(state=tk.DISABLED)
 
-            if sel_start and sel_end:
-                text_widget.tag_add(tk.SEL, sel_start, sel_end)
-            text_widget.yview_moveto(scroll_position[0])
+                if sel_start and sel_end and text_widget.winfo_exists():
+                    text_widget.tag_add(tk.SEL, sel_start, sel_end)
+                text_widget.yview_moveto(scroll_position[0])
 
-            last_text[0] = full_text
+                last_text[0] = full_text
+        except tk.TclError:
+            return
 
-        tab_frame.after(2000, update_channel_info)
+        if not shutting_down and text_widget.winfo_exists():
+            tab_frame.after(2000, update_channel_info)
+
 
     update_channel_info()
