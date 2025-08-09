@@ -33,18 +33,24 @@ def connect_scope(ip):
         return None
 
 def safe_query(scope, command, default="N/A"):
+    """Query the scope safely with blacklist + busy flag handling."""
     if command in BLACKLISTED_COMMANDS:
         log_debug(f"⚠️ Skipped blacklisted SCPI: {command}")
         return default
+
+    app_state.is_scpi_busy = True
     try:
-        app_state.is_scpi_busy = True   #scpi busy now
-        response = scope.query(command).strip()
-        app_state.is_scpi_busy = True   #scpi done
+        response = scope.query(command)
+        response = response.strip() if isinstance(response, str) else response
         return response if response else default
     except Exception as e:
-        app_state.is_scpi_busy = False  #ensure it's reset on error too!
         log_debug(f"❌ SCPI error [{command}]: {e}")
         if "TMO" in str(e) or "Timeout" in str(e):
-            BLACKLISTED_COMMANDS.append(command)
+            if command not in BLACKLISTED_COMMANDS:
+                BLACKLISTED_COMMANDS.append(command)
             log_debug(f"⛔ Blacklisted: {command}")
         return default
+    finally:
+        # Always clear the busy flag on success OR error
+        app_state.is_scpi_busy = False
+
