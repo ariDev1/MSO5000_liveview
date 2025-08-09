@@ -1,10 +1,11 @@
 # scpi/interface.py
 
 import pyvisa
-from utils.debug import log_debug, set_debug_level
-from config import BLACKLISTED_COMMANDS
 import threading
 import app.app_state as app_state
+
+from utils.debug import log_debug, set_debug_level
+from config import BLACKLISTED_COMMANDS
 
 scpi_lock = threading.Lock()
 

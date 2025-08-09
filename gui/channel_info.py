@@ -1,13 +1,13 @@
 # gui/channel_info.py
 
 import tkinter as tk
+import app.app_state as app_state
 from tkinter import ttk
 from io import StringIO
 from scpi.data import scpi_data
 from scpi.interface import connect_scope
 from scpi.waveform import export_channel_csv
 from utils.debug import log_debug
-from app.app_state import is_logging_active
 
 def setup_channel_tab(tab_frame, ip, root):
     text_widget = tk.Text(tab_frame, font=("Courier", 10), bg="#1a1a1a", fg="#ffffff",
@@ -27,7 +27,7 @@ def setup_channel_tab(tab_frame, ip, root):
         log_debug("📋 Channel Settings copied to clipboard", level="MINIMAL")
 
     def copy_channel_csv_to_clipboard():
-        if is_logging_active:
+        if app_state.is_logging_active:
             log_debug("❌ Logging in progress — copy disabled", level="MINIMAL")
             return
 
@@ -59,7 +59,7 @@ def setup_channel_tab(tab_frame, ip, root):
         log_debug("📋 Channel CSV data copied to clipboard", level="MINIMAL")
 
     def on_export():
-        if is_logging_active:
+        if app_state.is_logging_active:
             log_debug("❌ Logging in progress — export disabled", level="MINIMAL")
             return
 

@@ -2,11 +2,12 @@
 
 import time
 import threading
+import app.app_state as app_state
+
 from scpi.interface import connect_scope, safe_query, scpi_lock
 from scpi.data import scpi_data
 from utils.debug import log_debug, set_debug_level
 from config import INTERVALL_SCPI
-from app.app_state import is_logging_active
 
 def start_scpi_loop(ip):
     def loop():
@@ -24,7 +25,7 @@ def start_scpi_loop(ip):
         log_debug(f"🔗 SCPI Loop connected: {scpi_data['idn']}")
 
         while True:
-            if is_logging_active:
+            if app_state.is_logging_active:
                 time.sleep(1)
                 continue
 

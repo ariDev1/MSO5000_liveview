@@ -5,6 +5,8 @@ import time
 import csv
 import math
 import numpy as np
+import app.app_state as app_state
+
 from utils.debug import log_debug, set_debug_level
 from config import WAV_POINTS
 from scpi.interface import safe_query
@@ -12,7 +14,6 @@ from scpi.interface import scpi_lock
 from scpi.power_formulas import compute_power_standard, compute_power_rms_cos_phi
 
 def fetch_waveform_with_fallback(scope, chan, retries=1):
-    import app.app_state as app_state
 
     def try_fetch(mode_label):
         try:

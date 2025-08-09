@@ -1,10 +1,10 @@
 # gui/logging_controls.py
 
 import tkinter as tk
+import app.app_state as app_state
 from tkinter import ttk
 from logger.longtime import start_logging, pause_resume, stop_logging
 from scpi.interface import connect_scope
-from app.app_state import is_logging_active
 
 def setup_logging_tab(tab_frame, ip, root):
     tab_frame.columnconfigure(0, weight=1)

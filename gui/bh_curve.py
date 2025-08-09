@@ -2,6 +2,7 @@
 import os
 import csv
 from datetime import datetime
+import app.app_state as app_state
 
 import tkinter as tk
 from tkinter import ttk
@@ -12,7 +13,6 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from scpi.interface import connect_scope, safe_query, scpi_lock
 from utils.debug import log_debug
-import app.app_state as app_state
 
 mu0 = 4 * np.pi * 1e-7  # H/m, permeability of free space
 

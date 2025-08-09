@@ -2,6 +2,8 @@
 
 import time
 import tkinter as tk
+import app.app_state as app_state
+
 from tkinter import ttk
 from scpi.interface import safe_query, scpi_lock, connect_scope
 from scpi.data import scpi_data
