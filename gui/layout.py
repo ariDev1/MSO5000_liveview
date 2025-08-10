@@ -109,6 +109,25 @@ def setup_styles():
         foreground=[("active", "#ffffff")]
     )
 
+    # Grouped sections for BH inputs
+    style.configure("Group.TLabelframe",
+        background=DARK_BG,
+        foreground=DARK_FG)
+    style.configure("Group.TLabelframe.Label",
+        background=DARK_BG,
+        foreground="#dddddd",
+        font=("TkDefaultFont", 10, "bold"))
+
+    # Subtle card container (used under some frames)
+    style.configure("Card.TFrame",
+        background="#202020")
+    style.configure("TEntry",
+        fieldbackground="#111111",
+        foreground="#ffffff")
+    style.configure("TCombobox",
+        fieldbackground="#111111",
+        background=DARK_TAB_BG,
+        foreground=DARK_FG)
 
 def create_main_gui(container, ip):
     root = container.winfo_toplevel()

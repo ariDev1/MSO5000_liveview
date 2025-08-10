@@ -250,27 +250,33 @@ def setup_bh_curve_tab(tab_frame, ip, root):
 
     grp_geometry = mk_group("Core Geometry")
     grp_channels = mk_group("Channels & Probe")
+    for c in range(6):
+        grp_channels.grid_columnconfigure(c, weight=1, uniform="ch")
+
     grp_sampling = mk_group("Sampling")
     grp_processing = mk_group("Processing")
     grp_display = mk_group("Display")
 
     # --- Core Geometry ---
-    tk.Label(grp_geometry, text="N:", background="#1a1a1a", foreground="#ffffff").grid(row=0, column=0, sticky="e", padx=(6, 2), pady=3)
+    tk.Label(grp_geometry, text="Turns N:", background="#1a1a1a", foreground="#ffffff").grid(row=0, column=0, sticky="e", padx=(6, 2), pady=3)
     entry_N = ttk.Entry(grp_geometry, width=6); entry_N.insert(0, "20"); entry_N.grid(row=0, column=1, sticky="w", padx=(0, 6), pady=3)
     tk.Label(grp_geometry, text="Ae (mm²):", background="#1a1a1a", foreground="#ffffff").grid(row=0, column=2, sticky="e", padx=(6, 2), pady=3)
     entry_Ae = ttk.Entry(grp_geometry, width=8); entry_Ae.insert(0, "25"); entry_Ae.grid(row=0, column=3, sticky="w", padx=(0, 6), pady=3)
     tk.Label(grp_geometry, text="le (mm):", background="#1a1a1a", foreground="#ffffff").grid(row=1, column=0, sticky="e", padx=(6, 2), pady=3)
     entry_le = ttk.Entry(grp_geometry, width=8); entry_le.insert(0, "50"); entry_le.grid(row=1, column=1, sticky="w", padx=(0, 6), pady=3)
-    tk.Label(grp_geometry, text="Δt (µs):", background="#1a1a1a", foreground="#ffffff").grid(row=1, column=2, sticky="e", padx=(6, 2), pady=3)
-    entry_dt_shift = ttk.Entry(grp_geometry, width=8); entry_dt_shift.insert(0, "0.0"); entry_dt_shift.grid(row=1, column=3, sticky="w", padx=(0, 6), pady=3)
 
     # --- Channels & Probe ---
-    tk.Label(grp_channels, text="[i]Ch:", background="#1a1a1a", foreground="#ffffff").grid(row=0, column=0, sticky="e", padx=(6, 2), pady=3)
+    tk.Label(grp_channels, text="Current Ch[i]:", background="#1a1a1a", foreground="#ffffff").grid(row=0, column=0, sticky="e", padx=(6, 2), pady=3)
     entry_ich = ttk.Entry(grp_channels, width=6); entry_ich.insert(0, "3"); entry_ich.grid(row=0, column=1, sticky="w", padx=(0, 6), pady=3)
-    tk.Label(grp_channels, text="[v]Ch:", background="#1a1a1a", foreground="#ffffff").grid(row=0, column=2, sticky="e", padx=(6, 2), pady=3)
+    tk.Label(grp_channels, text="Voltage Ch[v]:", background="#1a1a1a", foreground="#ffffff").grid(row=0, column=2, sticky="e", padx=(6, 2), pady=3)
     entry_vch = ttk.Entry(grp_channels, width=6); entry_vch.insert(0, "1"); entry_vch.grid(row=0, column=3, sticky="w", padx=(0, 6), pady=3)
+    # Deskew control (same semantics as Power Analysis: Δt = V − I)
+    ttk.Label(grp_channels, text="Deskew Δt (V−I) [µs]:").grid(row=0, column=4, sticky="e", padx=(6, 4), pady=3)
+    entry_dt_shift = ttk.Entry(grp_channels, width=10); entry_dt_shift.insert(0, "0.0")
+    entry_dt_shift.grid(row=0, column=5, sticky="w", padx=(0, 6), pady=3)
 
-    tk.Label(grp_channels, text="Probe:", background="#1a1a1a", foreground="#ffffff").grid(row=1, column=0, sticky="e", padx=(6, 2), pady=3)
+
+    tk.Label(grp_channels, text="Probe Type:", background="#1a1a1a", foreground="#ffffff").grid(row=1, column=0, sticky="e", padx=(6, 2), pady=3)
     probe_type = tk.StringVar(value="shunt")
     rb_shunt = tk.Radiobutton(grp_channels, text="Shunt", variable=probe_type, value="shunt",
                               bg="#1a1a1a", fg="#ffffff", selectcolor="#2d2d2d", activebackground="#2d2d2d", indicatoron=False, width=7)
@@ -279,10 +285,12 @@ def setup_bh_curve_tab(tab_frame, ip, root):
     rb_shunt.grid(row=1, column=1, sticky="w", padx=(0, 2), pady=3)
     rb_clamp.grid(row=1, column=2, sticky="w", padx=(0, 2), pady=3)
 
-    tk.Label(grp_channels, text="Value (Ω or A/V):", background="#1a1a1a", foreground="#ffffff").grid(row=1, column=3, sticky="e", padx=(6, 2), pady=3)
-    entry_probe_value = ttk.Entry(grp_channels, width=8); entry_probe_value.insert(0, "0.1"); entry_probe_value.grid(row=1, column=3, sticky="w", padx=(120, 6), pady=3)
+    tk.Label(grp_channels, text="Value (Ω or A/V):", background="#1a1a1a", foreground="#ffffff").grid(row=1, column=3, sticky="e", padx=(6, 4), pady=3)
+    entry_probe_value = ttk.Entry(grp_channels, width=10)
+    entry_probe_value.insert(0, "0.1")
+    entry_probe_value.grid(row=1, column=4, sticky="w", padx=(0, 6), pady=3)
 
-    # --- Sampling ---
+        # --- Sampling ---
     tk.Label(grp_sampling, text="Mode:", background="#1a1a1a", foreground="#ffffff").grid(row=0, column=0, sticky="e", padx=(6, 2), pady=3)
     point_mode_var = tk.StringVar(value="NORM")
     point_mode_box = ttk.Combobox(grp_sampling, textvariable=point_mode_var, values=["NORM", "RAW"], width=6, state="readonly")
@@ -505,11 +513,14 @@ def setup_bh_curve_tab(tab_frame, ip, root):
             coef, *_ = np.linalg.lstsq(A, Vwave, rcond=None)
             Vwave = Vwave - (coef[0] * x + coef[1])
 
-        # Optional relative time shift (µs) applied to VOLTAGE to compensate probe lag
+        # Deskew applied to CURRENT, consistent with Power Analysis.
+        # Convention: Δt = (V − I). Positive => V arrives later than I,
+        # so we delay I by +Δt (i.e., I(t) ← I(t − Δt)).
         if dt_shift_us != 0.0:
-            t = xorig + np.arange(len(Vwave)) * dt
+            t = xorig + np.arange(len(Iwave)) * dt
             t_shift = dt_shift_us * 1e-6
-            Vwave = np.interp(t, t + t_shift, Vwave, left=Vwave[0], right=Vwave[-1])
+            Iwave = np.interp(t, t - t_shift, Iwave, left=Iwave[0], right=Iwave[-1])
+
 
         # Choose cycle reference according to UI (I / V / Auto)
         ref = cycle_ref_var.get().upper()
