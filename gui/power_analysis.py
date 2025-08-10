@@ -13,6 +13,8 @@ from scpi.interface import connect_scope, safe_query
 from scpi.waveform import compute_power_from_scope
 from scpi.data import scpi_data
 from utils.debug import log_debug, set_debug_level
+from collections import deque
+
 
 # Performance optimizations
 class PowerAnalysisOptimizer:
@@ -329,6 +331,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     result_header.grid_columnconfigure(1, weight=1)
     result_header.grid_columnconfigure(2, weight=0)
     result_header.grid_columnconfigure(3, weight=0)
+    result_header.grid_columnconfigure(4, weight=0)
 
     tk.Label(result_header, text="📊 Analysis Output", font=("TkDefaultFont", 10, "bold"),
              bg="#1a1a1a", fg="white").grid(row=0, column=0, sticky="w")
@@ -354,7 +357,11 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                                  bg="#1a1a1a", fg="#ffaa00", font=("TkDefaultFont", 9))
     unit_status_label.grid(row=0, column=3, sticky="e", padx=(10, 5))
 
-
+    global deskew_status_var, deskew_status_label
+    deskew_status_var = tk.StringVar(value="")
+    deskew_status_label = tk.Label(result_header, textvariable=deskew_status_var,
+                                   bg="#1a1a1a", fg="#888888", font=("TkDefaultFont", 9))
+    deskew_status_label.grid(row=0, column=4, sticky="e", padx=(10, 5))
 
 
     # Output Text Box
@@ -394,8 +401,8 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         "PF_sum": 0.0, "Vrms_sum": 0.0, "Irms_sum": 0.0,
         "start_time": None
     }
-    pq_trail = []
     MAX_TRAIL = 30
+    pq_trail = deque(maxlen=MAX_TRAIL)
     dc_offset_logged = {"status": None}
     
     # Pre-compute common values to avoid repeated calculations
@@ -522,6 +529,29 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
             with open(power_csv_path, "w", newline="") as f:
                 writer = csv.writer(f)
+
+                # --- New: self-describing metadata rows (commented) ---
+                # Safe reads (avoid exceptions if fields temporarily empty)
+                _method = method_options.get(power_method_label.get(), "standard")
+                _ptype  = probe_type.get()
+                _pval   = entry_probe_value.get()
+                _cscale = entry_current_scale.get()
+                _corr   = correction_factor.get()
+                _rmdc   = str(remove_dc_var.get())
+                _freq   = scpi_data.get("freq_ref", "N/A")
+                _vch    = entry_vch.get().strip()
+                _ich    = entry_ich.get().strip()
+
+                writer.writerow(["# File", "Power Log"])
+                writer.writerow(["# Created", datetime.now().isoformat()])
+                writer.writerow(["# VoltageCh", _vch, "CurrentCh", _ich])
+                writer.writerow(["# Method", _method])
+                writer.writerow(["# ProbeType", _ptype, "ProbeValue", _pval])
+                writer.writerow(["# CurrentScale(A/V)", _cscale, "CorrectionFactor", _corr])
+                writer.writerow(["# RemoveDC", _rmdc, "FrequencyRef", _freq])
+                # --- End new metadata ---
+
+                # Existing numeric header (unchanged)
                 writer.writerow([
                     "Timestamp", "P (W)", "S (VA)", "Q (VAR)", "PF", "PF Angle (°)",
                     "Vrms (V)", "Irms (A)", "Real Energy (Wh)", "Apparent Energy (VAh)", "Reactive Energy (VARh)"
@@ -539,8 +569,6 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
         # Update PQ plot with throttling
         pq_trail.append((avg_p, avg_q))
-        if len(pq_trail) > MAX_TRAIL:
-            pq_trail.pop(0)
 
         if optimizer.should_update_plot():
             draw_pq_plot(avg_p, avg_q, metadata)
@@ -714,6 +742,22 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
             chan_v = vch if vch.startswith("MATH") else f"CHAN{vch}"
             chan_i = ich if ich.startswith("MATH") else f"CHAN{ich}"
+
+            # Map 'CHAN1' → 'CH1' to match scpi_data keys
+            ci = scpi_data.get("channel_info", {})
+            key_v = chan_v.replace("CHAN", "CH")
+            key_i = chan_i.replace("CHAN", "CH")
+
+            try:
+                t_v = float(ci.get(key_v, {}).get("tcal_s", 0.0) or 0.0)
+                t_i = float(ci.get(key_i, {}).get("tcal_s", 0.0) or 0.0)
+            except Exception:
+                t_v, t_i = 0.0, 0.0
+
+            deskew_ns = (t_v - t_i) * 1e9
+            deskew_status_var.set(f"Deskew Δt(V−I): {deskew_ns:+.1f} ns")
+            deskew_status_label.config(fg="#ffaa00" if abs(deskew_ns) >= 5 else "#888888")
+
             try:
                 v_offset = float(safe_query(scope, f":{chan_v}:OFFS?", "0"))
                 i_offset = float(safe_query(scope, f":{chan_i}:OFFS?", "0"))

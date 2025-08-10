@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# utils/plot_rigol_csv.py
 
 import os
 import sys
@@ -52,15 +53,16 @@ def is_waveform_csv(path):
 
 def is_session_log(path):
     try:
-        df = pd.read_csv(path, nrows=1)
+        df = pd.read_csv(path, nrows=1, comment="#", encoding="utf-8-sig")
         return "Timestamp" in df.columns
     except Exception:
         return False
 
 def is_power_log(path):
     try:
-        df = pd.read_csv(path, nrows=1)
-        return "P (W)" in df.columns and "S (VA)" in df.columns and "Q (VAR)" in df.columns
+        df = pd.read_csv(path, nrows=1, comment="#", encoding="utf-8-sig")
+        needed = {"P (W)", "S (VA)", "Q (VAR)"}
+        return needed.issubset(set(df.columns))
     except Exception:
         return False
 
@@ -121,7 +123,7 @@ def plot_waveform_csv(path, smooth=False, window=5, spline=False, scale=1.0):
 
 def plot_session_log(path, smooth=False, window=5, spline=False):
     try:
-        df = pd.read_csv(path, parse_dates=["Timestamp"])
+        df = pd.read_csv(path, parse_dates=["Timestamp"], comment="#", encoding="utf-8-sig")
         columns = [col for col in df.columns if col != "Timestamp"]
     except Exception as e:
         print(f"❌ Error reading session log: {e}")
@@ -169,7 +171,7 @@ def plot_session_log(path, smooth=False, window=5, spline=False):
 
 def plot_power_log(path, smooth=False, window=5, spline=False, scale=1.0):
     try:
-        df = pd.read_csv(path, parse_dates=["Timestamp"])
+        df = pd.read_csv(path, parse_dates=["Timestamp"], comment="#", encoding="utf-8-sig")
         metrics = [
             "P (W)", "S (VA)", "Q (VAR)", "PF", "Vrms (V)", "Irms (A)",
             "Real Energy (Wh)", "Apparent Energy (VAh)", "Reactive Energy (VARh)"

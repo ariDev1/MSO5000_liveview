@@ -9,6 +9,14 @@ from scpi.data import scpi_data
 from utils.debug import log_debug, set_debug_level
 from config import INTERVALL_SCPI
 
+def _read_tcal_seconds(scope, ch_index: int):
+    # :CHANnel1:TCALibrate? returns seconds (may be '', '0', or a float string)
+    s = safe_query(scope, f":CHANnel{ch_index}:TCALibrate?", "")
+    try:
+        return float(s)
+    except Exception:
+        return 0.0
+
 def start_scpi_loop(ip):
     def loop():
         scope = connect_scope(ip)
@@ -133,25 +141,40 @@ def start_scpi_loop(ip):
                     for ch in range(1, 5):
                         if safe_query(scope, f":CHAN{ch}:DISP?") != "1":
                             continue
-                        channels[f"CH{ch}"] = {
-                            "scale": safe_query(scope, f":CHAN{ch}:SCALe?"),
-                            "offset": safe_query(scope, f":CHAN{ch}:OFFS?"),
+
+                        ch_name = f"CH{ch}"  # define once
+
+                        channels[ch_name] = {
+                            "scale":    safe_query(scope, f":CHAN{ch}:SCALe?"),
+                            "offset":   safe_query(scope, f":CHAN{ch}:OFFS?"),
                             "coupling": safe_query(scope, f":CHAN{ch}:COUP?"),
-                            "probe": safe_query(scope, f":CHAN{ch}:PROB?"),
+                            "probe":    safe_query(scope, f":CHAN{ch}:PROB?"),
                         }
-                    #Add MATH channel support
+
+                        # Deskew (TCAL) for this physical channel
+                        tcal_s = _read_tcal_seconds(scope, ch)   # ← use 'ch' (int)
+                        channels[ch_name]["tcal_s"]  = tcal_s
+                        channels[ch_name]["tcal_ns"] = tcal_s * 1e9
+
+                        # Optional temporary debug (remove after verifying):
+                        # if ch == 2:
+                        #     log_debug(f"TCAL {ch_name} = {channels[ch_name]['tcal_ns']:.1f} ns")
+
+                    # Add MATH channel support
                     for m in range(1, 4):
                         math_name = f"MATH{m}"
                         if safe_query(scope, f":{math_name}:DISP?") != "1":
                             continue
-                        #log_debug(f"✅ Detected {math_name} — added to channel_info")
                         channels[math_name] = {
-                            "scale": safe_query(scope, f":{math_name}:SCALe?", "N/A"),
+                            "scale":  safe_query(scope, f":{math_name}:SCALe?", "N/A"),
                             "offset": safe_query(scope, f":{math_name}:OFFS?", "N/A"),
-                            "type": safe_query(scope, f":{math_name}:OPER?", "N/A"),
+                            "type":   safe_query(scope, f":{math_name}:OPER?", "N/A"),
+                            "tcal_s":  0.0,   # not applicable to math
+                            "tcal_ns": 0.0,
                         }
-    
+
                 scpi_data["channel_info"] = channels
+
                 time.sleep(INTERVALL_SCPI)
 
             except Exception as e:
