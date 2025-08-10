@@ -7,6 +7,12 @@ from scpi.data import scpi_data
 from utils.debug import log_debug
 
 def setup_system_info_tab(tab_frame, root):
+    import tkinter as tk
+    from tkinter import ttk
+    from version import APP_NAME, VERSION, GIT_COMMIT, BUILD_DATE, AUTHOR, PROJECT_URL
+    from scpi.data import scpi_data
+    from utils.debug import log_debug
+
     text_widget = tk.Text(tab_frame, font=("Courier", 10), bg="#1a1a1a", fg="#ffffff",
                           insertbackground="#ffffff", selectbackground="#333333", wrap="none")
     text_widget.pack(side="left", fill="both", expand=True, padx=5, pady=5)
@@ -16,6 +22,8 @@ def setup_system_info_tab(tab_frame, root):
     scrollbar.pack(side="right", fill="y")
 
     text_widget.config(state=tk.DISABLED)
+
+    after_id = [None]
 
     def copy_system_info_to_clipboard():
         meta_info = (
@@ -39,7 +47,6 @@ def setup_system_info_tab(tab_frame, root):
         side="bottom", anchor="e", padx=10, pady=5
     )
 
-    # Smart refresh with scroll preservation
     last_system_text = [""]
 
     def update_system_info():
@@ -50,16 +57,14 @@ def setup_system_info_tab(tab_frame, root):
         except Exception:
             shutting_down = False
 
-        # Bail early if shutting down or widgets are gone
         if shutting_down or not text_widget.winfo_exists():
             return
 
-        # If scrollbar is already destroyed, unhook yscrollcommand to avoid '...scroll' errors
         try:
             if not scrollbar.winfo_exists():
                 text_widget.configure(yscrollcommand=None)
         except tk.TclError:
-                return
+            return
 
         meta_info = (
             f"\n\n{'-'*60}\n"
@@ -96,9 +101,21 @@ def setup_system_info_tab(tab_frame, root):
         except tk.TclError:
             return
 
-        # Re-schedule only if still alive
         if not shutting_down and text_widget.winfo_exists():
-            root.after(2000, update_system_info)
+            after_id[0] = root.after(2000, update_system_info)
 
+    def _shutdown(*_):
+        try:
+            if after_id[0] is not None:
+                root.after_cancel(after_id[0])
+                after_id[0] = None
+        except Exception:
+            pass
+        try:
+            text_widget.configure(yscrollcommand=None)
+        except Exception:
+            pass
+
+    tab_frame.bind("<Destroy>", _shutdown)
 
     update_system_info()

@@ -138,6 +138,8 @@ def main():
 
     # --- Graceful shutdown: quit mainloop here, destroy after mainloop returns ---
     def shutdown():
+        from utils.debug import log_debug
+        import app.app_state as app_state
         log_debug("🛑 Shutdown requested")
         app_state.is_shutting_down = True  # signal all loops/threads
 
@@ -146,12 +148,23 @@ def main():
             power_shutdown()
         except Exception:
             pass
+
+        # BH tab (if you followed earlier hookup)
         try:
+            bh_tab = tabs.get("BH Curve")
+            if bh_tab:
+                getattr(bh_tab, "_shutdown", lambda: None)()
+        except Exception:
+            pass
+
+        # stop long-time logger
+        try:
+            from logger.longtime import stop_logging
             stop_logging()
         except Exception:
             pass
 
-        # cancel our local repeating after()
+        # cancel our local repeating after() for the activity meter
         try:
             if update_meter_after_id[0] is not None:
                 activity_meter.after_cancel(update_meter_after_id[0])
@@ -159,6 +172,25 @@ def main():
         except Exception:
             pass
 
+        # stop Tk's internal Text/Listbox autoscan timers (silences "...scroll" errors)
+        try:
+            root.tk.call("tk", "cancelrepeat")  # NOTE: lowercase command
+        except Exception:
+            pass
+
+        # Cancel image updater timer (added below in gui/image_display.py)
+        try:
+            from gui.image_display import cancel_image_updates
+            cancel_image_updates(root)
+        except Exception:
+            pass
+
+        try:
+            if marquee_widget and hasattr(marquee_widget, "_shutdown"):
+                marquee_widget._shutdown()  # cancels marquee after() timers
+        except Exception:
+            pass
+        
         # Quit mainloop directly; do NOT destroy here
         try:
             root.quit()
@@ -181,11 +213,13 @@ def main():
     button_frame.grid(row=0, column=1, sticky="e")
 
     if not args.noMarquee:
-        attach_marquee(
+        marquee_widget = attach_marquee(
             marquee_frame,
             file_path="marquee.txt",
             url="https://aether-research.institute/MSO5000/marquee.txt"
         )
+    else:
+        marquee_widget = None
 
     toggle_btn = ttk.Button(button_frame, text="🗗 Hide", style="TButton")
     toggle_btn.pack(side="left", padx=(10, 5))
@@ -227,6 +261,9 @@ def main():
     power_tab = tabs["Power Analysis"]
     power_shutdown = getattr(power_tab, "_shutdown", lambda: None)
     setup_bh_curve_tab(tabs["BH Curve"], ip, root)
+    bh_tab = tabs["BH Curve"]
+    bh_shutdown = getattr(bh_tab, "_shutdown", lambda: None)
+
 
     # Debug Tab widgets
     debug_frame = tabs["Debug Log"]

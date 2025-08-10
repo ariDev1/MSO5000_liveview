@@ -9,10 +9,13 @@ debug_widget = None
 
 # Global debug level: "FULL" or "MINIMAL"
 DEBUG_LEVEL = "FULL"
+_debug_after_id = [None]
+
 
 def set_debug_level(level):
     global DEBUG_LEVEL
     DEBUG_LEVEL = level
+
 
 def log_debug(message, level="FULL"):
     if DEBUG_LEVEL == "MINIMAL" and level != "MINIMAL":
@@ -22,9 +25,11 @@ def log_debug(message, level="FULL"):
     debug_log.append(full_msg)
     print(full_msg)
 
+
 def attach_debug_widget(widget):
     global debug_widget
     debug_widget = widget
+
 
 def start_debug_updater(root):
     def update_gui():
@@ -35,14 +40,6 @@ def start_debug_updater(root):
         except Exception:
             shutting_down = False
 
-        # If we’re shutting down, proactively unhook yscrollcommand to avoid '...scroll'
-        try:
-            if shutting_down and debug_widget and debug_widget.winfo_exists():
-                debug_widget.configure(yscrollcommand=None)
-        except tk.TclError:
-            return
-
-        # Bail early if shutting down / no widget / paused
         if shutting_down or debug_widget is None or debug_paused:
             return
 
@@ -56,11 +53,29 @@ def start_debug_updater(root):
             debug_widget.config(state=tk.DISABLED)
             debug_widget.see(tk.END)
         except tk.TclError:
-            # Widget hierarchy is going away
             return
 
-        # Re-schedule only if still alive
-        if not shutting_down and debug_widget.winfo_exists():
-            root.after(250, update_gui)
+        try:
+            if not shutting_down and debug_widget.winfo_exists():
+                _debug_after_id[0] = root.after(250, update_gui)
+        except tk.TclError:
+            return
 
-    root.after(250, update_gui)
+    # schedule first tick and bind a teardown
+    _debug_after_id[0] = root.after(250, update_gui)
+
+    def _shutdown(*_):
+        try:
+            if _debug_after_id[0] is not None:
+                root.after_cancel(_debug_after_id[0])
+                _debug_after_id[0] = None
+        except Exception:
+            pass
+        # unhook yscrollcommand to avoid "...scroll" after destroy
+        try:
+            if debug_widget and debug_widget.winfo_exists():
+                debug_widget.configure(yscrollcommand=None)
+        except Exception:
+            pass
+
+    root.bind("<Destroy>", _shutdown)
