@@ -275,7 +275,12 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 remove_dc=remove_dc_var.get(),
                 current_scale=raw_scale
             )
+            if result is None:
+                log_debug("⚠️ No waveform data — check memory depth/interleave/active channels")
+                return
+
             measured_p = result.get("Real Power (P)", None)
+
             if measured_p is None or measured_p <= 0:
                 log_debug("⚠️ Invalid measured power")
                 return
@@ -776,11 +781,12 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                     unit_status_label.config(fg="#99ccff")
 
                 elif unit_info == "VOLT":
-                    msg = f"⚠ {chan_i} Unit:V — scaling applied (check probe + shunt!)"
+                    # Softer default message (info, not warning)
+                    msg = f"ℹ {chan_i} Unit:V — scaling applied"
 
                     chan_info_all = scpi_data.get("channel_info", {})
-                    log_debug(f"📋 [Check] channel_info keys: {list(chan_info_all.keys())}")
-                    chan_info = chan_info_all.get(chan_i, None)
+                    log_debug(f"📋 [Check] channel_info keys: {list(chan_info_all.keys())} (lookup {key_i})")
+                    chan_info = chan_info_all.get(key_i, None)
 
                     if not chan_info:
                         log_debug(f"⚠️ chan_info for {chan_i} not found — skipping probe mismatch check")
@@ -796,22 +802,19 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                         ptype = probe_type.get().strip().lower()
                         log_debug(f"🧪 probe_type = {ptype}")
 
-                        try:
-                            probe_val = float(entry_probe_value.get())
-                        except Exception:
-                            probe_val = 1.0  # fallback
-
-                        # Mismatch detection
+                        # Gentle info for shunt, real warning for clamp
                         if scope_probe is not None:
                             if ptype == "shunt" and abs(scope_probe - 1.0) > 0.5:
-                                log_debug(f"⚠️ Detected shunt probe mismatch — scope_probe={scope_probe}")
-                                msg += f"  |  ⚠ Mismatch: scope={scope_probe}× — expected 1× for shunt"
+                                # Info, not warning — results remain correct (only SNR consideration)
+                                msg += f"  |  ℹ Using {scope_probe:.1f}× probe with shunt: results are correct; 1× may improve SNR."
                             elif ptype == "clamp" and scope_probe < 2.0:
+                                # Keep this a warning — this is more likely a real setup issue
                                 log_debug(f"⚠️ Detected clamp probe mismatch — scope_probe={scope_probe}")
-                                msg += f"  |  ⚠ Mismatch: scope={scope_probe}× — clamp probes often need 10×+"
+                                msg += f"  |  ⚠ Mismatch: scope={scope_probe:.1f}× — clamp probes often need 10×+"
 
                     unit_status_var.set(msg)
-                    unit_status_label.config(fg="#ffaa00")
+                    # Color: warning only if we actually added a ⚠ message
+                    unit_status_label.config(fg="#ffaa00" if "⚠" in msg else "#bbbbbb")
                     unit_status_label.update_idletasks()
 
                 else:
@@ -853,7 +856,11 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 use_25m_i=use_25m_i_var.get(),
                 method=method_options.get(power_method_label.get(), "standard")
             )
-
+            if result is None:
+                show_power_results(
+                    {"Error": "No waveform data — check memory depth/interleave/active channels"}, {}
+                )
+                return
 
             if result:
                 p = result.get("Real Power (P)", 0)

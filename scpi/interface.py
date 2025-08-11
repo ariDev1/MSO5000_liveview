@@ -39,21 +39,29 @@ def safe_query(scope, command, default="N/A"):
         log_debug(f"⚠️ Skipped blacklisted SCPI: {command}")
         return default
 
+    # Early bailouts
+    if app_state.is_shutting_down or scope is None:
+        return default
+
     app_state.is_scpi_busy = True
     try:
         response = scope.query(command)
         response = response.strip() if isinstance(response, str) else response
         return response if response else default
     except Exception as e:
+        s = str(e)
+        # During shutdown or dead session, be quiet
+        if app_state.is_shutting_down or "Invalid session handle" in s or "Bad file descriptor" in s:
+            return default
         log_debug(f"❌ SCPI error [{command}]: {e}")
-        if "TMO" in str(e) or "Timeout" in str(e):
+        if "TMO" in s or "Timeout" in s:
             if command not in BLACKLISTED_COMMANDS:
                 BLACKLISTED_COMMANDS.append(command)
             log_debug(f"⛔ Blacklisted: {command}")
         return default
     finally:
-        # Always clear the busy flag on success OR error
         app_state.is_scpi_busy = False
+
 
 def safe_write(scope, command, wait_opc=True, default_ok="OK"):
     """
@@ -64,8 +72,8 @@ def safe_write(scope, command, wait_opc=True, default_ok="OK"):
     from utils.debug import log_debug
     from config import BLACKLISTED_COMMANDS
 
-    if not scope:
-        log_debug("❌ safe_write: no scope handle")
+    if not scope or app_state.is_shutting_down:
+        log_debug("❌ safe_write: no scope handle" if not scope else "safe_write: shotdown in progress")
         return ""
 
     # Don’t treat writes as queries

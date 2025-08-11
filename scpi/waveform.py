@@ -26,16 +26,50 @@ def fetch_waveform_with_fallback(scope, chan, retries=1):
                 scope.query(":WAV:PRE?")
                 time.sleep(0.1)
                 pre = scope.query(":WAV:PRE?").split(",")
-                xinc = float(pre[4])
+                xinc  = float(pre[4])
                 xorig = float(pre[5])
-                yinc = float(pre[7])
+                yinc  = float(pre[7])
                 yorig = float(pre[8])
-                yref = float(pre[9])
+                yref  = float(pre[9])
+
+                # Optional: what the scope actually accepted
+                try:
+                    accepted = int(scope.query(":WAV:POIN?"))
+                except Exception:
+                    accepted = None
+
+                # Timed binary transfer
+                t0  = time.time()
                 raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
+                dt  = time.time() - t0
+
+                # Throughput / size log
+                try:
+                    pts   = int(len(raw))
+                    mb    = getattr(raw, "nbytes", pts) / (1024.0 * 1024.0)
+                    rate  = (mb / dt) if dt > 0 else 0.0
+                    io_to = getattr(scope, "timeout", None)
+                    io_cs = getattr(scope, "chunk_size", None)
+                    req   = WAV_POINTS  # what we asked for in this call
+
+                    if accepted is not None:
+                        log_debug(f"⏬ {mode_label}/{chan}: {pts} pts ({mb:.1f} MiB) in {dt:.2f}s → {rate:.2f} MiB/s; requested={req}, accepted={accepted}, chunk={io_cs}, timeout={io_to}ms")
+                    else:
+                        log_debug(f"⏬ {mode_label}/{chan}: {pts} pts ({mb:.1f} MiB) in {dt:.2f}s → {rate:.2f} MiB/s; requested={req}, chunk={io_cs}, timeout={io_to}ms")
+                except Exception:
+                    pass
+
+                # Small safety guard
+                if raw is None or len(raw) == 0:
+                    log_debug(f"⚠️ {mode_label}/{chan}: empty DATA block")
+                    return [], xinc, xorig, yinc, yorig, yref
+
                 return raw, xinc, xorig, yinc, yorig, yref
+
         except Exception as e:
             log_debug(f"❌ {mode_label} fetch failed: {e}")
             return None
+        
 
     #Disable RAW completely during long-time logging
     if app_state.is_logging_active:
@@ -196,12 +230,34 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
         time.sleep(0.2)
 
     def fetch_waveform(channel, use_25m_flag):
+        # Uses outer `scope`, as in your original.
+        old_timeout = getattr(scope, "timeout", None)
+        old_chunk   = getattr(scope, "chunk_size", None)
+
         try:
+            accepted = None
+
             if use_25m_flag:
+                # Be generous for large transfers (temporary).
+                try:
+                    scope.timeout = max(scope.timeout, 180000)
+                except Exception:
+                    pass
+                try:
+                    scope.chunk_size = max(scope.chunk_size, 16 * 1024 * 1024)
+                except Exception:
+                    pass
+
                 scope.write(":WAV:MODE RAW")
                 scope.write(":WAV:FORM BYTE")
                 scope.write(":WAV:POIN:MODE RAW")
                 scope.write(":WAV:POIN 25000000")
+                # Ask what the scope actually accepted (it may cap this):
+                try:
+                    accepted = int(scope.query(":WAV:POIN?"))
+                    log_debug(f"📝 {channel} accepted points = {accepted}")
+                except Exception:
+                    accepted = None
                 log_debug("🧪 Fetching 25M samples in RAW mode")
             else:
                 scope.write(":WAV:MODE NORM")
@@ -212,28 +268,55 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
                 log_debug(f"🔹 Fetching {WAV_POINTS} samples in NORM mode")
 
             scope.write(f":WAV:SOUR {channel}")
+
+            # Header twice with a small delay tends to stabilize PRE on MSO5000
             scope.query(":WAV:PRE?")
             time.sleep(0.2)
             pre = scope.query(":WAV:PRE?").split(",")
-            xinc = float(pre[4])
+            xinc  = float(pre[4])
             xorig = float(pre[5])
-            yinc = float(pre[7])
+            yinc  = float(pre[7])
             yorig = float(pre[8])
-            yref = float(pre[9])
+            yref  = float(pre[9])
+
             raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
 
-            if use_25m_flag and len(raw) < 18000000:
-                log_debug(f"⚠️ Only got {len(raw)} samples — treating as fallback")
-                raise RuntimeError("RAW_TOO_SHORT")
+            if use_25m_flag:
+                # Decide if RAW is "too short" vs what the scope accepted.
+                # If :WAV:POIN? wasn’t available, keep your original ~18M heuristic.
+                threshold = int(0.9 * accepted) if (accepted and accepted > 0) else 18_000_000
+                if len(raw) < max(1000, threshold):
+                    log_debug(f"⚠️ {channel}: got {len(raw)} < {threshold}, falling back to NORM")
+                    # Auto-fallback: try again in NORM (no recursion loop when use_25m_flag=False)
+                    return fetch_waveform(channel, False)
 
             return raw, xinc, xorig, yinc, yorig, yref
 
         except Exception as e:
             log_debug(f"❌ fetch_waveform() failed for {channel}: {e}")
+            if use_25m_flag:
+                # One graceful retry in NORM before giving up
+                log_debug(f"↩️ {channel}: RAW failed — trying NORM fallback")
+                try:
+                    return fetch_waveform(channel, False)
+                except Exception as e2:
+                    log_debug(f"❌ NORM fallback failed for {channel}: {e2}")
             return [], 1.0, 0.0, 1.0, 0.0, 0.0
+
+        finally:
+            # Restore I/O settings
+            try:
+                if old_timeout is not None:
+                    scope.timeout = old_timeout
+                if old_chunk is not None:
+                    scope.chunk_size = old_chunk
+            except Exception:
+                pass
+
             
-    raw_v, xinc, xorig, yinc_v, yorig_v, yref_v = fetch_waveform(chan_v, use_25m_v)
-    raw_i, _,    _,     yinc_i, yorig_i, yref_i = fetch_waveform(chan_i, use_25m_i)
+    raw_v, xinc_v, xorig_v, yinc_v, yorig_v, yref_v = fetch_waveform(chan_v, use_25m_v)
+    raw_i, xinc_i, xorig_i, yinc_i, yorig_i, yref_i = fetch_waveform(chan_i, use_25m_i)
+
 
     if use_25m_v or use_25m_i:
         scope.write(":RUN")
@@ -243,28 +326,105 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
         log_debug("⚠️ Empty waveform data — aborting power analysis")
         return None
 
-    t = xorig + np.arange(len(raw_v)) * xinc
-    v = ((raw_v - yref_v) * yinc_v + yorig_v)
-    i = ((raw_i - yref_i) * yinc_i + yorig_i) * current_scale
-    log_debug(f"🧪 Raw CH3 stats: max = {np.max(i):.4f} A, min = {np.min(i):.4f} A, RMS = {np.sqrt(np.mean(i**2)):.4f} A")
+    # Build raw waveforms (keep original timing)
+    v_raw = ((raw_v - yref_v) * yinc_v + yorig_v)
+    i_raw = ((raw_i - yref_i) * yinc_i + yorig_i) * current_scale
+
+    # Per-channel time bases
+    t_v = xorig_v + np.arange(len(raw_v)) * xinc_v
+    t_i = xorig_i + np.arange(len(raw_i)) * xinc_i
+
+
+    # --- Fast path: if both streams already share the same grid, skip interpolation ---
+    same_len  = (len(raw_v) == len(raw_i))
+    same_xinc = abs(xinc_v - xinc_i) <= max(1e-15, 1e-9 * xinc_v)
+    same_xorg = abs((xorig_v - xorig_i)) <= (xinc_v + xinc_i)
+
+    if same_len and same_xinc and same_xorg:
+        t = t_v  # identical to t_i within tolerance
+        v = v_raw
+        i = i_raw
+        xinc_eff = xinc_v
+    else:
+        # (keep your existing overlap + np.interp() block here)
+        t0 = max(t_v[0], t_i[0])
+        t1 = min(t_v[-1], t_i[-1])
+        if not np.isfinite(t0) or not np.isfinite(t1) or t1 <= t0:
+            log_debug("🛑 No valid time overlap between V and I — aborting power analysis")
+            return None
+        N_common = max(8, min(len(raw_v), len(raw_i)))
+        t = np.linspace(t0, t1, N_common)
+        v = np.interp(t, t_v, v_raw)
+        i = np.interp(t, t_i, i_raw)
+        xinc_eff = (t[-1] - t[0]) / (len(t) - 1)
+
+
+    # Log quick stats on current before any interpolation
+    try:
+        log_debug(f"🧪 Raw CH3 stats: max = {np.max(i_raw):.4f} A, min = {np.min(i_raw):.4f} A, RMS = {np.sqrt(np.mean(i_raw**2)):.4f} A")
+    except Exception:
+        pass
+
+    # Overlapping time window (avoid extrapolation)
+    t0 = max(t_v[0], t_i[0])
+    t1 = min(t_v[-1], t_i[-1])
+    if not np.isfinite(t0) or not np.isfinite(t1) or t1 <= t0:
+        log_debug("🛑 No valid time overlap between V and I — aborting power analysis")
+        return None
+
+    # Uniform common grid over the overlap (use min length to avoid upsampling too much)
+    N_common = max(8, min(len(raw_v), len(raw_i)))
+    t = np.linspace(t0, t1, N_common)
+
+    # Interpolate onto the common grid
+    v = np.interp(t, t_v, v_raw)
+    i = np.interp(t, t_i, i_raw)
+
+    # Optional DC removal (after alignment)
     if remove_dc:
         v -= np.mean(v)
         i -= np.mean(i)
 
-    if len(v) != len(i):
-        log_debug(f"⚠️ Length mismatch: V={len(v)} samples, I={len(i)} samples — resampling")
-        if len(v) > len(i):
-            v = np.interp(np.linspace(0, len(v)-1, len(i)), np.arange(len(v)), v)
-        elif len(i) > len(v):
-            i = np.interp(np.linspace(0, len(i)-1, len(v)), np.arange(len(i)), i)
+    # Effective dt for integration/FFT
+    xinc_eff = (t[-1] - t[0]) / (len(t) - 1)
 
-    # Compute FFT and phase info first
-    fft_v = np.fft.fft(v)
-    fft_i = np.fft.fft(i)
-    phase_v = np.angle(fft_v[1])
-    phase_i = np.angle(fft_i[1])
-    phase_shift_rad = phase_v - phase_i
-    phase_shift_deg = (np.rad2deg(phase_shift_rad) + 180) % 360 - 180
+
+    # --- Robust & fast phase: dominant spectral bin on decimated copy ---
+    # We keep P/S/Q on full v,i; we only decimate for phase detection.
+    MAX_PHASE_SAMPLES = 16384
+
+    if len(v) > MAX_PHASE_SAMPLES:
+        idx = np.linspace(0, len(v) - 1, MAX_PHASE_SAMPLES).astype(np.int64)
+        v_phase = v[idx]
+        i_phase = i[idx]
+        dt_phase = (t[-1] - t[0]) / (MAX_PHASE_SAMPLES - 1)
+    else:
+        v_phase = v
+        i_phase = i
+        dt_phase = xinc_eff
+
+    Vspec = np.fft.rfft(v_phase)
+    Ispec = np.fft.rfft(i_phase)
+    freqs = np.fft.rfftfreq(len(v_phase), d=dt_phase)
+
+    # dominant non-DC bin from V
+    if len(Vspec) > 2:
+        k = 1 + np.argmax(np.abs(Vspec[1:]))
+    else:
+        k = 0
+
+    if k > 0 and k < len(freqs):
+        f0 = freqs[k]
+        phase_shift_rad = np.angle(Vspec[k]) - np.angle(Ispec[k])
+    else:
+        f0 = 0.0
+        phase_shift_rad = 0.0
+
+    # Normalize to [-180, 180]
+    phase_shift_deg = (np.degrees(phase_shift_rad) + 180.0) % 360.0 - 180.0
+    log_debug(f"📐 f0≈{f0:.3f} Hz, phase={phase_shift_deg:.2f}°")
+
+
 
     # Always compute RMS values before using them
     Vrms = np.sqrt(np.mean(v**2))
@@ -273,9 +433,9 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
 
     # Compute power based on method
     if method == "standard":
-        p_inst, P = compute_power_standard(v, i, xinc)
+        p_inst, P = compute_power_standard(v, i, xinc_eff)
     elif method == "rms_cos_phi":
-        p_inst, P = compute_power_rms_cos_phi(v, i, xinc)
+        p_inst, P = compute_power_rms_cos_phi(v, i, xinc_eff)
     else:
         raise ValueError(f"Unsupported power method: {method}")
 

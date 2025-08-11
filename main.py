@@ -140,31 +140,36 @@ def main():
     def shutdown():
         from utils.debug import log_debug
         import app.app_state as app_state
-        log_debug("🛑 Shutdown requested")
-        app_state.is_shutting_down = True  # signal all loops/threads
 
-        # component-specific cleanup
+        log_debug("🛑 Shutdown requested")
+
+        # Prevent double entry
+        if getattr(app_state, "is_shutting_down", False):
+            return
+        app_state.is_shutting_down = True  # signal all loops/threads to bail early
+
+        # Component-specific cleanup (wrap each in try to avoid cascade failures)
         try:
-            power_shutdown()
+            power_shutdown()  # your existing power tab cleanup
         except Exception:
             pass
 
-        # BH tab (if you followed earlier hookup)
+        # BH tab (if present)
         try:
             bh_tab = tabs.get("BH Curve")
-            if bh_tab:
-                getattr(bh_tab, "_shutdown", lambda: None)()
+            if bh_tab and hasattr(bh_tab, "_shutdown"):
+                bh_tab._shutdown()
         except Exception:
             pass
 
-        # stop long-time logger
+        # Stop long-time logger
         try:
             from logger.longtime import stop_logging
             stop_logging()
         except Exception:
             pass
 
-        # cancel our local repeating after() for the activity meter
+        # Cancel our local repeating after() for the activity meter
         try:
             if update_meter_after_id[0] is not None:
                 activity_meter.after_cancel(update_meter_after_id[0])
@@ -172,30 +177,44 @@ def main():
         except Exception:
             pass
 
-        # stop Tk's internal Text/Listbox autoscan timers (silences "...scroll" errors)
-        try:
-            root.tk.call("tk", "cancelrepeat")  # NOTE: lowercase command
-        except Exception:
-            pass
-
-        # Cancel image updater timer (added below in gui/image_display.py)
+        # Cancel image updater timer (gui/image_display.py adds this)
         try:
             from gui.image_display import cancel_image_updates
             cancel_image_updates(root)
         except Exception:
             pass
 
+        # Cancel marquee timers
         try:
             if marquee_widget and hasattr(marquee_widget, "_shutdown"):
-                marquee_widget._shutdown()  # cancels marquee after() timers
+                marquee_widget._shutdown()
         except Exception:
             pass
-        
-        # Quit mainloop directly; do NOT destroy here
+
+        # Stop Tk’s internal autoscan repeaters (prevents “…scroll” errors)
+        try:
+            root.tk.call("tk", "cancelrepeat")  # lowercase 'tk' command
+        except Exception:
+            pass
+
+        # Politely stop the SCPI loop thread if we have a handle to it
+        try:
+            # If your loop exposes a stop() method, use it; otherwise just join briefly.
+            t = getattr(app_state, "scpi_thread", None)
+            if t:
+                stop_fn = getattr(t, "stop", None)
+                if callable(stop_fn):
+                    stop_fn()
+                t.join(timeout=1.5)
+        except Exception:
+            pass
+
+        # Quit Tk mainloop; do NOT destroy here (we close VISA after mainloop returns)
         try:
             root.quit()
         except Exception:
             pass
+
 
     # Make the WM close button use our shutdown
     root.protocol("WM_DELETE_WINDOW", shutdown)
@@ -310,10 +329,21 @@ def main():
         root.mainloop()
     finally:
         try:
+            # Close our primary scope handle last
+            from scpi.interface import scpi_lock
+            with scpi_lock:
+                if app_state.scope:
+                    try:
+                        app_state.scope.close()
+                    except Exception:
+                        pass
+                    app_state.scope = None
+        except Exception:
+            pass
+        try:
             root.destroy()
         except Exception:
             pass
-
 
 if __name__ == "__main__":
     main()

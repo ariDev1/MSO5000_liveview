@@ -7,3 +7,4 @@ power_csv_path = None
 is_scpi_busy = False
 raw_mode_failed_once = False
 is_shutting_down = False
+scpi_thread = None
