@@ -38,6 +38,7 @@ from scpi.data import scpi_data
 from scpi.interface import connect_scope, safe_query
 from logger.longtime import stop_logging
 import app.app_state as app_state
+from gui.harmonics_tab import setup_harmonics_tab
 
 
 def main():
@@ -282,7 +283,7 @@ def main():
     setup_bh_curve_tab(tabs["BH Curve"], ip, root)
     bh_tab = tabs["BH Curve"]
     bh_shutdown = getattr(bh_tab, "_shutdown", lambda: None)
-
+    setup_harmonics_tab(tabs["Harmonics/THD"], ip, root)
 
     # Debug Tab widgets
     debug_frame = tabs["Debug Log"]

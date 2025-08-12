@@ -21,6 +21,11 @@ However, a widespread issue goes unnoticed: **incorrect probe configuration can 
 
 ## 2. Fundamentals of Power Analysis
 
+### Instantaneous Power (Fundamental Definition)
+Instantaneous power, the fundamental measure of electrical power, is defined as:
+
+<span>\\( P(t) = V(t) \cdot I(t) \\)</span>
+
 Before diving into the instrument-specific behavior, it is essential to understand the standard electrical quantities involved in AC power analysis:
 
 * **Real Power (P)** \[Watts]: <span>\\( P = V_{rms} \cdot I_{rms} \cdot \cos(\phi) \\)</span>
@@ -50,7 +55,7 @@ To obtain correct results, the current channel must ideally be set with the corr
 
 However, this configuration step is **not always possible**—for example, when using a differential probe across a shunt resistor. In such cases, Rigol offers no way to define the channel as a true current input with proper mV/A scaling. The user may manually set the **unit to “Amps”** in the channel menu, but this is only a cosmetic label and **does not affect Rigol's internal power analysis math**, which still interprets the signal as a voltage waveform.
 
-As a result:
+**As a result:**
 
 * Apparent impedance may be computed as <span>\\(Z = V_{rms} / I_{rms} \\)</span>, yielding invalid values (e.g., several kilo-ohms instead of real load impedance)
 * Power values may be scaled incorrectly by orders of magnitude (e.g., 83mW instead of 83W)
@@ -87,7 +92,7 @@ Additionally, another common mistake arises from entering the wrong scaling valu
 
 Therefore, relying solely on matching real power values (P) without verifying correct scaling and probe context is dangerous.
 
-### ⚠️ Important Summary
+### Important Summary
 
 When using a **differential probe** on the Rigol MSO5000 series to measure current in systems with **reactive power behavior (even under DC excitation)**, the following holds true:
 
@@ -118,7 +123,7 @@ This result confirms that once a standard probe is used with proper scaling and 
 This underscores the conclusion that Rigol’s PQ analyzer can only be trusted when the current signal is interpreted properly at the channel level.
 
 
-## ✅ When the Built-in PQ Tool Can Be Trusted
+## When the Built-in PQ Tool Can Be Trusted
 
 While many of the limitations described stem from misinterpreted current signals (especially when using differential probes), the internal Power Quality feature of the Rigol MSO5000 series **can yield accurate results** when used under the following conditions:
 
@@ -128,7 +133,7 @@ While many of the limitations described stem from misinterpreted current signals
 - The **input signal amplitude** is within the oscilloscope’s dynamic range and not affected by excessive noise or bandwidth limitations.
 - The **signal is sinusoidal or quasi-periodic**, avoiding pulsed or highly transient shapes that confuse phase calculations.
 
-### ✅ Example: Accurate PQ Results with a Properly Configured Current Clamp
+### Example: Accurate PQ Results with a Properly Configured Current Clamp
 
 To validate this, we used a **known resistive load** powered from a 24V DC supply. A **standard current clamp** (1mV/A sensitivity) was connected to CH4, and CH2 was used to monitor voltage across the load. Both channels were configured as follows:
 
@@ -154,7 +159,7 @@ Under this configuration, the internal PQ analyzer produced:
 
 These values matched an external power meter and our custom MSO5000 Live Monitor analysis within 1%.
 
-### 🔎 Summary
+### Summary
 
 > ✅ When current is measured via an **official current probe** or **standard passive probe** across a known shunt with correct settings, the Rigol PQ tool is **accurate and reliable**.
 
@@ -226,13 +231,15 @@ In this setup, even if the signal is acquired via a differential probe, accurate
 
 This highlights the value of independent measurement pipelines such as MSO5000 Live Monitor: they allow flexibility in probe usage while preserving scientific validity.
 
+## 8. Summary and Checklist for Reliable Power Measurements
+
 ---
 
-## 8. How to Reproduce This Issue (Step-by-Step)
+## 9. How to Reproduce This Issue (Step-by-Step)
 
 To independently verify the Rigol MSO5000's flawed PQ behavior, follow these steps:
 
-### 🧪 A. Setup with Differential Probe (Incorrect Results)
+### A. Setup with Differential Probe (Incorrect Results)
 
 1. Connect CH2 across a DC load to measure voltage.
 2. Connect a **differential probe** (e.g., CH4) across a 1mΩ shunt resistor.
@@ -247,7 +254,7 @@ To independently verify the Rigol MSO5000's flawed PQ behavior, follow these ste
    * Impedance may show **hundreds or thousands of ohms**.
    * Real Power may appear **too low by 10×–100×**.
 
-### 🧪 B. Setup with Standard Probe (Correct Results)
+### B. Setup with Standard Probe (Correct Results)
 
 1. Connect CH2 across the same DC load (voltage).
 2. Connect **CH3** using a standard probe across the same 1mΩ shunt.
@@ -269,8 +276,6 @@ To independently verify the Rigol MSO5000's flawed PQ behavior, follow these ste
 This test can be performed without high voltages or complex circuits—just a resistor load, low-voltage supply, and 1mΩ shunt. Screenshots and logs will confirm the tool’s internal misbehavior.
 
 ---
-
-## 9. Summary and Checklist for Reliable Power Measurements
 
 For accurate and meaningful power analysis on the Rigol MSO5000, users should follow this checklist:
 

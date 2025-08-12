@@ -1,5 +1,5 @@
-# ✅ MSO5000 Live Monitor — Power Analysis Setup Checklist  
-### 🔌 For Grid Power Measurement with Differential Current Probe (High-Voltage AC)
+# ✅ MSO5000 Live Monitor — Power Analysis Setup Checklist AC
+🔌 For Grid Power Measurement with Differential Current Probe (High-Voltage AC)
 
 ---
 
