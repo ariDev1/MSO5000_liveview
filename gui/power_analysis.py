@@ -301,20 +301,18 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     refresh_chk.grid(row=0, column=3, padx=3)
 
     def plot_last_power_log():
-        import glob, subprocess
+        import glob, subprocess, os
         files = glob.glob("oszi_csv/power_log_*.csv")
         if not files:
             log_debug("⚠️ No power log files found")
             return
 
         latest_file = max(files, key=os.path.getmtime)
-        try:
-            scale = float(entry_current_scale.get())
-        except Exception:
-            scale = 1.0
-        
-        log_debug(f"📊 Launching plot for {latest_file}")
-        subprocess.Popen(["python3", "utils/plot_rigol_csv.py", latest_file, "--scale", str(scale)])
+
+        #plot with no scaling
+        log_debug(f"📈 Plot Last (no scale): {latest_file}")
+        subprocess.Popen(["python3", "utils/plot_rigol_csv.py", latest_file])
+
 
     ttk.Button(control_row, text="📈 Plot Last", command=plot_last_power_log).grid(row=0, column=2, padx=3)
     #ttk.Button(control_row, text="⚙ Auto-Calibrate", command=auto_calibrate).grid(row=0, column=6, padx=3)
