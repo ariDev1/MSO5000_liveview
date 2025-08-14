@@ -44,7 +44,7 @@ from gui.harmonics_tab import setup_harmonics_tab
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", action="store_true", help="Show version number")
-    parser.add_argument("--samples", type=int, help="Override number of waveform points (default: 1200)")
+    parser.add_argument("--samples", type=int, help="Override number of waveform points (default: 1000)")
     parser.add_argument("--noMarquee", action="store_true", help="Disable the marquee text at the top")
     args = parser.parse_args()
 

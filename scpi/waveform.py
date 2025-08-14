@@ -95,14 +95,21 @@ def fetch_waveform_with_fallback(scope, chan, retries=1):
         raise RuntimeError("🛑 Both RAW and NORM fetch failed")
 
 def export_channel_csv(scope, channel, outdir="oszi_csv", retries=2):
+    """
+    Export one channel (CH1..CH4 or MATHn) to CSV.
+    - For MATH channels, skip :PROB? (not supported) to avoid 60 s timeouts.
+    - All SCPI-critical parts remain under scpi_lock; file I/O is outside.
+    """
     from .interface import scpi_lock, safe_query
     import numpy as np
     import os, time, csv
     from utils.debug import log_debug
     from config import WAV_POINTS
 
-    chan = channel if str(channel).startswith("MATH") else f"CHAN{channel}"
-    
+    # Normalize to SCPI source name expected by the scope
+    is_math = str(channel).upper().startswith("MATH")
+    chan = str(channel).upper() if is_math else f"CHAN{int(channel)}"
+
     for attempt in range(1, retries + 2):
         try:
             with scpi_lock:
@@ -114,18 +121,22 @@ def export_channel_csv(scope, channel, outdir="oszi_csv", retries=2):
                     scope.write(":WAV:POIN:MODE RAW")
                     scope.write(f":WAV:POIN {WAV_POINTS}")
                     scope.write(f":WAV:SOUR {chan}")
-                    scope.query(":WAV:PRE?")  # Rigol quirk workaround
-                    time.sleep(0.1)
 
+                    # Rigol quirk: prime header, then read it
+                    scope.query(":WAV:PRE?")
+                    time.sleep(0.1)
                     pre = scope.query(":WAV:PRE?").split(",")
-                    xinc = float(pre[4])
-                    xorig = float(pre[5])
-                    yinc = float(pre[7])
-                    yorig = float(pre[8])
-                    yref = float(pre[9])
-                    probe = float(safe_query(scope, f":{chan}:PROB?", "1.0"))
+                    xinc  = float(pre[4]); xorig = float(pre[5])
+                    yinc  = float(pre[7]); yorig = float(pre[8]); yref = float(pre[9])
+
+                    # 🔑 Key change: do NOT query :MATHn:PROB?
+                    if is_math:
+                        probe = 1.0
+                    else:
+                        probe = float(safe_query(scope, f":{chan}:PROB?", "1.0"))
 
                     raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
+
                 finally:
                     scope.write(":RUN")
                     log_debug("▶️ Scope acquisition resumed after export")
@@ -134,14 +145,17 @@ def export_channel_csv(scope, channel, outdir="oszi_csv", retries=2):
                 log_debug(f"⚠️ Empty waveform data on attempt {attempt} for {chan}")
                 continue
 
+            # Convert to engineering units
             times = xorig + np.arange(len(raw)) * xinc
             volts = ((raw - yref) * yinc + yorig)
 
+            # Prepare output path
             os.makedirs(outdir, exist_ok=True)
             timestamp = time.strftime("%Y-%m-%dT%H-%M-%S")
             filename = f"{chan}_{timestamp}.csv"
             path = os.path.join(outdir, filename)
 
+            # Header + data (header uses safe_query; benign if loop is running)
             with open(path, "w", newline="") as f:
                 f.write(f"# Device: {safe_query(scope, '*IDN?', 'Unknown')}\n")
                 f.write(f"# Channel: {chan}\n")
@@ -164,6 +178,7 @@ def export_channel_csv(scope, channel, outdir="oszi_csv", retries=2):
 
     log_debug(f"🛑 All attempts failed to export {chan}")
     return None
+
 
 def get_channel_waveform_data(scope, channel, use_simple_calc=True, retries=1):
     import numpy as np
