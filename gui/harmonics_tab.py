@@ -6,16 +6,20 @@ Safe integration: no hidden scope changes; fetches via SCPI with locking and pre
 from __future__ import annotations
 from typing import Optional
 import csv, time, threading, math
+import os
 import numpy as np
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import matplotlib.lines as mlines
+import matplotlib.patches as mpatches
 from collections import deque
 
 from utils.debug import log_debug
 from scpi.interface import scpi_lock, safe_query
 from scpi.waveform import fetch_waveform_with_fallback  # If available; we also implement a local fetch fallback
+from scipy.signal import find_peaks
 import app.app_state as app_state
 
 from gui.harmonic.harmonics import analyze_harmonics
@@ -36,6 +40,9 @@ class HarmonicsTab:
         self._last_elapsed = 0.0
         self.hm_var = tk.BooleanVar(value=False)   # UI toggle
         self.spec_hist = deque(maxlen=15)          # last 15 spectra (~30 s at 2 s Auto)
+        self._overlay_artists = []
+        self._legend_artist = None
+        self._last_spec = None
         self._build_ui()
 
     def _shutdown(self):
@@ -170,12 +177,28 @@ class HarmonicsTab:
         table_frame.grid(row=3, column=0, sticky="nsew", padx=10, pady=(4,12))
         table_frame.rowconfigure(0, weight=1)
         table_frame.columnconfigure(0, weight=1)
-        cols = ("k","f_hz","mag_rms","percent","phase_deg")
+
+        cols = ("k","f_hz","f_pred","df_hz","mag_rms","dBr1","percent","cumTHD_pct","phase_deg")
         self.tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=8)
-        for c,w in zip(cols, (50, 120, 120, 100, 100)):
+
+        # widths tuned for your dark theme and screenshot layout
+        widths = {
+            "k": 50, "f_hz": 120, "f_pred": 120, "df_hz": 100,
+            "mag_rms": 120, "dBr1": 90, "percent": 100, "cumTHD_pct": 110, "phase_deg": 100
+        }
+        for c in cols:
             self.tree.heading(c, text=c)
-            self.tree.column(c, width=w, anchor="e")
+            self.tree.column(c, width=widths.get(c, 100), anchor="e")
+
         self.tree.grid(row=0, column=0, sticky="nsew")
+        self.extra_var = tk.StringVar(value="")
+        self.extra_lbl = tk.Label(
+            table_frame,
+            textvariable=self.extra_var,
+            bg="#1a1a1a", fg="#dddddd",
+            anchor="w", justify="left"
+        )
+        self.extra_lbl.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         vsb.grid(row=0, column=1, sticky="ns")
@@ -202,6 +225,313 @@ class HarmonicsTab:
             log_debug("ℹ️ Harmonics: no shared scope handle yet; connect via SCPI tab.")
             return False
         return True
+
+    def _debug_analysis_summary(self, res, spec, inter_list, known_list, tol_hz):
+        """Emit a concise analysis summary to the Debug Log (display-only)."""
+        try:
+            import math
+            f_axis, mag_rms = spec if spec else (None, None)
+            nbins = len(f_axis) if (f_axis is not None) else 0
+            df = (float(f_axis[1] - f_axis[0]) if f_axis is not None and len(f_axis) > 1 else float("nan"))
+
+            f1  = float(getattr(res, "f1_hz", float("nan")) or float("nan"))
+            v1  = float(getattr(res, "v1_rms", float("nan")) or float("nan"))
+            thd = float(getattr(res, "thd_pct", float("nan")) or float("nan"))
+
+            msg = (
+                f"📈 Analysis | ch={self.chan_var.get()} | window={self.window_var.get()} | "
+                f"bins={nbins}, df={df:.3g} Hz | f1={f1:.6g} Hz, V1rms={v1:.6g} | THD={thd:.3f}% | "
+                f"harmonic tol=±{tol_hz:.3g} Hz"
+            )
+            log_debug(msg)
+
+            if inter_list:
+                s = ", ".join(f"{f:.1f} Hz ({db:.1f} dBr₁)" for f, db in inter_list[:8])
+                log_debug(f"🔶 Interharmonics: {s}")
+            else:
+                log_debug("🔶 Interharmonics: none ≥ threshold")
+
+            if known_list:
+                s = ", ".join(f"{f:.1f} Hz ({db:.1f} dBr₁)" for f, db in known_list)
+                log_debug(f"🟩 Known/house lines: {s}")
+            else:
+                log_debug("🟩 Known/house lines: none")
+        except Exception as e:
+            log_debug(f"⚠️ Debug summary failed: {e}")
+
+    def _draw_interharmonics_overlay(self, f_axis, mag_rms, *, f0_hz, inter_list, known_list, tol_hz):
+        """
+        Visual overlay to distinguish harmonics vs. interharmonics.
+        - Shades ±tol around each k·f0 (harmonic windows)
+        - Marks interharmonic peaks with dotted vlines + ▼ tip
+        - Marks known/house lines with ■
+        """
+        # Safety: nothing to do without a plotted Axes or frequency axis
+        if getattr(self, "ax", None) is None or f0_hz <= 0 or len(f_axis) < 2:
+            return
+
+        ax = self.ax
+
+        # Remove previous overlay artists cleanly
+        for a in getattr(self, "_overlay_artists", []):
+            try:
+                a.remove()
+            except Exception:
+                pass
+        self._overlay_artists = []
+
+        # Also remove previous legend
+        if getattr(self, "_legend_artist", None) is not None:
+            try:
+                self._legend_artist.remove()
+            except Exception:
+                pass
+            self._legend_artist = None
+
+        #f_min, f_max = float(f_axis[0]), float(f_axis[-1])
+        f_min, f_max = self.ax.get_xlim()
+
+
+        # --- 1) Shade harmonic acceptance windows (±tol_hz around k·f0)
+        kmax = int(f_max // max(f0_hz, 1e-12))
+        for k in range(1, kmax + 1):
+            fk = k * f0_hz
+            x0, x1 = fk - tol_hz, fk + tol_hz
+            if x1 < f_min or x0 > f_max:
+                continue
+            span = ax.axvspan(max(x0, f_min), min(x1, f_max), alpha=0.06)  # faint
+            self._overlay_artists.append(span)
+
+        # --- 2) Interharmonic peaks: dotted vline + ▼ at actual amplitude
+        for f_i, _dbr in inter_list:
+            # nearest bin for Y
+            idx = int(np.argmin(np.abs(f_axis - f_i)))
+            yi = float(mag_rms[idx])
+            v = ax.axvline(f_i, linestyle=":", linewidth=1.2, alpha=0.7)
+            m = ax.plot([f_i], [yi], marker="v", markersize=5, alpha=0.9)[0]
+            self._overlay_artists += [v, m]
+
+        # --- 3) Known/house lines: small ■ markers near the noise floor (or real level if visible)
+        # Place them at 2% of current y-limits to keep them readable even if the line is weak.
+        y0, y1 = ax.get_ylim()
+        y_mark = y0 + 0.02 * (y1 - y0)
+        for f_k, _dbr in known_list:
+            idx = int(np.argmin(np.abs(f_axis - f_k)))
+            yk = max(float(mag_rms[idx]), y_mark)
+            m = ax.plot([f_k], [yk], marker="s", markersize=5, alpha=0.9)[0]
+            self._overlay_artists.append(m)
+
+        # --- 4) Legend (tiny)
+        inter_proxy = mlines.Line2D([], [], linestyle=":", linewidth=1.2, label="Interharmonic")
+        known_proxy = mlines.Line2D([], [], marker="s", linestyle="None", label="Known line")
+        harm_proxy  = mpatches.Patch(alpha=0.06, label="Harmonic window (±tol)")
+
+        handles = [harm_proxy]
+        if inter_list: handles.append(inter_proxy)
+        if known_list: handles.append(known_proxy)
+
+        if handles:
+            self._legend_artist = ax.legend(handles=handles, loc="upper right",
+                                            fontsize="x-small", framealpha=0.25)
+
+        # Ask canvas to refresh just the overlay change
+        try:
+            self.canvas.draw_idle()
+        except Exception:
+            pass
+
+
+    # --- Known lab lines you care about (edit this list as you like) ---
+    KNOWN_LINES_HZ = [
+        50.0, 100.0, 150.0, 200.0,      # mains (EU)
+        16.67,                          # railway (EU)
+        #20000.0, 25000.0, 30000.0, 40000.0, 45000.0  # common SMPS/driver bands
+    ]
+
+    def _find_interharmonics_from_spec(freqs_hz: np.ndarray,
+                                       mag_rms: np.ndarray,
+                                       f0_hz: float,
+                                       *,
+                                       topN=8,
+                                       rel_exclusion=0.015,   # ±1.5% around k·f0 → harmonic
+                                       abs_exclusion_bins=2,  # plus ±2 bins
+                                       min_prom_db=20.0):     # only show ≥20 dB below fundamental
+        if f0_hz <= 0 or len(freqs_hz) < 3:
+            return []
+        df = float(freqs_hz[1] - freqs_hz[0])
+        tol_hz = max(rel_exclusion * f0_hz, abs_exclusion_bins * df)
+
+        # Fundamental reference
+        fund_idx = int(np.clip(round(f0_hz / df), 0, len(freqs_hz) - 1))
+        fund_amp = float(max(mag_rms[fund_idx], 1e-20))
+        rel_db = 20.0 * np.log10(np.maximum(mag_rms, 1e-20) / fund_amp)
+
+        # Peak picking on relative spectrum
+        peaks, _ = find_peaks(rel_db, prominence=min_prom_db)
+
+        inter = []
+        for p in peaks:
+            f = freqs_hz[p]
+            k = max(1, int(round(f / f0_hz)))
+            f_harm = k * f0_hz
+            if abs(f - f_harm) <= tol_hz:
+                continue  # skip anything close to an integer harmonic
+            inter.append((f, rel_db[p]))
+
+        inter.sort(key=lambda x: x[1], reverse=True)
+        return inter[:topN]
+
+    def _match_known_lines_from_spec(freqs_hz: np.ndarray,
+                                     mag_rms: np.ndarray,
+                                     f0_hz: float,
+                                     *,
+                                     known_list=KNOWN_LINES_HZ,
+                                     tol_bins=2,
+                                     floor_db=-80.0):
+        if f0_hz <= 0 or len(freqs_hz) < 2:
+            return []
+        df = float(freqs_hz[1] - freqs_hz[0])
+        fund_idx = int(np.clip(round(f0_hz / df), 0, len(freqs_hz) - 1))
+        fund_amp = float(max(mag_rms[fund_idx], 1e-20))
+        rel_db = 20.0 * np.log10(np.maximum(mag_rms, 1e-20) / fund_amp)
+
+        out = []
+        tol_hz = tol_bins * df
+        for fk in known_list:
+            idx = int(np.argmin(np.abs(freqs_hz - fk)))
+            if abs(freqs_hz[idx] - fk) <= tol_hz and rel_db[idx] > floor_db:
+                out.append((fk, rel_db[idx]))
+        return out
+
+    def _update_interharmonics_readout(self, res, *, min_prom_db=10.0, topN=8):
+        """
+        Compute and show non-harmonic (interharmonic) peaks and known 'house' lines,
+        referenced in dB relative to the fundamental (dBr₁). Safe: read-only, uses
+        the last plotted spectrum cached by _render_plot().
+        """
+        lines = []
+        spec = getattr(self, "_last_spec", None)
+        
+        def _fmt_hz(f):
+            return f"{f/1000:.1f} kHz" if f >= 1000 else f"{f:.1f} Hz"
+
+        try:
+            # Need a valid spectrum and fundamental
+            if not (spec and res and getattr(res, "f1_hz", 0.0) > 0):
+                self.extra_var.set("")
+                return
+
+            f_axis, mag_rms = spec
+            f0 = float(res.f1_hz)
+
+            # Frequency resolution and guard rails
+            if not hasattr(f_axis, "__len__") or len(f_axis) < 2:
+                self.extra_var.set("")
+                return
+            df = float(f_axis[1] - f_axis[0])
+            if df <= 0.0:
+                self.extra_var.set("")
+                return
+
+            # Fundamental bin and relative dB spectrum (dBr to fundamental)
+            fund_idx = int(np.clip(round(f0 / df), 0, len(f_axis) - 1))
+            fund_amp = float(max(mag_rms[fund_idx], 1e-20))
+            rel_db = 20.0 * np.log10(np.maximum(mag_rms, 1e-20) / fund_amp)
+
+            # ---- Interharmonic peaks (exclude integer harmonics) ----
+            # Tolerance for "is a harmonic" = max(±1.5% of f0, ±2 bins)
+            tol_hz = max(0.015 * f0, 2 * df)
+
+            # Peak picking on the relative spectrum
+            peaks, _ = find_peaks(rel_db, prominence=min_prom_db)
+
+            inter = []
+            for p in peaks:
+                fp = f_axis[p]
+                k = max(1, int(round(fp / f0)))
+                if abs(fp - k * f0) <= tol_hz:
+                    continue  # reject actual harmonics
+                inter.append((fp, rel_db[p]))
+
+            inter.sort(key=lambda x: x[1], reverse=True)
+            inter = inter[:topN]
+
+            # ---- Known/house lines (from your class list) ----
+            known = []
+            tol_bins = 2
+            floor_db = -80.0
+            tol_hz_k = tol_bins * df
+            for fk in getattr(self, "KNOWN_LINES_HZ", []):
+                idx = int(np.argmin(np.abs(f_axis - fk)))
+                if abs(f_axis[idx] - fk) <= tol_hz_k and rel_db[idx] > floor_db:
+                    known.append((float(fk), rel_db[idx]))
+
+            # ---- Build readout text ----
+            if inter:
+                lines.append(
+                    "Non-harmonic lines (dBr₁): " +
+                    ", ".join(f"{_fmt_hz(fi)} ({db:.1f} dBr₁)" for fi, db in inter)
+                )
+            else:
+                lines.append(f"Non-harmonic lines (dBr₁): (none ≥ {min_prom_db:.0f} dB)")
+
+            if known:
+                lines.append(
+                    "Known/house lines: " +
+                    ", ".join(f"{_fmt_hz(fk)} ({db:.1f} dBr₁)" for fk, db in known)
+                )
+            elif getattr(self, "KNOWN_LINES_HZ", None):
+                lines.append("Known/house lines: (none from list visible)")
+
+            self._last_interharmonics = inter
+            self._last_known_lines = known
+            self._draw_interharmonics_overlay(
+                f_axis, mag_rms,
+                f0_hz=f0,
+                inter_list=inter,
+                known_list=[(fk, db) for fk, db in known],
+                tol_hz=max(0.015 * f0, 2 * df)
+            )
+            self._debug_analysis_summary(
+                res,
+                (f_axis, mag_rms),
+                inter_list=inter,
+                known_list=known,
+                tol_hz=tol_hz
+            )            
+            self.extra_var.set("\n".join(lines))
+
+        except Exception:
+            # Never break UI on analysis errors; just clear the line.
+            self.extra_var.set("")
+
+    def _build_harmonic_export_rows(self, res):
+        import math
+        # columns to export
+        header = ["k","f_hz","f_pred","df_hz","mag_rms","dBr1","percent","cumTHD_pct","phase_deg"]
+
+        # fundamentals
+        f1 = float(getattr(res, "f1_hz", 0.0) or 0.0)
+        v1 = float(getattr(res, "v1_rms", 0.0) or 0.0)
+
+        rows = []
+        sum_sq = 0.0  # for cumulative THD up to k
+        for r in getattr(res, "rows", []):
+            k      = int(r.k)
+            f_meas = float(r.f_hz)
+            v_k    = float(r.mag_rms)
+
+            f_pred = (k * f1) if f1 > 0 else float("nan")
+            df_hz  = (f_meas - f_pred) if f1 > 0 else float("nan")
+            dbr1   = 20.0 * math.log10(v_k / max(v1, 1e-20)) if v1 > 0 else float("nan")
+
+            if k >= 2:  # only harmonics contribute to THD
+                sum_sq += v_k * v_k
+            cum_thd_pct = (100.0 * math.sqrt(sum_sq) / v1) if (v1 > 0 and sum_sq > 0) else (0.0 if k < 2 else float("nan"))
+
+            rows.append([k, f_meas, f_pred, df_hz, v_k, dbr1, float(r.percent), cum_thd_pct, float(r.phase_deg)])
+
+        return header, rows
 
     # --------- Actions ----------
     def toggle_auto(self):
@@ -460,6 +790,7 @@ class HarmonicsTab:
                 include_dc=include_dc,
                 compute_thdn=True
             )
+            self._last_result = res
 
         except Exception as e:
             from app import app_state
@@ -481,6 +812,10 @@ class HarmonicsTab:
         # 5) Update UI (plot uses decimated copy; table uses analysis results)
         self._render_plot(y_for_fft, fs_for_fft, res)
         self._render_table(res)
+        
+        #self._update_interharmonics_readout(res)
+        self._update_interharmonics_readout(res, min_prom_db=6.0)
+
 
         # 6) Status line with capture info
         thd_pct = 100.0 * res.thd
@@ -510,7 +845,7 @@ class HarmonicsTab:
         Y = _np.fft.rfft((y - (_np.mean(y) if not res.include_dc else 0.0)) * _np.hanning(N))
         f = _np.fft.rfftfreq(N, d=1.0/fs)
         mag_rms = _np.abs(Y) / N / _math.sqrt(2)
-
+        self._last_spec = (f.copy(), mag_rms.copy())
         # Determine x-limit like before
         fmax = min(res.fs/2, 10*res.f1_hz if res.f1_hz > 0 else res.fs/2)
 
@@ -550,7 +885,7 @@ class HarmonicsTab:
         self.canvas.draw_idle()
 
     def _render_table(self, res):
-        # Clear
+        # Clear old rows
         for i in self.tree.get_children():
             self.tree.delete(i)
 
@@ -558,16 +893,7 @@ class HarmonicsTab:
         if not res or not hasattr(res, "rows"):
             return
 
-        # If we have harmonics, render them as before
-        if res.rows:
-            for r in res.rows:
-                self.tree.insert(
-                    "", "end",
-                    values=(r.k, f"{r.f_hz:.3f}", f"{r.mag_rms:.6g}", f"{r.percent:.3f}", f"{r.phase_deg:.2f}")
-                )
-            return
-
-        # --- No harmonics resolvable: show at least the fundamental so the table isn't blank
+        # Pull fundamentals
         try:
             f1 = float(res.f1_hz)
         except Exception:
@@ -577,13 +903,55 @@ class HarmonicsTab:
         except Exception:
             v1 = 0.0
 
-        # We don't keep fundamental phase in the result; display 0.0° for now (display only)
-        self.tree.insert("", "end", values=("1", f"{f1:.3f}", f"{v1:.6g}", "100.000", f"{0.0:.2f}"))
+        # If we have harmonics, render them with extra diagnostics
+        if res.rows:
+            sum_sq = 0.0  # accumulate ∑ V_k^2 for cumTHD
+            for r in res.rows:
+                k = int(r.k)
+                f_meas = float(r.f_hz)
+                v_k = float(r.mag_rms)
 
-        # Add a small separator/placeholder row so it's obvious harmonics are not available
-        self.tree.insert("", "end", values=("", "—", "—", "—", ""))
+                # Expected harmonic frequency and deviation
+                f_pred = (k * f1) if f1 > 0 else float("nan")
+                df_hz = (f_meas - f_pred) if (f1 > 0 and math.isfinite(f_pred)) else float("nan")
 
-        # Brief diagnostic in status: why were there no harmonics?
+                # dBr1 relative to fundamental (safe against v1 ≈ 0)
+                dbr1 = 20.0 * math.log10(v_k / max(v1, 1e-20)) if v1 > 0 else float("nan")
+
+                # cumTHD% up to this k (only k>=2 contributes to THD)
+                if k >= 2:
+                    sum_sq += v_k * v_k
+                cum_thd_pct = (100.0 * math.sqrt(sum_sq) / v1) if (v1 > 0 and sum_sq > 0) else (0.0 if k < 2 else float("nan"))
+
+                self.tree.insert(
+                    "", "end",
+                    values=(
+                        k,
+                        f"{f_meas:.3f}",
+                        (f"{f_pred:.3f}" if math.isfinite(f_pred) else "—"),
+                        (f"{df_hz:.3f}"  if math.isfinite(df_hz)  else "—"),
+                        f"{v_k:.6g}",
+                        (f"{dbr1:.1f}"   if math.isfinite(dbr1)  else "—"),
+                        f"{float(r.percent):.3f}",
+                        (f"{cum_thd_pct:.3f}" if math.isfinite(cum_thd_pct) else "—"),
+                        f"{float(r.phase_deg):.2f}"
+                    )
+                )
+            self._last_result = res
+            return
+
+        # --- No harmonics resolvable: show at least the fundamental so the table isn't blank
+        # (keeps previous behavior, with new columns displayed as dashes)
+        self.tree.insert("", "end",
+            values=("1",
+                    f"{f1:.3f}",
+                    "—","—",
+                    f"{v1:.6g}",
+                    "—",
+                    "100.000",
+                    "—",
+                    f"{0.0:.2f}"))
+        self.tree.insert("", "end", values=("", "—", "—", "—", "—", "—", "—", "—", ""))
         reasons = []
         try:
             nyquist = float(res.fs) / 2.0
@@ -596,73 +964,149 @@ class HarmonicsTab:
                 reasons.append("<3 cycles in buffer")
         except Exception:
             pass
-
         if reasons:
             self.status_var.set(self.status_var.get() + "  |  " + "; ".join(reasons) + " — use RAW or widen timebase")
 
+        self._last_result = res  # for Save CSV / Copy Markdown
 
     # --------- Export ----------
     def save_csv(self):
+        # No modal dialogs; write straight to oszi_csv/harmonics/
         if not self.last_capture:
-            messagebox.showinfo("Save CSV", "No data yet.")
+            self.status_var.set("No data to export yet.")
             return
+
         t, y, fs, chan, scale = self.last_capture
-        res = analyze_harmonics(y, fs, n_harmonics=int(self.nharm_var.get()),
-                                window=WINDOWS.get(self.window_var.get(),"hann"),
-                                include_dc=self.include_dc_var.get(), compute_thdn=True)
-        path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV","*.csv")])
-        if not path: return
-        with open(path, "w", newline="") as f:
-            w = csv.writer(f)
-            ts = time.strftime("%Y-%m-%d %H:%M:%S")
-            w.writerow(["timestamp", ts])
-            w.writerow(["channel", chan])
-            w.writerow(["fs_hz", res.fs])
-            w.writerow(["window", res.window])
-            w.writerow(["include_dc", res.include_dc])
-            w.writerow(["f1_hz", res.f1_hz])
-            w.writerow(["V1_rms", res.v1_rms])
-            w.writerow(["THD", res.thd])
-            w.writerow(["THD_percent", res.thd*100.0])
-            w.writerow(["THD+N", "" if res.thdn is None else res.thdn])
-            w.writerow(["SINAD_dB", "" if res.sinad_db is None else res.sinad_db])
-            w.writerow(["SNR_dB", "" if res.snr_db is None else res.snr_db])
-            w.writerow(["crest_factor", res.crest])
-            w.writerow(["form_factor", res.form_factor])
-            w.writerow([])
-            w.writerow(["k","f_hz","mag_rms","percent","phase_deg"])
-            for r in res.rows:
-                w.writerow([r.k, r.f_hz, r.mag_rms, r.percent, r.phase_deg])
+
+        # Recompute from the latest capture (keeps behavior; no math changes)
+        res = analyze_harmonics(
+            y, fs,
+            n_harmonics=int(self.nharm_var.get()),
+            window=WINDOWS.get(self.window_var.get(), "hann"),
+            include_dc=self.include_dc_var.get(),
+            compute_thdn=True
+        )
+
+        # Ensure destination exists
+        dest_dir = os.path.join("oszi_csv", "harmonics")
+        os.makedirs(dest_dir, exist_ok=True)
+
+        # UTC timestamp, consistent with your other logs
+        ts = time.strftime("%Y-%m-%dT%H-%M-%SZ", time.gmtime())
+        fname = f"harmonics_{chan}_{ts}.csv"
+        path = os.path.join(dest_dir, fname)
+
+        try:
+            with open(path, "w", newline="") as f:
+                w = csv.writer(f)
+                # metadata (comment-style so downstream tools can skip easily)
+                w.writerow(["# channel", chan])
+                w.writerow(["# window", self.window_var.get()])
+                w.writerow(["# f1_hz", f"{res.f1_hz:.9f}"])
+                w.writerow(["# v1_rms", f"{res.v1_rms:.9g}"])
+                w.writerow(["# THD_pct", f"{res.thd*100:.6f}"])
+                if res.thdn is not None:
+                    w.writerow(["# THDN_pct", f"{res.thdn*100:.6f}"])
+                w.writerow([])
+
+                # main harmonic table (kept identical to your current display)
+                w.writerow(["k","f_hz","mag_rms","percent","phase_deg"])
+                for r in res.rows:
+                    w.writerow([r.k, r.f_hz, r.mag_rms, r.percent, r.phase_deg])
+
+            self.status_var.set(f"Saved CSV → {path}")
+            log_debug(f"💾 Saved Harmonics CSV → {path}")
+        except Exception as e:
+            self.status_var.set(f"CSV save failed: {e}")
 
     def save_png(self):
+        # No modal dialogs; write straight to oszi_csv/harmonics/
         if self.canvas is None:
+            self.status_var.set("No plot to save.")
             return
-        path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG","*.png")])
-        if not path: return
-        self.fig.savefig(path, dpi=150, facecolor=self.fig.get_facecolor(), edgecolor="none")
 
+        dest_dir = os.path.join("oszi_csv", "harmonics")
+        os.makedirs(dest_dir, exist_ok=True)
+
+        # Use last capture for channel in filename (fallback if missing)
+        chan = None
+        try:
+            _, _, _, chan, _ = self.last_capture
+        except Exception:
+            chan = str(self.chan_var.get())
+
+        ts = time.strftime("%Y-%m-%dT%H-%M-%SZ", time.gmtime())
+        fname = f"spectrum_{chan}_{ts}.png"
+        path = os.path.join(dest_dir, fname)
+
+        try:
+            self.fig.savefig(path, dpi=150,
+                             facecolor=self.fig.get_facecolor(),
+                             edgecolor="none")
+            self.status_var.set(f"Saved Spectrum PNG → {path}")
+            log_debug(f"🖼️ Saved Spectrum PNG → {path}")
+        except Exception as e:
+            self.status_var.set(f"PNG save failed: {e}")
 
     def copy_md(self):
-        if not self.last_capture:
-            messagebox.showinfo("Copy Markdown", "No data yet.")
+        import math
+
+        res = getattr(self, "_last_result", None)
+        if not res:
+            self.status_var.set("No data to copy.")
             return
-        _, y, fs, _, _ = self.last_capture
-        res = analyze_harmonics(y, fs, n_harmonics=int(self.nharm_var.get()),
-                                window=WINDOWS.get(self.window_var.get(),"hann"),
-                                include_dc=self.include_dc_var.get(), compute_thdn=True)
-        lines = []
-        lines.append(f"**Harmonics/THD** — f1 = {res.f1_hz:.3f} Hz, V1_rms = {res.v1_rms:.6g}, THD = {res.thd*100:.3f}%")
-        if res.thdn is not None:
-            lines[-1] += f", THD+N = {res.thdn*100:.3f}%"
-        lines.append("")
-        lines.append("| k | f (Hz) | Mag (RMS) | % of fundamental | Phase (deg) |")
-        lines.append("|---:|------:|----------:|-----------------:|-----------:|")
-        for r in res.rows[:15]:
-            lines.append(f"| {r.k} | {r.f_hz:.2f} | {r.mag_rms:.6g} | {r.percent:.3f}% | {r.phase_deg:.2f} |")
-        md = "\n".join(lines)
-        self.root.clipboard_clear()
-        self.root.clipboard_append(md)
-        self.root.update()
+
+        header, rows = self._build_harmonic_export_rows(res)
+
+        def fmt(v):
+            if isinstance(v, float):
+                return "—" if not math.isfinite(v) else f"{v:.6g}"
+            return str(v)
+
+        parts = []
+        parts.append(f"**Harmonics summary**  ")
+        parts.append(
+            f"Channel: `{self.chan_var.get()}` | Window: `{self.window_var.get()}` | "
+            f"f₁ = {float(getattr(res,'f1_hz', float('nan'))):.6g} Hz | "
+            f"V₁,rms = {float(getattr(res,'v1_rms', float('nan'))):.6g} | "
+            f"THD = {float(getattr(res,'thd_pct', float('nan'))):.3f}%"
+        )
+        parts.append("")
+        parts.append("| " + " | ".join(header) + " |")
+        parts.append("|" + "|".join(["---:"] * len(header)) + "|")
+        for row in rows:
+            parts.append("| " + " | ".join(fmt(v) for v in row) + " |")
+
+        inter = getattr(self, "_last_interharmonics", [])
+        if inter:
+            parts.append("")
+            parts.append("**Non-harmonic lines** (relative to fundamental):")
+            parts.append("")
+            parts.append("| frequency_hz | dBr1 |")
+            parts.append("|---:|---:|")
+            for fi, dbr in inter:
+                parts.append(f"| {fi:.6g} | {dbr:.3f} |")
+
+        known = getattr(self, "_last_known_lines", [])
+        if known:
+            parts.append("")
+            parts.append("**Known/house lines:**")
+            parts.append("")
+            parts.append("| frequency_hz | dBr1 |")
+            parts.append("|---:|---:|")
+            for fk, dbr in known:
+                parts.append(f"| {fk:.6g} | {dbr:.3f} |")
+
+        text = "\n".join(parts)
+        try:
+            # prefer root if present; fallback to widget
+            target = getattr(self, "root", None) or self.tree
+            target.clipboard_clear()
+            target.clipboard_append(text)
+            self.status_var.set("Markdown summary copied to clipboard.")
+        except Exception as e:
+            self.status_var.set(f"Copy failed: {e}")
+
 
 def setup_harmonics_tab(tab_frame, ip: str, root):
     """Entry point used by main.py to mount the tab."""
