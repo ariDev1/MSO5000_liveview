@@ -15,6 +15,11 @@ from scpi.data import scpi_data
 from utils.debug import log_debug, set_debug_level
 from collections import deque
 
+# 3D PQ view (optional)
+try:
+    from gui.power.pq3d_view import PQ3DView
+except Exception:
+    PQ3DView = None  # graceful fallback if the module is missing
 
 # Performance optimizations
 class PowerAnalysisOptimizer:
@@ -63,6 +68,10 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     app_state.is_power_analysis_active = False
     global_power_csv_path = [None]
     optimizer = PowerAnalysisOptimizer()  # Initialize optimizer
+
+    # --- 3D view state ---
+    pq3d_enabled = tk.BooleanVar(value=False)
+    pq3d = {"view": None, "canvas": None, "window": None}
 
     # Power formula selection logic
     method_options = {
@@ -236,7 +245,42 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     control_row.columnconfigure((0, 1, 2, 3, 4, 5), weight=1)
 
     ttk.Checkbutton(control_row, text="DC Offset", variable=remove_dc_var).grid(row=0, column=0, padx=3)
-    
+
+    def _ensure_pq3d():
+        if not pq3d_enabled.get() or PQ3DView is None:
+            return
+        if pq3d["view"] is None:
+            # create once
+            pq3d["view"] = PQ3DView(max_age_s=120, max_points=20000)
+            win = tk.Toplevel(root)
+            win.title("PQ 3D — (P,Q,t)")
+
+            # ➜ Black window; no borders/glow
+            win.configure(bg="#000000", highlightthickness=0, bd=0)
+            pq3d["window"] = win
+
+            c3d = FigureCanvasTkAgg(pq3d["view"].fig, master=win)
+            w = c3d.get_tk_widget()
+
+            # ➜ Black canvas; no border; flat look
+            w.configure(bg="#000000", highlightthickness=0, bd=0, relief="flat")
+            w.pack(fill="both", expand=True)
+
+            pq3d["canvas"] = c3d
+
+            def _on_close():
+                pq3d_enabled.set(False)
+                _destroy_pq3d()
+            win.protocol("WM_DELETE_WINDOW", _on_close)
+
+    def _destroy_pq3d():
+        try:
+            if pq3d["window"] is not None:
+                pq3d["window"].destroy()
+        finally:
+            pq3d["view"] = pq3d["canvas"] = pq3d["window"] = None
+
+
     def toggle_auto_refresh():
         if not refresh_var.get():
             stop_auto_refresh()
@@ -299,6 +343,12 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
     refresh_chk = ttk.Checkbutton(control_row, text="Power Analysis", variable=refresh_var, command=toggle_auto_refresh)
     refresh_chk.grid(row=0, column=3, padx=3)
+
+    ttk.Checkbutton(
+        control_row, text="3D View (P,Q,t)",
+        variable=pq3d_enabled,
+        command=lambda: (_ensure_pq3d() if pq3d_enabled.get() else _destroy_pq3d())
+    ).grid(row=0, column=10, padx=8)
 
     def plot_last_power_log():
         import glob, subprocess, os
@@ -573,8 +623,17 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         # Update PQ plot with throttling
         pq_trail.append((avg_p, avg_q))
 
+        if pq3d_enabled.get() and pq3d["view"] is not None:
+            pq3d["view"].push(time.time(), avg_p, avg_q)
+
+        # existing throttle for 2D
         if optimizer.should_update_plot():
             draw_pq_plot(avg_p, avg_q, metadata)
+            # NEW: throttle the 3D draw with the same gate
+            if pq3d_enabled.get() and pq3d["view"] is not None:
+                pq3d["view"].draw()
+                if pq3d["canvas"] is not None:
+                    pq3d["canvas"].draw_idle()
 
     def draw_pq_plot(p, q, metadata=None):
         import math
@@ -946,6 +1005,15 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         log_debug("🛑 Stopping auto-refresh")
         refresh_var.set(False)
         app_state.is_power_analysis_active = False
+
+        # --- 3D view cleanup ---
+        try:
+            if pq3d_enabled.get():
+                pq3d_enabled.set(False)
+            _destroy_pq3d()   # closes the pop-out window and drops refs
+            log_debug("🧹 PQ 3D view cleaned up")
+        except Exception as e:
+            log_debug(f"⚠️ PQ 3D cleanup issue: {e}")
 
         # Save final PQ plot if we have data
         if global_power_csv_path[0] and len(pq_trail) > 1:
