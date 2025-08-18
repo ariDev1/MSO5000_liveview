@@ -15,11 +15,10 @@ from scpi.data import scpi_data
 from utils.debug import log_debug, set_debug_level
 from collections import deque
 
-# 3D PQ view (optional)
-try:
-    from gui.power.pq3d_view import PQ3DView
-except Exception:
-    PQ3DView = None  # graceful fallback if the module is missing
+# 3D PQ view backend — **force MPL for reliability in lab use**
+_PQ3D_BACKEND = "MPL"
+_PQ3D_MODULE  = "gui.power.pq3d_view"
+from gui.power.pq3d_view import PQ3DView as PQ3DBackend
 
 # Performance optimizations
 class PowerAnalysisOptimizer:
@@ -247,31 +246,41 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     ttk.Checkbutton(control_row, text="DC Offset", variable=remove_dc_var).grid(row=0, column=0, padx=3)
 
     def _ensure_pq3d():
-        if not pq3d_enabled.get() or PQ3DView is None:
+        global PQ3DBackend, _PQ3D_BACKEND, _PQ3D_MODULE
+        # bail if toggle is off or no backend available
+        if not pq3d_enabled.get() or PQ3DBackend is None or _PQ3D_BACKEND is None:
             return
-        if pq3d["view"] is None:
-            # create once
-            pq3d["view"] = PQ3DView(max_age_s=120, max_points=20000)
-            win = tk.Toplevel(root)
-            win.title("PQ 3D — (P,Q,t)")
 
-            # ➜ Black window; no borders/glow
-            win.configure(bg="#000000", highlightthickness=0, bd=0)
-            pq3d["window"] = win
+        if pq3d["view"] is not None:
+            return  # already created
 
-            c3d = FigureCanvasTkAgg(pq3d["view"].fig, master=win)
-            w = c3d.get_tk_widget()
+        # create pop-out window as before
+        win = tk.Toplevel(root)
 
-            # ➜ Black canvas; no border; flat look
-            w.configure(bg="#000000", highlightthickness=0, bd=0, relief="flat")
-            w.pack(fill="both", expand=True)
+        # show which backend is in use
+        title_backend = f" [{_PQ3D_BACKEND}]" if _PQ3D_BACKEND else ""
+        win.title(f"PQ 3D — (P,Q,t){title_backend}")
 
-            pq3d["canvas"] = c3d
+        win.configure(bg="#000000", highlightthickness=0, bd=0)
+        pq3d["window"] = win
 
-            def _on_close():
-                pq3d_enabled.set(False)
-                _destroy_pq3d()
-            win.protocol("WM_DELETE_WINDOW", _on_close)
+        # log it once for the debug pane/file
+        from utils.debug import log_debug
+        log_debug("🧰 PQ3D backend = MPL (forced)")
+
+        # Create Matplotlib viewer (only path)
+        pq3d["view"] = PQ3DBackend(max_age_s=120, max_points=20000)
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        c3d = FigureCanvasTkAgg(pq3d["view"].fig, master=win)
+        w = c3d.get_tk_widget()
+        w.configure(bg="#000000", highlightthickness=0, bd=0, relief="flat")
+        w.pack(fill="both", expand=True)
+        pq3d["canvas"] = c3d
+
+        def _on_close():
+            pq3d_enabled.set(False)
+            _destroy_pq3d()
+        win.protocol("WM_DELETE_WINDOW", _on_close)
 
     def _destroy_pq3d():
         try:

@@ -1,5 +1,6 @@
 # gui/power/pq3d_view.py
-# UI-only 3D PQ viewer: plots (P(t), Q(t), t) as a smooth, time-colored trail.
+# 3D PQ viewer (UI-only). Fixed external viewpoints (no fly mode).
+# Keys: 1..6 switch view, V/B cycle, Z toggle proj, H help.
 
 from collections import deque
 import numpy as np
@@ -7,58 +8,66 @@ from matplotlib.figure import Figure
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 import matplotlib.cm as cm
 
-# ---- Default camera tuned for the look in your screenshot ----
-# If you want to nudge it, just tweak these 3 numbers.
-DEFAULT_ELEV = 12     # vertical tilt
-DEFAULT_AZIM = -30    # rotation around vertical axis
-DEFAULT_ROLL = None   # requires matplotlib >= 3.7; otherwise ignored
+# -------------------- Configure your preset viewpoints here --------------------
+# Edit, remove, or add entries. 'proj' is "persp" or "ortho".
+VIEWS = [
+    {"name": "Top PQ (2D-like)", "elev": 90, "azim": -90, "roll": 0,  "proj": "ortho"},  # P vs Q
+    {"name": "Iso 1",            "elev": 20, "azim": -35, "roll": 0,  "proj": "persp"},
+    {"name": "Iso 2",            "elev": 35, "azim":  30, "roll": 0,  "proj": "persp"},
+    {"name": "Iso 3",            "elev": 12, "azim":-120, "roll": 0,  "proj": "persp"},
+    {"name": "Front (P–t)",      "elev":  0, "azim": -90, "roll": 0,  "proj": "ortho"},  # X–Z
+    {"name": "Side  (Q–t)",      "elev":  0, "azim":   0, "roll": 0,  "proj": "ortho"},  # Y–Z
+]
+DEFAULT_VIEW_INDEX = 1  # which entry in VIEWS to start with (0-based)
+# -----------------------------------------------------------------------------
 
+DEFAULT_ROLL_SUPPORTED = True  # Matplotlib >= 3.7 supports roll in view_init
 
 class PQ3DView:
     def __init__(self, max_age_s: float = 60.0, max_points: int = 4000):
-        # Figure/axes
+        # Figure / Axes
         self.fig = Figure(figsize=(5, 3), dpi=100, facecolor="#000000")
         self.ax = self.fig.add_subplot(111, projection="3d")
         self.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
 
-        # Data buffer & limits
+        # Data buffer
         self.buf = deque()
         self.max_age_s = float(max_age_s)
         self.max_points = int(max_points)
 
-        # Spline options
+        # Spline
         self.use_spline = True
-        self.spline_samples = 8  # points per Catmull–Rom segment
+        self.spline_samples = 8  # Catmull–Rom per segment
 
-        # Gradient trail collection
+        # Trail + head
         self.cmap = cm.get_cmap("plasma")
         self._trail = Line3DCollection([], linewidths=1.6, antialiased=True)
-        self._trail.set_segments([np.zeros((2, 3))])  # seed; avoids autoscale crash
-        self._trail.set_alpha(0.0)  # hidden until data arrives
+        self._trail.set_segments([np.zeros((2, 3))])  # seed
+        self._trail.set_alpha(0.0)
         self.ax.add_collection3d(self._trail)
-
-        # Head marker
         self._head = self.ax.scatter([], [], [], s=30)
 
-        # Camera / projection init flags
+        # View state
         self._initialized_view = False
         self._proj_applied = False
-
-        # Manual zoom state (preserve user zoom across draws)
         self._manual_limits = False
         self._xlim = self._ylim = self._zlim = None
 
-        # Event binding state
+        # Events
         self._event_bound = False
 
-        # Projection preferences
-        self.proj_type = "persp"     # 'persp' or 'ortho'
-        self.focal_length = 0.9
+        # Preset views
+        self._views = list(VIEWS)
+        self._view_idx = int(DEFAULT_VIEW_INDEX) % max(1, len(self._views))
+        self._temp_proj_override = None  # set by 'Z' key
 
-        # Apply dark, pane-less theme
+        # Overlay (help) — visible by default, toggled with 'H'
+        self.overlay_visible = True
+        self._overlay_artist = None
+
         self._apply_dark_theme()
 
-    # ---------------------------- Appearance ---------------------------- #
+    # --------------------------- Appearance --------------------------- #
 
     def _apply_dark_theme(self):
         ax = self.ax
@@ -70,85 +79,89 @@ class PQ3DView:
         except Exception:
             pass
 
-        # Remove pane fill (keep only lines)
-        removed = False
         try:
             for a in (ax.xaxis, ax.yaxis, ax.zaxis):
                 a.pane.fill = False
                 a.pane.set_facecolor((0, 0, 0, 0))
                 a.pane.set_edgecolor((1, 1, 1, 0.35))
-            removed = True
-        except Exception:
-            pass
-        if not removed:
-            for a in (getattr(ax, "w_xaxis", None),
-                      getattr(ax, "w_yaxis", None),
-                      getattr(ax, "w_zaxis", None)):
-                if a is None:
-                    continue
-                try: a.set_pane_color((0, 0, 0, 0))
-                except Exception: pass
-                try: a.pane_fill = False
-                except Exception: pass
-                try:
-                    info = a._axinfo
-                    info["pane_color"] = (0, 0, 0, 0)
-                    info["pane_fill"] = False
-                except Exception:
-                    pass
-
-        # Labels/ticks
-        ax.set_xlabel("P [W]", color="#DDDDDD", labelpad=6)
-        ax.set_ylabel("Q [VAR]", color="#DDDDDD", labelpad=6)
-        ax.set_zlabel("time [s]", color="#DDDDDD", labelpad=6)
-        ax.tick_params(colors="#AAAAAA", which="both", labelsize=8)
-
-        # Subtle grid
-        try:
             ax.grid(True)
             for a in (ax.xaxis, ax.yaxis, ax.zaxis):
                 a._axinfo["grid"]["color"] = (1, 1, 1, 0.18)
                 a._axinfo["grid"]["linewidth"] = 0.6
         except Exception:
-            pass
+            # Older mpl fallbacks
+            for a in (getattr(ax, "w_xaxis", None),
+                      getattr(ax, "w_yaxis", None),
+                      getattr(ax, "w_zaxis", None)):
+                if not a:
+                    continue
+                try: a.set_pane_color((0, 0, 0, 0))
+                except Exception: pass
+                try: a.pane_fill = False
+                except Exception: pass
 
-        # Pleasant shape
+        ax.set_xlabel("P [W]", color="#DDDDDD", labelpad=6)
+        ax.set_ylabel("Q [VAR]", color="#DDDDDD", labelpad=6)
+        ax.set_zlabel("time [s]", color="#DDDDDD", labelpad=6)
+        ax.tick_params(colors="#AAAAAA", which="both", labelsize=8)
         try:
             ax.set_box_aspect((1, 1, 0.6))
         except Exception:
             pass
 
-    def _apply_projection(self):
-        """Apply perspective/orthographic projection once, with fallbacks."""
+    # ------------------------------ Views ----------------------------- #
+
+    def set_views(self, views_list):
+        """Optional external API to replace the preset list at runtime."""
+        self._views = list(views_list) if views_list else [{"name":"Default","elev":20,"azim":-35,"roll":0,"proj":"persp"}]
+        self._view_idx = 0
+        self._apply_current_view()
+
+    def _apply_projection(self, proj):
         ax = self.ax
         try:
-            ax.set_proj_type(self.proj_type, focal_length=self.focal_length)
+            FOCAL_LEN = 0.45  # try 0.35 … 0.6 for stronger perspective
+            ax.set_proj_type(proj, focal_length=FOCAL_LEN if proj == "persp" else None)
+
         except TypeError:
             try:
-                ax.set_proj_type(self.proj_type)
+                ax.set_proj_type(proj)
             except Exception:
                 pass
             try:
-                if self.proj_type == "persp":
-                    ax.dist = 7  # fallback for older MPL
+                if proj == "persp":
+                    ax.dist = 4.5  # legacy fallback 3.5 .. 6.0
             except Exception:
                 pass
         self._proj_applied = True
 
-    def _apply_default_camera(self):
-        """Set the default camera to match the screenshot-like view."""
-        try:
-            # Newer Matplotlib supports roll
-            self.ax.view_init(elev=DEFAULT_ELEV, azim=DEFAULT_AZIM, roll=DEFAULT_ROLL)
-        except TypeError:
-            # Older versions: no roll
-            self.ax.view_init(elev=DEFAULT_ELEV, azim=DEFAULT_AZIM)
+    def _apply_current_view(self):
+        if not self._views:
+            return
+        v = self._views[self._view_idx]
+        proj = self._temp_proj_override or v.get("proj", "persp")
+        self._apply_projection(proj)
 
-    # ---------------------------- Data path ---------------------------- #
+        elev = float(v.get("elev", 20))
+        azim = float(v.get("azim", -35))
+        roll = float(v.get("roll", 0))
+        try:
+            if DEFAULT_ROLL_SUPPORTED:
+                self.ax.view_init(elev=elev, azim=azim, roll=roll)
+            else:
+                self.ax.view_init(elev=elev, azim=azim)
+        except TypeError:
+            # older Matplotlib without roll
+            self.ax.view_init(elev=elev, azim=azim)
+
+        if self.fig.canvas:
+            self.fig.canvas.draw_idle()
+        self._update_overlay()
+
+    # --------------------------- Data path --------------------------- #
 
     def push(self, t_s: float, P: float, Q: float):
         self.buf.append((float(t_s), float(P), float(Q)))
-
         # prune by age
         tmin = t_s - self.max_age_s
         while self.buf and self.buf[0][0] < tmin:
@@ -162,13 +175,12 @@ class PQ3DView:
         x = arr[:, 1]                       # P
         y = arr[:, 2]                       # Q
         z = arr[:, 0] - arr[-1, 0]          # relative time (s)
-
-        step = max(1, len(x) // 1200)       # decimate
+        step = max(1, len(x) // 1200)
         if step > 1:
             x, y, z = x[::step], y[::step], z[::step]
         return x, y, z
 
-    # ---------------------------- Spline ---------------------------- #
+    # ----------------------------- Spline ---------------------------- #
 
     def _smooth3d(self, x, y, z, samples=None, alpha=0.5):
         if samples is None:
@@ -204,34 +216,41 @@ class PQ3DView:
                 A3 = (t3 - t) / t32 * P2 + (t - t2) / t32 * P3
                 B1 = (t2 - t) / t20 * A1 + (t - t0) / t20 * A2
                 B2 = (t3 - t) / t31 * A2 + (t - t1) / t31 * A3
-                C = (t2 - t) / (t2 - t1 + eps) * B1 + (t - t1) / (t2 - t1 + eps) * B2
+                C  = (t2 - t) / (t2 - t1 + eps) * B1 + (t - t1) / (t2 - t1 + eps) * B2
                 out.append(C)
 
         out.append(P[-1])
         out = np.asarray(out)
         return out[:, 0], out[:, 1], out[:, 2]
 
-    # ---------------------------- Events ---------------------------- #
+    # ----------------------------- Events ---------------------------- #
 
     def _ensure_events(self):
         if not self._event_bound and self.fig.canvas is not None:
             self.fig.canvas.mpl_connect("scroll_event", self._on_scroll)
+            self.fig.canvas.mpl_connect("key_press_event", self._on_key)
+            self.fig.canvas.mpl_connect("figure_enter_event", self._on_enter)
             self._event_bound = True
+
+    def _on_enter(self, _event):
+        # ensure keyboard focus inside Tk
+        try:
+            w = self.fig.canvas.get_tk_widget()
+            w.focus_set()
+        except Exception:
+            pass
+        if self.overlay_visible:
+            self._update_overlay()
 
     def _on_scroll(self, event):
         if not self.buf:
             return
-
         step = getattr(event, "step", None)
-        if step is not None:
-            zoom_in = step > 0
-        else:
-            zoom_in = (getattr(event, "button", "") == "up")
-
+        zoom_in = (step > 0) if step is not None else (getattr(event, "button", "") == "up")
         factor = 0.9 if zoom_in else 1.1
 
         # Anchor at newest point (P, Q, z=0)
-        t, P, Q = self.buf[-1]
+        _, P, Q = self.buf[-1]
         xc, yc, zc = float(P), float(Q), 0.0
 
         if self._manual_limits and self._xlim and self._ylim and self._zlim:
@@ -252,11 +271,6 @@ class PQ3DView:
         ymin, ymax = zoom_axis(ymin, ymax, yc, factor)
         zmin, zmax = zoom_axis(zmin, zmax, zc, factor)
 
-        if zmax > 0:  # keep "now" at 0
-            dz = zmax - 0.0
-            zmax -= dz
-            zmin -= dz
-
         self.ax.set_xlim(xmin, xmax)
         self.ax.set_ylim(ymin, ymax)
         self.ax.set_zlim(zmin, zmax)
@@ -266,26 +280,106 @@ class PQ3DView:
         if self.fig.canvas is not None:
             self.fig.canvas.draw_idle()
 
-    # ---------------------------- Draw ---------------------------- #
+    def _on_key(self, event):
+        if not event.key:
+            return
+        k = event.key.lower()
 
-    def draw(self):
-        if not self.buf:
+        if k == "h":
+            self.overlay_visible = not self.overlay_visible
+            self._update_overlay()
             return
 
+        if k == "z":
+            # temporary projection override (persp <-> ortho) for current view
+            cur = self._views[self._view_idx]
+            base = cur.get("proj", "persp")
+            self._temp_proj_override = "ortho" if (self._temp_proj_override or base) == "persp" else "persp"
+            self._apply_current_view()
+            return
+
+        if k == "v":  # next view
+            self._view_idx = (self._view_idx + 1) % len(self._views)
+            self._temp_proj_override = None
+            self._apply_current_view()
+            return
+
+        if k == "b":  # previous view
+            self._view_idx = (self._view_idx - 1) % len(self._views)
+            self._temp_proj_override = None
+            self._apply_current_view()
+            return
+
+        # numeric direct-select (1..9)
+        if k.isdigit():
+            idx = int(k) - 1
+            if 0 <= idx < len(self._views):
+                self._view_idx = idx
+                self._temp_proj_override = None
+                self._apply_current_view()
+            return
+
+    # --------------------------- Overlay (help) ------------------------ #
+
+    def _overlay_text(self):
+        v = self._views[self._view_idx] if self._views else {"name":"N/A","proj":"persp"}
+        proj = self._temp_proj_override or v.get("proj", "persp")
+        lines = [
+            f"View: {v.get('name','N/A')}   Proj: {proj}",
+            "1..6: set view   V/B: next/prev   Z: toggle proj   H: help",
+            "Wheel: zoom (anchored at newest point)",
+        ]
+        return "\n".join(lines)
+
+    def _update_overlay(self):
+        if not self.overlay_visible:
+            if self._overlay_artist is not None:
+                try:
+                    self._overlay_artist.remove()
+                except Exception:
+                    pass
+                self._overlay_artist = None
+            if self.fig.canvas:
+                self.fig.canvas.draw_idle()
+            return
+
+        txt = self._overlay_text()
+        if self._overlay_artist is None:
+            self._overlay_artist = self.fig.text(
+                0.015, 0.985, txt,
+                ha="left", va="top",
+                color="#EEEEEE",
+                fontsize=9,
+                family="monospace",
+                linespacing=1.25,
+                bbox=dict(
+                    facecolor=(0, 0, 0, 0.55),
+                    edgecolor=(1, 1, 1, 0.18),
+                    boxstyle="round,pad=0.35"
+                )
+            )
+        else:
+            self._overlay_artist.set_text(txt)
+        if self.fig.canvas:
+            self.fig.canvas.draw_idle()
+
+    # ------------------------------ Draw ------------------------------ #
+
+    def draw(self):
+        # Ensure events & current view applied
         self._ensure_events()
         if not self._proj_applied:
-            self._apply_projection()
+            self._apply_current_view()
 
-        # Apply your screenshot-like default exactly once; user rotations persist
-        if not self._initialized_view:
-            self._apply_default_camera()
-            self._initialized_view = True
+        if not self.buf:
+            if self.overlay_visible:
+                self._update_overlay()
+            return
 
         x, y, z = self._arrays()
         if self.use_spline and len(x) >= 4:
             x, y, z = self._smooth3d(x, y, z)
 
-        # Gradient trail
         if len(x) > 1:
             pts = np.column_stack([x, y, z])
             segs = np.stack([pts[:-1], pts[1:]], axis=1)
@@ -306,7 +400,6 @@ class PQ3DView:
             self._trail.set_segments([])
             self._trail.set_alpha(0.0)
 
-        # Head
         try:
             self._head._offsets3d = ([x[-1]], [y[-1]], [z[-1]])
         except Exception:
@@ -326,12 +419,15 @@ class PQ3DView:
             self.ax.set_ylim(y.min() - m * qx, y.max() + m * qx)
             self.ax.set_zlim(-self.max_age_s, 0)
 
-        # Keep plot filling the window
+        # Fill window and keep overlay current
         self.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
         try:
             self.ax.set_position([0, 0, 1, 1])
         except Exception:
             pass
+
+        if self.overlay_visible:
+            self._update_overlay()
 
         if self.fig.canvas is not None:
             self.fig.canvas.draw_idle()
