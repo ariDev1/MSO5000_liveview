@@ -28,6 +28,12 @@ class PQ3DView:
         # Figure / Axes
         self.fig = Figure(figsize=(5, 3), dpi=100, facecolor="#000000")
         self.ax = self.fig.add_subplot(111, projection="3d")
+
+        # Fill-to-edges behavior
+        self.full_bleed = True           # use largest centered square
+        self.edge_pad = 0.01             # small fractional padding around edges
+        self._resize_cid = None          # mpl resize event id
+
         self.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
 
         # Data buffer
@@ -38,6 +44,18 @@ class PQ3DView:
         # Spline
         self.use_spline = True
         self.spline_samples = 8  # Catmull–Rom per segment
+
+        # Heat-map parameters (visual only)
+        self.heat_mode = "age"        # "age", "density", or "age+density"
+        self.heat_gamma = 0.75        # <1 boosts contrast towards “hot” end
+        self.alpha_min, self.alpha_max = 0.15, 0.95
+        self.lw_min, self.lw_max = 0.8, 3.0
+
+        # Density grid (P,Q) — updates as points arrive, fades over time
+        self.density_bins = 48
+        self.density_decay = 0.98     # decay per new sample; lower = faster fade
+        self._density = None          # (H, xedges, yedges)
+        self._density_bounds = None   # ((xmin,xmax),(ymin,ymax))
 
         # Trail + head
         self.cmap = cm.get_cmap("plasma")
@@ -66,6 +84,8 @@ class PQ3DView:
         self._overlay_artist = None
 
         self._apply_dark_theme()
+        # Initial layout fit
+        self._fit_axes_to_window()
 
     # --------------------------- Appearance --------------------------- #
 
@@ -74,10 +94,6 @@ class PQ3DView:
         self.fig.patch.set_facecolor("#000000")
         ax.set_facecolor("#000000")
         self.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
-        try:
-            ax.set_position([0, 0, 1, 1])
-        except Exception:
-            pass
 
         try:
             for a in (ax.xaxis, ax.yaxis, ax.zaxis):
@@ -116,13 +132,40 @@ class PQ3DView:
         self._views = list(views_list) if views_list else [{"name":"Default","elev":20,"azim":-35,"roll":0,"proj":"persp"}]
         self._view_idx = 0
         self._apply_current_view()
+    
+    def _fit_axes_to_window(self):
+        """Resize axes to the largest centered square inside the figure."""
+        if not self.full_bleed:
+            # fallback: use all available area with a tiny pad
+            pad = self.edge_pad
+            self.ax.set_position([pad, pad, 1 - 2*pad, 1 - 2*pad])
+            return
+
+        # Figure size (ratio matters)
+        w_in, h_in = self.fig.get_size_inches()
+        w, h = float(w_in), float(h_in)
+
+        pad = self.edge_pad
+        if w <= 0 or h <= 0:
+            self.ax.set_position([pad, pad, 1 - 2*pad, 1 - 2*pad])
+            return
+
+        if w > h:
+            # height limits; use full height, center horizontally
+            side = h / w
+            x0 = (1.0 - side) * 0.5
+            self.ax.set_position([x0 + pad, pad, side - 2*pad, 1 - 2*pad])
+        else:
+            # width limits; use full width, center vertically
+            side = w / h
+            y0 = (1.0 - side) * 0.5
+            self.ax.set_position([pad, y0 + pad, 1 - 2*pad, side - 2*pad])
 
     def _apply_projection(self, proj):
         ax = self.ax
         try:
             FOCAL_LEN = 0.45  # try 0.35 … 0.6 for stronger perspective
             ax.set_proj_type(proj, focal_length=FOCAL_LEN if proj == "persp" else None)
-
         except TypeError:
             try:
                 ax.set_proj_type(proj)
@@ -169,6 +212,33 @@ class PQ3DView:
         # prune by count
         while len(self.buf) > self.max_points:
             self.buf.popleft()
+
+        # --- density update (optional) ---
+        if self.heat_mode in ("density", "age+density") and len(self.buf) >= 2:
+            (t1, x1, y1), (t2, x2, y2) = self.buf[-2], self.buf[-1]
+            xm, ym = 0.5*(x1+x2), 0.5*(y1+y2)
+
+            # (Re)initialize grid on first use or when empty
+            if self._density is None or self._density_bounds is None:
+                arr = np.asarray(self.buf, dtype=float)
+                xlo, xhi = float(arr[:,1].min()), float(arr[:,1].max())
+                ylo, yhi = float(arr[:,2].min()), float(arr[:,2].max())
+                px = max(1e-9, 0.1*(xhi - xlo or 1.0))
+                py = max(1e-9, 0.1*(yhi - ylo or 1.0))
+                xedges = np.linspace(xlo-px, xhi+px, self.density_bins+1)
+                yedges = np.linspace(ylo-py, yhi+py, self.density_bins+1)
+                H = np.zeros((self.density_bins, self.density_bins), dtype=float)
+                self._density = (H, xedges, yedges)
+                self._density_bounds = ((xedges[0], xedges[-1]), (yedges[0], yedges[-1]))
+
+            H, xedges, yedges = self._density
+            # exponential decay to keep “recent” activity hot
+            H *= self.density_decay
+
+            ix = np.searchsorted(xedges, xm) - 1
+            iy = np.searchsorted(yedges, ym) - 1
+            if 0 <= ix < H.shape[0] and 0 <= iy < H.shape[1]:
+                H[ix, iy] += 1.0
 
     def _arrays(self):
         arr = np.asarray(self.buf, dtype=float)
@@ -230,6 +300,10 @@ class PQ3DView:
             self.fig.canvas.mpl_connect("scroll_event", self._on_scroll)
             self.fig.canvas.mpl_connect("key_press_event", self._on_key)
             self.fig.canvas.mpl_connect("figure_enter_event", self._on_enter)
+            if self._resize_cid is None:
+                self._resize_cid = self.fig.canvas.mpl_connect(
+                    "resize_event", self._on_resize
+                )
             self._event_bound = True
 
     def _on_enter(self, _event):
@@ -241,6 +315,11 @@ class PQ3DView:
             pass
         if self.overlay_visible:
             self._update_overlay()
+
+    def _on_resize(self, _event):
+        self._fit_axes_to_window()
+        if self.fig.canvas is not None:
+            self.fig.canvas.draw_idle()
 
     def _on_scroll(self, event):
         if not self.buf:
@@ -290,6 +369,24 @@ class PQ3DView:
             self._update_overlay()
             return
 
+        if k == "m":
+            modes = ["age", "density", "age+density"]
+            try:
+                i = modes.index(self.heat_mode)
+            except ValueError:
+                i = 0
+            self.heat_mode = modes[(i + 1) % len(modes)]
+            if self.fig.canvas is not None:
+                self.fig.canvas.draw_idle()
+            return
+
+        if k == "f":
+            self.full_bleed = not self.full_bleed
+            self._fit_axes_to_window()
+            if self.fig.canvas is not None:
+                self.fig.canvas.draw_idle()
+            return
+
         if k == "z":
             # temporary projection override (persp <-> ortho) for current view
             cur = self._views[self._view_idx]
@@ -328,6 +425,8 @@ class PQ3DView:
             f"View: {v.get('name','N/A')}   Proj: {proj}",
             "1..6: set view   V/B: next/prev   Z: toggle proj   H: help",
             "Wheel: zoom (anchored at newest point)",
+            f"Heat: {self.heat_mode}   (M: cycle)",
+            f"Layout: {'full-bleed' if self.full_bleed else 'fit-all'}   (F: toggle)",
         ]
         return "\n".join(lines)
 
@@ -384,13 +483,35 @@ class PQ3DView:
             pts = np.column_stack([x, y, z])
             segs = np.stack([pts[:-1], pts[1:]], axis=1)
 
+            # Segment mids (for sampling age/density)
             zc = 0.5 * (z[:-1] + z[1:])
-            w = (zc + self.max_age_s) / max(self.max_age_s, 1e-9)
-            w = np.clip(w, 0.0, 1.0)
+            xm = 0.5 * (x[:-1] + x[1:])
+            ym = 0.5 * (y[:-1] + y[1:])
 
-            rgba = self.cmap(w)
-            rgba[:, 3] = 0.20 + 0.80 * w
-            lws = 0.6 + 2.0 * w
+            # Age weight (0..1), newest ~1
+            w_age = np.clip((zc + self.max_age_s) / max(self.max_age_s, 1e-9), 0.0, 1.0)
+            w_age = np.power(w_age, self.heat_gamma)
+
+            # Density weight (0..1), hotter where path lingers/returns
+            if self.heat_mode in ("density", "age+density") and self._density is not None:
+                H, xedges, yedges = self._density
+                ix = np.clip(np.searchsorted(xedges, xm) - 1, 0, H.shape[0]-1)
+                iy = np.clip(np.searchsorted(yedges, ym) - 1, 0, H.shape[1]-1)
+                d = H[ix, iy]
+                d_norm = d / (H.max() + 1e-9)
+            else:
+                d_norm = np.zeros_like(w_age)
+
+            if self.heat_mode == "age":
+                w = w_age
+            elif self.heat_mode == "density":
+                w = d_norm
+            else:  # "age+density"
+                w = 0.5 * w_age + 0.5 * d_norm
+
+            rgba = self.cmap(np.clip(w, 0.0, 1.0))
+            rgba[:, 3] = self.alpha_min + (self.alpha_max - self.alpha_min) * w
+            lws = self.lw_min + (self.lw_max - self.lw_min) * w
 
             self._trail.set_segments(segs)
             self._trail.set_color(rgba)
@@ -419,12 +540,9 @@ class PQ3DView:
             self.ax.set_ylim(y.min() - m * qx, y.max() + m * qx)
             self.ax.set_zlim(-self.max_age_s, 0)
 
-        # Fill window and keep overlay current
+        # Fill window and keep overlay current (square-fit)
         self.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
-        try:
-            self.ax.set_position([0, 0, 1, 1])
-        except Exception:
-            pass
+        self._fit_axes_to_window()
 
         if self.overlay_visible:
             self._update_overlay()
