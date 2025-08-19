@@ -47,6 +47,8 @@ class HarmonicsTab:
         self._build_ui()
         # map harmonic order k -> treeview item id (stable rows; prevents flicker)
         self._tree_rows = {}
+        self._selected_k = None
+        self._selected_freq = None
 
     def _shutdown(self):
         # Stop auto loop and wait briefly for the worker to exit
@@ -234,6 +236,7 @@ class HarmonicsTab:
             self.tree.column(c, width=widths.get(c, 100), anchor="e")
 
         self.tree.grid(row=0, column=0, sticky="nsew")
+        self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
         self.extra_var = tk.StringVar(value="")
         self.extra_lbl = tk.Label(
             table_frame,
@@ -356,6 +359,23 @@ class HarmonicsTab:
 
         # --- 4) Static legend (no flicker) ---
         self._ensure_static_legend()
+        # --- Selected harmonic marker (if any) ---
+        try:
+            sel_f = getattr(self, "_selected_freq", None)
+            if sel_f is not None:
+                idx = int(np.argmin(np.abs(f_axis - sel_f)))
+                fx = float(f_axis[idx])
+                yi = float(mag_rms[idx])
+                # Bright vline + dot + small label
+                v = ax.axvline(fx, color="#00eaff", linewidth=1.5, alpha=0.9, zorder=4)
+                m = ax.plot([fx], [yi], marker="o", markersize=7, color="#00eaff", alpha=0.95, zorder=5)[0]
+                lab = f"k={getattr(self, '_selected_k', '?')}"
+                y0, y1 = ax.get_ylim()
+                ty = min(y1, yi + 0.06 * (y1 - y0))
+                t = ax.text(fx, ty, lab, color="#00eaff", fontsize=9, ha="center", va="bottom")
+                self._overlay_artists += [v, m, t]
+        except Exception:
+            pass
 
         # Ask canvas to refresh just the overlay change
         try:
@@ -363,7 +383,61 @@ class HarmonicsTab:
         except Exception:
             pass
 
+    def _on_tree_select(self, event=None):
+        """
+        When a table row is selected, store k and f and refresh the overlay so
+        the plot shows a marker at that harmonic.
+        """
+        try:
+            sel = self.tree.selection()
+            if not sel:
+                self._selected_k = None
+                self._selected_freq = None
+                # redraw to clear any previous marker
+                self._refresh_selection_overlay()
+                return
+            iid = sel[0]
+            vals = self.tree.item(iid, "values")
+            # columns: ("k","f_hz","f_pred","df_hz","mag_rms","dBr1","percent","cumTHD_pct","phase_deg")
+            k = int(float(vals[0]))
+            # prefer measured f_hz; fall back to predicted if missing
+            f_txt = vals[1]
+            if f_txt in ("", "—"):
+                f_txt = vals[2]
+            f_sel = float(f_txt)
+            self._selected_k = k
+            self._selected_freq = f_sel
+            # redraw overlays (shading, interharmonics, known lines, + our selection)
+            self._refresh_selection_overlay()
+        except Exception:
+            # keep UI responsive even if parsing fails
+            pass
 
+    def _refresh_selection_overlay(self):
+        """
+        Re-draw the overlay layer using cached spectrum + last interharmonics.
+        Safe no-op if we don't have required caches yet.
+        """
+        try:
+            spec = getattr(self, "_last_spec", None)
+            res  = getattr(self, "_last_result", None)
+            if not spec or not res or getattr(res, "f1_hz", 0.0) <= 0.0:
+                return
+            f_axis, mag_rms = spec
+            f0 = float(res.f1_hz)
+            inter = getattr(self, "_last_interharmonics", []) or []
+            known = getattr(self, "_last_known_lines", []) or []
+            df = float(f_axis[1] - f_axis[0]) if len(f_axis) >= 2 else 0.0
+            tol = max(0.015 * f0, 2 * df) if f0 > 0 and df > 0 else 0.0
+            self._draw_interharmonics_overlay(
+                f_axis, mag_rms,
+                f0_hz=f0,
+                inter_list=inter,
+                known_list=[(fk, db) for fk, db in known],
+                tol_hz=tol
+            )
+        except Exception:
+            pass
 
     # --- Known lab lines you care about (edit this list as you like) ---
     KNOWN_LINES_HZ = [
