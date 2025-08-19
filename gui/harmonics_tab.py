@@ -43,7 +43,10 @@ class HarmonicsTab:
         self._overlay_artists = []
         self._legend_artist = None
         self._last_spec = None
+        self.SPEC_COLOR = "#d0ff00"
         self._build_ui()
+        # map harmonic order k -> treeview item id (stable rows; prevents flicker)
+        self._tree_rows = {}
 
     def _shutdown(self):
         # Stop auto loop and wait briefly for the worker to exit
@@ -77,6 +80,46 @@ class HarmonicsTab:
         # Matplotlib: figure + axes
         self.fig.patch.set_facecolor(self.DARK_BG)
         self._style_axes(self.ax)
+
+    def _ensure_static_legend(self):
+        """Create a single, figure-level legend once; keep it between redraws."""
+        import matplotlib.lines as mlines
+        import matplotlib.patches as mpatches
+
+        if getattr(self, "_legend_artist", None) is not None:
+            # already created; make sure colors match current theme
+            try:
+                fr = self._legend_artist.get_frame()
+                fr.set_facecolor("#222222")
+                fr.set_edgecolor("#444444")
+                for txt in self._legend_artist.get_texts():
+                    txt.set_color(self.DARK_FG)
+            except Exception:
+                pass
+            return
+
+        handles = [
+            mlines.Line2D([], [], linewidth=1.4, label="Spectrum", color=self.SPEC_COLOR),
+            mlines.Line2D([], [], linestyle=":", linewidth=1.2, label="Interharmonic"),
+            mlines.Line2D([], [], marker="s", linestyle="None", label="Known line"),
+            mpatches.Patch(alpha=0.10, label="Harmonic window (±tol)"),
+        ]
+
+        # Figure-level legend (not tied to an Axes), so ax.cla() won’t erase it.
+        self._legend_artist = self.fig.legend(
+            handles=handles,
+            loc="upper right",
+            bbox_to_anchor=(0.98, 0.98),   # tuck into the corner a bit
+            fontsize="small",
+            framealpha=0.45,
+            borderpad=0.4,
+        )
+        # Dark theme styling
+        fr = self._legend_artist.get_frame()
+        fr.set_facecolor("#222222")
+        fr.set_edgecolor("#444444")
+        for txt in self._legend_artist.get_texts():
+            txt.set_color(self.DARK_FG)
 
     def _clear_persistence(self):
         self.spec_hist.clear()
@@ -211,7 +254,7 @@ class HarmonicsTab:
         ttk.Button(export_bar, text="Copy Markdown Summary", command=self.copy_md).pack(side="left", padx=4)
 
         self._apply_dark_theme()
-
+        self._ensure_static_legend()
         self._ensure_scope()
 
     def _ensure_scope(self) -> bool:
@@ -266,13 +309,15 @@ class HarmonicsTab:
         - Marks interharmonic peaks with dotted vlines + ▼ tip
         - Marks known/house lines with ■
         """
+        import numpy as np
+
         # Safety: nothing to do without a plotted Axes or frequency axis
         if getattr(self, "ax", None) is None or f0_hz <= 0 or len(f_axis) < 2:
             return
 
         ax = self.ax
 
-        # Remove previous overlay artists cleanly
+        # Remove previous overlay artists cleanly (but keep legend persistent!)
         for a in getattr(self, "_overlay_artists", []):
             try:
                 a.remove()
@@ -280,17 +325,7 @@ class HarmonicsTab:
                 pass
         self._overlay_artists = []
 
-        # Also remove previous legend
-        if getattr(self, "_legend_artist", None) is not None:
-            try:
-                self._legend_artist.remove()
-            except Exception:
-                pass
-            self._legend_artist = None
-
-        #f_min, f_max = float(f_axis[0]), float(f_axis[-1])
         f_min, f_max = self.ax.get_xlim()
-
 
         # --- 1) Shade harmonic acceptance windows (±tol_hz around k·f0)
         kmax = int(f_max // max(f0_hz, 1e-12))
@@ -299,12 +334,11 @@ class HarmonicsTab:
             x0, x1 = fk - tol_hz, fk + tol_hz
             if x1 < f_min or x0 > f_max:
                 continue
-            span = ax.axvspan(max(x0, f_min), min(x1, f_max), alpha=0.06)  # faint
+            span = ax.axvspan(max(x0, f_min), min(x1, f_max), alpha=0.06)
             self._overlay_artists.append(span)
 
         # --- 2) Interharmonic peaks: dotted vline + ▼ at actual amplitude
         for f_i, _dbr in inter_list:
-            # nearest bin for Y
             idx = int(np.argmin(np.abs(f_axis - f_i)))
             yi = float(mag_rms[idx])
             v = ax.axvline(f_i, linestyle=":", linewidth=1.2, alpha=0.7)
@@ -312,7 +346,6 @@ class HarmonicsTab:
             self._overlay_artists += [v, m]
 
         # --- 3) Known/house lines: small ■ markers near the noise floor (or real level if visible)
-        # Place them at 2% of current y-limits to keep them readable even if the line is weak.
         y0, y1 = ax.get_ylim()
         y_mark = y0 + 0.02 * (y1 - y0)
         for f_k, _dbr in known_list:
@@ -321,24 +354,15 @@ class HarmonicsTab:
             m = ax.plot([f_k], [yk], marker="s", markersize=5, alpha=0.9)[0]
             self._overlay_artists.append(m)
 
-        # --- 4) Legend (tiny)
-        inter_proxy = mlines.Line2D([], [], linestyle=":", linewidth=1.2, label="Interharmonic")
-        known_proxy = mlines.Line2D([], [], marker="s", linestyle="None", label="Known line")
-        harm_proxy  = mpatches.Patch(alpha=0.06, label="Harmonic window (±tol)")
-
-        handles = [harm_proxy]
-        if inter_list: handles.append(inter_proxy)
-        if known_list: handles.append(known_proxy)
-
-        if handles:
-            self._legend_artist = ax.legend(handles=handles, loc="upper right",
-                                            fontsize="x-small", framealpha=0.25)
+        # --- 4) Static legend (no flicker) ---
+        self._ensure_static_legend()
 
         # Ask canvas to refresh just the overlay change
         try:
             self.canvas.draw_idle()
         except Exception:
             pass
+
 
 
     # --- Known lab lines you care about (edit this list as you like) ---
@@ -870,8 +894,9 @@ class HarmonicsTab:
                 self.ax.plot(f_i, m_i, linewidth=1.0, alpha=alpha)
 
         # Plot current spectrum on top
-        self.ax.plot(f, mag_rms, linewidth=1.4)
-
+        #self.ax.plot(f, mag_rms, linewidth=1.4)
+        self.ax.plot(f, mag_rms, linewidth=1.4, color=self.SPEC_COLOR, zorder=3)
+        
         # Limits/labels
         self.ax.set_xlim(0, max(1e-12, fmax))
         self.ax.set_xlabel("Frequency (Hz)")
@@ -885,15 +910,13 @@ class HarmonicsTab:
         self.canvas.draw_idle()
 
     def _render_table(self, res):
-        # Clear old rows
-        for i in self.tree.get_children():
-            self.tree.delete(i)
+        import math, tkinter as tk
 
-        # Defensive: if result is missing or malformed, bail quietly
+        # Defensive
         if not res or not hasattr(res, "rows"):
             return
 
-        # Pull fundamentals
+        # Fundamental (used for derived columns)
         try:
             f1 = float(res.f1_hz)
         except Exception:
@@ -903,71 +926,134 @@ class HarmonicsTab:
         except Exception:
             v1 = 0.0
 
-        # If we have harmonics, render them with extra diagnostics
-        if res.rows:
-            sum_sq = 0.0  # accumulate ∑ V_k^2 for cumTHD
-            for r in res.rows:
-                k = int(r.k)
-                f_meas = float(r.f_hz)
-                v_k = float(r.mag_rms)
-
-                # Expected harmonic frequency and deviation
-                f_pred = (k * f1) if f1 > 0 else float("nan")
-                df_hz = (f_meas - f_pred) if (f1 > 0 and math.isfinite(f_pred)) else float("nan")
-
-                # dBr1 relative to fundamental (safe against v1 ≈ 0)
-                dbr1 = 20.0 * math.log10(v_k / max(v1, 1e-20)) if v1 > 0 else float("nan")
-
-                # cumTHD% up to this k (only k>=2 contributes to THD)
-                if k >= 2:
-                    sum_sq += v_k * v_k
-                cum_thd_pct = (100.0 * math.sqrt(sum_sq) / v1) if (v1 > 0 and sum_sq > 0) else (0.0 if k < 2 else float("nan"))
-
-                self.tree.insert(
-                    "", "end",
-                    values=(
-                        k,
-                        f"{f_meas:.3f}",
-                        (f"{f_pred:.3f}" if math.isfinite(f_pred) else "—"),
-                        (f"{df_hz:.3f}"  if math.isfinite(df_hz)  else "—"),
-                        f"{v_k:.6g}",
-                        (f"{dbr1:.1f}"   if math.isfinite(dbr1)  else "—"),
-                        f"{float(r.percent):.3f}",
-                        (f"{cum_thd_pct:.3f}" if math.isfinite(cum_thd_pct) else "—"),
-                        f"{float(r.phase_deg):.2f}"
-                    )
-                )
-            self._last_result = res
-            return
-
-        # --- No harmonics resolvable: show at least the fundamental so the table isn't blank
-        # (keeps previous behavior, with new columns displayed as dashes)
-        self.tree.insert("", "end",
-            values=("1",
+        # If no harmonics were resolvable: fall back to original single-row view.
+        # This path is rare; a full rebuild is fine here.
+        if not res.rows:
+            for iid in self.tree.get_children():
+                self.tree.delete(iid)
+            self._tree_rows.clear()
+            self.tree.insert(
+                "",
+                "end",
+                values=(
+                    "1",
                     f"{f1:.3f}",
-                    "—","—",
+                    "—",
+                    "—",
                     f"{v1:.6g}",
                     "—",
                     "100.000",
                     "—",
-                    f"{0.0:.2f}"))
-        self.tree.insert("", "end", values=("", "—", "—", "—", "—", "—", "—", "—", ""))
-        reasons = []
-        try:
-            nyquist = float(res.fs) / 2.0
-            if f1 > 0.0 and (2.0 * f1) >= nyquist:
-                reasons.append("Nyquist < 2·f1")
-        except Exception:
-            pass
-        try:
-            if hasattr(res, "coherence_cycles") and res.coherence_cycles < 3.0:
-                reasons.append("<3 cycles in buffer")
-        except Exception:
-            pass
-        if reasons:
-            self.status_var.set(self.status_var.get() + "  |  " + "; ".join(reasons) + " — use RAW or widen timebase")
+                    f"{0.0:.2f}",
+                ),
+            )
+            return
 
-        self._last_result = res  # for Save CSV / Copy Markdown
+        # --- Build the desired table state (as strings) ---
+        new_rows = {}  # k -> tuple(values)
+        order = []     # desired row order by k
+        sum_sq = 0.0
+
+        for r in res.rows:
+            k = int(r.k)
+            f_meas = float(r.f_hz)
+
+            # sanitize harmonic magnitude
+            try:
+                v_k = float(r.mag_rms)
+            except Exception:
+                v_k = 0.0
+            if not math.isfinite(v_k) or v_k < 0:
+                v_k = 0.0
+
+            f_pred = (k * f1) if f1 > 0 else float("nan")
+            df_hz = (f_meas - f_pred) if (f1 > 0 and math.isfinite(f_pred)) else float("nan")
+
+            # --- SAFE dBr1 ---
+            if v1 > 0 and v_k > 0:
+                dbr1 = 20.0 * math.log10(v_k / v1)
+            elif v1 > 0 and v_k == 0:
+                dbr1 = float("-inf")  # will render as "—"
+            else:
+                dbr1 = float("nan")
+
+            if k >= 2:
+                sum_sq += v_k * v_k
+            cum_thd_pct = (
+                (100.0 * math.sqrt(sum_sq) / v1)
+                if (v1 > 0 and sum_sq > 0)
+                else (0.0 if k < 2 else float("nan"))
+            )
+
+            # sanitize percent/phase
+            try:
+                pct = float(r.percent)
+            except Exception:
+                pct = float("nan")
+            if not math.isfinite(pct):
+                pct = float("nan")
+            try:
+                ph = float(r.phase_deg)
+            except Exception:
+                ph = float("nan")
+            if not math.isfinite(ph):
+                ph = float("nan")
+
+            vals = (
+                k,
+                f"{f_meas:.3f}",
+                (f"{f_pred:.3f}" if math.isfinite(f_pred) else "—"),
+                (f"{df_hz:.3f}" if math.isfinite(df_hz) else "—"),
+                f"{v_k:.6g}",
+                (f"{dbr1:.1f}" if math.isfinite(dbr1) else "—"),
+                (f"{pct:.3f}" if math.isfinite(pct) else "—"),
+                (f"{cum_thd_pct:.3f}" if math.isfinite(cum_thd_pct) else "—"),
+                (f"{ph:.2f}" if math.isfinite(ph) else "—"),
+            )
+            new_rows[k] = vals
+            order.append(k)
+
+        # --- Diff apply to Treeview (no flicker) ---
+        # Preserve view + selection
+        y0 = self.tree.yview()[0] if self.tree.get_children() else 0.0
+        selected = set(self.tree.selection())
+
+        # Remove rows that disappeared
+        for k, iid in list(self._tree_rows.items()):
+            if k not in new_rows:
+                try:
+                    self.tree.delete(iid)
+                except Exception:
+                    pass
+                self._tree_rows.pop(k, None)
+
+        # Insert/update rows that are present
+        for k in order:
+            vals = new_rows[k]
+            iid = self._tree_rows.get(k)
+            if iid is None:
+                iid = self.tree.insert("", "end", values=vals)
+                self._tree_rows[k] = iid
+            else:
+                # Only update when changed (prevents redraw)
+                if tuple(self.tree.item(iid, "values")) != vals:
+                    self.tree.item(iid, values=vals)
+
+        # Ensure correct order (cheap; usually no-op)
+        for idx, k in enumerate(order):
+            iid = self._tree_rows[k]
+            self.tree.move(iid, "", idx)
+
+        # Restore selection (if still present) and scroll
+        still_there = [iid for iid in selected if iid in self._tree_rows.values()]
+        if still_there:
+            self.tree.selection_set(still_there)
+        if self.tree.get_children():
+            self.tree.yview_moveto(y0)
+
+        self._last_result = res
+
+
 
     # --------- Export ----------
     def save_csv(self):
