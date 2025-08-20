@@ -1,19 +1,21 @@
-# Ignore Python virtual environments
+# Python virtual environments
+.venv/
 venv/
 
-# Ignore measurement/logging output
+# Measurement/logging output
 oszi_csv/
 
-# Ignore temporary screenshot files
-/tmp/oszi_screenshot_*.png
+# Generated build/version info
+version.py
+utils/idn.txt
 
-# Ignore compiled Python files
+# Compiled Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# Ignore IDE/project config files
+# IDE/project config
 .vscode/
 .idea/
 *.swp

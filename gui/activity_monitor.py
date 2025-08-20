@@ -2,6 +2,7 @@
 
 import threading
 import time
+import app.app_state as app_state
 
 def start_meter_thread(app_state, meter_state, meter_lock):
     N_LEDS = 16

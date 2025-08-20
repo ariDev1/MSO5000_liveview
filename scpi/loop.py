@@ -2,159 +2,204 @@
 
 import time
 import threading
+import app.app_state as app_state
+
 from scpi.interface import connect_scope, safe_query, scpi_lock
 from scpi.data import scpi_data
 from utils.debug import log_debug, set_debug_level
 from config import INTERVALL_SCPI
-from app.app_state import is_logging_active
+
+
+def _truthy(v) -> bool:
+    s = str(v).strip().upper()
+    return s in ("1", "ON", "TRUE", "ENAB", "ENABLE")
+
+
+def _to_float(s, default=0.0):
+    try:
+        return float(str(s).strip())
+    except Exception:
+        return default
+
+def _read_tcal_seconds(scope, ch_index: int) -> float:
+    # Documented: :CHANnel<n>:TCALibrate? → seconds (may be '', '0', or float)
+    s = safe_query(scope, f":CHANnel{ch_index}:TCALibrate?", "")
+    return _to_float(s, 0.0)
 
 def start_scpi_loop(ip):
     def loop():
         scope = connect_scope(ip)
-        from scpi.data import scpi_data
         scpi_data["scope"] = scope
 
         if not scope:
             log_debug("❌ SCPI loop failed to connect")
             return
 
-        # Fetch once
         scpi_data["connected"] = True
-        scpi_data["idn"] = safe_query(scope, "*IDN?")
+        scpi_data["idn"] = safe_query(scope, "*IDN?", "N/A")
         log_debug(f"🔗 SCPI Loop connected: {scpi_data['idn']}")
 
-        while True:
-            if is_logging_active:
-                time.sleep(1)
-                continue
+        try:
+            while not app_state.is_shutting_down:
+                # Give priority to long-time logging
+                if app_state.is_logging_active or getattr(app_state, "is_exporting", False):
+                    time.sleep(0.2)
+                    continue
 
+                try:
+                    # ---------- System / status block (restored) ----------
+                    with scpi_lock:
+                        tbase        = safe_query(scope, ":TIMebase:SCALe?", "")
+                        srate        = safe_query(scope, ":ACQuire:SRATe?", "")
+                        trig         = safe_query(scope, ":TRIGger:STATus?", "")
+                        acq_type     = safe_query(scope, ":ACQuire:TYPE?", "")
+                        interleave   = safe_query(scope, ":ACQuire:INTerleave?", "")
+
+                        # Logic analyzer (restored)
+                        la_depth     = safe_query(scope, ":ACQuire:LA:MDEPth?", "")
+                        la_srate     = safe_query(scope, ":ACQuire:LA:SRATe?", "")
+
+                        trig_pos     = safe_query(scope, ":TRIGger:POSition?", "")
+                        trig_hold    = safe_query(scope, ":TRIGger:HOLDoff?", "")
+
+                        # Display block (restored)
+                        brightness   = safe_query(scope, ":DISPlay:GBRightness?", "")
+                        grid         = safe_query(scope, ":DISPlay:GRID?", "")
+                        grading      = safe_query(scope, ":DISPlay:GRADing:TIME?", "")
+
+                        # Counter block (restored)
+                        counter_mode = safe_query(scope, ":COUNter:MODE?", "")
+                        counter_src  = safe_query(scope, ":COUNter:SOURce?", "")
+                        counter_total= safe_query(scope, ":COUNTER:TOTalize:ENABle?", "")
+
+                        # Measure block (restored)
+                        meas_mode    = safe_query(scope, ":MEASure:MODE?", "")
+                        meas_type    = safe_query(scope, ":MEASure:TYPE?", "")
+                        meas_stats   = safe_query(scope, ":MEASure:STATistic:DISPlay?", "")
+
+                    # Expose system/status data to whoever needs it
+                    scpi_data["timebase"]              = tbase
+                    scpi_data["sample_rate"]           = srate
+                    scpi_data["trigger_status"]        = trig
+                    scpi_data["acquire_type"]          = acq_type
+                    scpi_data["interleave"]            = interleave
+                    scpi_data["la_depth"]              = la_depth
+                    scpi_data["la_sample_rate"]        = la_srate
+                    scpi_data["trig_pos"]              = trig_pos
+                    scpi_data["trig_hold"]             = trig_hold
+                    scpi_data["display_brightness"]    = brightness
+                    scpi_data["display_grid"]          = grid
+                    scpi_data["display_grading_time"]  = grading
+                    scpi_data["counter_mode"]          = counter_mode
+                    scpi_data["counter_source"]        = counter_src
+                    scpi_data["counter_totalize_en"]   = counter_total
+                    scpi_data["measure_mode"]          = meas_mode
+                    scpi_data["measure_type"]          = meas_type
+                    scpi_data["measure_stats_display"] = meas_stats
+
+                    # ---------- Channel info ----------
+                    channels = {}
+
+                    with scpi_lock:
+                        # Analog CH1..CH4
+                        for ch in range(1, 5):
+                            if app_state.is_shutting_down:
+                                break
+
+                            # Robust display detection (documented long form)
+                            if not _truthy(safe_query(scope, f":CHANnel{ch}:DISPlay?", "0")):
+                                continue
+
+                            ch_name = f"CH{ch}"
+
+                            # Core fields used by the Channel Data tab
+                            scale    = safe_query(scope, f":CHANnel{ch}:SCALe?", "")
+                            offset   = safe_query(scope, f":CHANnel{ch}:OFFSet?", "")
+                            coupling = safe_query(scope, f":CHANnel{ch}:COUPling?", "")
+                            probe    = safe_query(scope, f":CHANnel{ch}:PROBe?", "")
+
+                            channels[ch_name] = {
+                                "scale":    scale,
+                                "offset":   offset,
+                                "coupling": coupling,
+                                "probe":    probe,
+                            }
+
+                            # Extra per-channel context (documented; read-only)
+                            unit      = safe_query(scope, f":CHANnel{ch}:UNITs?", "")     # VOLT/AMP/WATT/UNKN
+                            bwlimit   = safe_query(scope, f":CHANnel{ch}:BWLimit?", "")  # OFF/20M/...
+                            invert    = safe_query(scope, f":CHANnel{ch}:INVert?", "")   # 0/1
+                            impedance = safe_query(scope, f":CHANnel{ch}:IMPedance?", "")# OMEG/FIFT
+                            vernier   = safe_query(scope, f":CHANnel{ch}:VERNier?", "")  # 0/1
+                            tcal_s    = _read_tcal_seconds(scope, ch)
+
+                            channels[ch_name].update({
+                                "unit":      unit,
+                                "bwlimit":   bwlimit,
+                                "invert":    invert,
+                                "impedance": impedance,
+                                "vernier":   vernier,
+                                "tcal_s":    tcal_s,
+                                "tcal_ns":   tcal_s * 1e9,
+                            })
+
+                        # MATH1..MATH4 (read-only, documented mnemonics)
+                        for m in range(1, 5):
+                            if app_state.is_shutting_down:
+                                break
+
+                            if not _truthy(safe_query(scope, f":MATH{m}:DISPlay?", "0")):
+                                continue
+
+                            m_name  = f"MATH{m}"
+                            m_scale = safe_query(scope, f":MATH{m}:SCALe?", "")
+                            m_offs  = safe_query(scope, f":MATH{m}:OFFSet?", "")
+                            m_oper  = safe_query(scope, f":MATH{m}:OPERator?", "")  # e.g., ADD/SUB/MUL/DIV/FFT
+                            m_inv   = safe_query(scope, f":MATH{m}:INVert?", "")    # 0/1 (if available)
+                            m_src1  = safe_query(scope, f":MATH{m}:SOURce1?", "")
+                            m_src2  = safe_query(scope, f":MATH{m}:SOURce2?", "")
+
+                            channels[m_name] = {
+                                "scale":   m_scale,
+                                "offset":  m_offs,
+                                "type":    m_oper,
+                                "invert":  m_inv,
+                                "source1": m_src1,
+                                "source2": m_src2,
+                            }
+
+                    scpi_data["channel_info"] = channels
+                    scpi_data["no_displayed_channels"] = not any(
+                        info.get("scale", "") for info in channels.values()
+                    )
+
+                    # ---------- pacing / cooperative shutdown ----------
+                    slices = max(1, int(float(INTERVALL_SCPI) * 10))
+                    for _ in range(slices):
+                        if app_state.is_shutting_down:
+                            break
+                        time.sleep(0.1)
+
+                except Exception as e:
+                    if app_state.is_shutting_down:
+                        break
+                    log_debug(f"❌ SCPI loop error: {e}")
+                    time.sleep(0.5)
+
+        finally:
+            log_debug("🔗 SCPI loop exiting")
             try:
-                # System Info: update Timebase + Trigger only
                 with scpi_lock:
-                    tbase = safe_query(scope, ":TIMebase:SCALe?")
-                    srate = safe_query(scope, ":ACQuire:SRATe?")
-                    trig = safe_query(scope, ":TRIGger:STATus?")
-                    acq_type = safe_query(scope, ":ACQuire:TYPE?")
-                    interleave = safe_query(scope, ":ACQuire:INTerleave?")
-                    la_depth = safe_query(scope, ":ACQuire:LA:MDEPth?")
-                    la_srate = safe_query(scope, ":ACQuire:LA:SRATe?")
-
-                    trig_pos = safe_query(scope, ":TRIGger:POSition?")
-                    trig_hold = safe_query(scope, ":TRIGger:HOLDoff?")
-
-                    brightness = safe_query(scope, ":DISPlay:GBRightness?")
-                    grid = safe_query(scope, ":DISPlay:GRID?")
-                    grading = safe_query(scope, ":DISPlay:GRADing:TIME?")
-
-                    counter_mode = safe_query(scope, ":COUNter:MODE?")
-                    counter_src = safe_query(scope, ":COUNter:SOURce?")
-                    counter_total = safe_query(scope, ":COUNTER:TOTalize:ENABle?")
-
-                    meas_mode = safe_query(scope, ":MEASure:MODE?")
-                    meas_type = safe_query(scope, ":MEASure:TYPE?")
-                    meas_stats = safe_query(scope, ":MEASure:STATistic:DISPlay?")
-
-                    def fmt_si(val):
+                    if scope:
                         try:
-                            val = float(val)
-                            if val >= 1e9:
-                                return f"{val / 1e9:.3g}G"
-                            elif val >= 1e6:
-                                return f"{val / 1e6:.3g}M"
-                            elif val >= 1e3:
-                                return f"{val / 1e3:.3g}k"
-                            elif val >= 1:
-                                return f"{val:.3g}"
-                            elif val > 0:
-                                return f"{val:.1e}"
-                            else:
-                                return str(val)
-                        except:
-                            return str(val)
+                            scope.close()
+                        except Exception:
+                            pass
+            finally:
+                scpi_data["connected"] = False
+                scpi_data["scope"] = None
 
-                    # Parse IDN
-                    idn = scpi_data['idn']
-                    try:
-                        vendor, model, serial, fw = idn.split(",")
-                        idn_line = f"{vendor}, {model} — FW: {fw}"
-                    except:
-                        idn_line = idn
-
-                    # Format values
-                    tbase_fmt     = f"{fmt_si(tbase)}s/div"
-                    srate_fmt     = f"{fmt_si(srate)}Sa/s"
-                    trig_pos_fmt  = f"{fmt_si(trig_pos)}s"
-                    trig_hold_fmt = f"{fmt_si(trig_hold)}s"
-
-                    # Check Logic Analyzer availability
-                    la_enabled = False
-                    try:
-                        la_depth_val = float(la_depth)
-                        la_enabled = la_depth_val > 0
-                    except:
-                        la_enabled = False
-
-                    # Logic Analyzer section (conditionally shown)
-                    if la_enabled:
-                        la_depth_fmt = fmt_si(la_depth)
-                        la_srate_fmt = f"{fmt_si(la_srate)}Sa/s"
-                        la_lines = [
-                            f"{'LA Depth'      :<18}: {la_depth_fmt:<10}    {'Grading'     :<18}: {grading:<8}    {'Totalize'     :<18}: {counter_total}",
-                            f"{'LA SampleRate' :<18}: {la_srate_fmt}"
-                        ]
-                    else:
-                        la_lines = [
-                            f"{'Grading'       :<18}: {grading:<8}    {'Totalize'     :<18}: {counter_total}"
-                        ]
-
-                    # Build full string
-                    scpi_data["system_info"] = "\n".join([
-                        f"{idn_line}",
-                        "",
-                        f"{'Timebase'       :<18}: {tbase_fmt:<12}    {'Sample Rate'   :<18}: {srate_fmt}",
-                        f"{'Trigger Status' :<18}: {trig:<12}    {'Trigger Pos'   :<18}: {trig_pos_fmt}",
-                        f"{'Trigger Holdoff':<18}: {trig_hold_fmt}",
-                        "-" * 90,
-                        #f"{'Acquisition'    :<20} {'Display'       :<20} {'Counter'        :<20}",
-                        f"{'Mode'           :<18}: {acq_type:<10}    {'Brightness'    :<18}: {brightness:<8}    {'Mode'           :<18}: {counter_mode}",
-                        f"{'Interleave'     :<18}: {interleave:<10}    {'Grid'          :<18}: {grid:<8}    {'Source'         :<18}: {counter_src}",
-                        *la_lines,
-                        "-" * 90,
-                        f"{'Measurement'}",
-                        f"{'Mode'           :<18}: {meas_mode:<10}    {'Type'          :<18}: {meas_type:<8}    {'Stats'          :<18}: {meas_stats}"
-                    ])
-
-                scpi_data["trigger_status"] = trig
-
-                # Channel Info
-                channels = {}
-                with scpi_lock:
-                    for ch in range(1, 5):
-                        if safe_query(scope, f":CHAN{ch}:DISP?") != "1":
-                            continue
-                        channels[f"CH{ch}"] = {
-                            "scale": safe_query(scope, f":CHAN{ch}:SCALe?"),
-                            "offset": safe_query(scope, f":CHAN{ch}:OFFS?"),
-                            "coupling": safe_query(scope, f":CHAN{ch}:COUP?"),
-                            "probe": safe_query(scope, f":CHAN{ch}:PROB?"),
-                        }
-                    #Add MATH channel support
-                    for m in range(1, 4):
-                        math_name = f"MATH{m}"
-                        if safe_query(scope, f":{math_name}:DISP?") != "1":
-                            continue
-                        #log_debug(f"✅ Detected {math_name} — added to channel_info")
-                        channels[math_name] = {
-                            "scale": safe_query(scope, f":{math_name}:SCALe?", "N/A"),
-                            "offset": safe_query(scope, f":{math_name}:OFFS?", "N/A"),
-                            "type": safe_query(scope, f":{math_name}:OPER?", "N/A"),
-                        }
-    
-                scpi_data["channel_info"] = channels
-                time.sleep(INTERVALL_SCPI)
-
-            except Exception as e:
-                log_debug(f"❌ SCPI loop error: {e}")
-                time.sleep(5)
-
-    threading.Thread(target=loop, daemon=True).start()
+    t = threading.Thread(target=loop, daemon=True)
+    t.start()
+    app_state.scpi_thread = t
+    return t

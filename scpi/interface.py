@@ -1,10 +1,11 @@
 # scpi/interface.py
 
 import pyvisa
-from utils.debug import log_debug, set_debug_level
-from config import BLACKLISTED_COMMANDS
 import threading
 import app.app_state as app_state
+
+from utils.debug import log_debug, set_debug_level
+from config import BLACKLISTED_COMMANDS
 
 scpi_lock = threading.Lock()
 
@@ -33,18 +34,83 @@ def connect_scope(ip):
         return None
 
 def safe_query(scope, command, default="N/A"):
+    """Query the scope safely with blacklist + busy flag handling."""
     if command in BLACKLISTED_COMMANDS:
         log_debug(f"⚠️ Skipped blacklisted SCPI: {command}")
         return default
+
+    # Early bailouts
+    if app_state.is_shutting_down or scope is None:
+        return default
+
+    app_state.is_scpi_busy = True
     try:
-        app_state.is_scpi_busy = True   #scpi busy now
-        response = scope.query(command).strip()
-        app_state.is_scpi_busy = True   #scpi done
+        response = scope.query(command)
+        response = response.strip() if isinstance(response, str) else response
         return response if response else default
     except Exception as e:
-        app_state.is_scpi_busy = False  #ensure it's reset on error too!
+        s = str(e)
+        # During shutdown or dead session, be quiet
+        if app_state.is_shutting_down or "Invalid session handle" in s or "Bad file descriptor" in s:
+            return default
         log_debug(f"❌ SCPI error [{command}]: {e}")
-        if "TMO" in str(e) or "Timeout" in str(e):
-            BLACKLISTED_COMMANDS.append(command)
+        if "TMO" in s or "Timeout" in s:
+            if command not in BLACKLISTED_COMMANDS:
+                BLACKLISTED_COMMANDS.append(command)
             log_debug(f"⛔ Blacklisted: {command}")
         return default
+    finally:
+        app_state.is_scpi_busy = False
+
+def safe_write(scope, command, wait_opc=True, default_ok="OK"):
+    """
+    Send a write-only SCPI command. Optionally block on *OPC? for completion.
+    Returns 'OK' (or the OPC reply) on success; logs and returns '' on failure.
+    """
+    import app.app_state as app_state
+    from utils.debug import log_debug
+    from config import BLACKLISTED_COMMANDS
+
+    if not scope or app_state.is_shutting_down:
+        log_debug("❌ safe_write: no scope handle" if not scope else "safe_write: shotdown in progress")
+        return ""
+
+    # Don’t treat writes as queries
+    if "?" in command:
+        log_debug(f"❗ safe_write called with query-like command: {command}")
+    
+    try:
+        app_state.is_scpi_busy = True
+        scope.write(command)
+        if wait_opc:
+            # Synchronize and also produce a short, visible response in the console
+            resp = scope.query("*OPC?").strip()
+            return resp if resp else default_ok
+        return default_ok
+    except Exception as e:
+        log_debug(f"❌ SCPI write error [{command}]: {e}")
+        # Don’t blacklist write commands just because they have no response
+        return ""
+    finally:
+        app_state.is_scpi_busy = False
+
+def multi_query(scope, commands, defaults=None):
+    """
+    Try to batch several queries using a single SCPI request.
+    Falls back to individual safe_query() if batching fails.
+    """
+    from .interface import scpi_lock
+    if defaults is None:
+        defaults = ["N/A"] * len(commands)
+
+    try:
+        with scpi_lock:
+            joined = ";".join(commands)
+            resp = scope.query(joined)
+        parts = [p.strip() for p in resp.split(";")]
+        if len(parts) != len(commands):
+            raise RuntimeError("Split mismatch")
+        return parts
+    except Exception:
+        # Fallback: one by one (keeps your blacklist / busy flag behavior)
+        return [safe_query(scope, cmd, default=defaults[i]) for i, cmd in enumerate(commands)]

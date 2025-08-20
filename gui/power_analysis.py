@@ -13,6 +13,12 @@ from scpi.interface import connect_scope, safe_query
 from scpi.waveform import compute_power_from_scope
 from scpi.data import scpi_data
 from utils.debug import log_debug, set_debug_level
+from collections import deque
+
+# 3D PQ view backend — **force MPL for reliability in lab use**
+_PQ3D_BACKEND = "MPL"
+_PQ3D_MODULE  = "gui.power.pq3d_view"
+from gui.power.pq3d_view import PQ3DView as PQ3DBackend
 
 # Performance optimizations
 class PowerAnalysisOptimizer:
@@ -61,6 +67,18 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     app_state.is_power_analysis_active = False
     global_power_csv_path = [None]
     optimizer = PowerAnalysisOptimizer()  # Initialize optimizer
+
+    # --- 3D view state ---
+    pq3d_enabled = tk.BooleanVar(value=False)
+    pq3d = {"view": None, "canvas": None, "window": None}
+
+    # Power formula selection logic
+    method_options = {
+        "Instantaneous (v·i mean)": "standard",
+        "Vrms × Irms × cos(φ)": "rms_cos_phi"
+    }
+    power_method_label = tk.StringVar(value="Instantaneous (v·i mean)")
+
     
     # Pre-compile format strings for better performance
     SI_FORMATS = {
@@ -136,8 +154,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     # Probe Scaling Controls
     probe_frame = ttk.Frame(power_frame)
     probe_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
-
-    ttk.Label(probe_frame, text="Current Probe Type:").grid(row=0, column=0, sticky="e", padx=5)
+    ttk.Label(probe_frame, text="Probe Type:").grid(row=0, column=0, sticky="e", padx=(0, 2))
 
     probe_type = tk.StringVar(value="shunt")
 
@@ -146,7 +163,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         update_current_scale()
 
     probe_mode_frame = ttk.Frame(probe_frame)
-    probe_mode_frame.grid(row=0, column=1, sticky="w", padx=5)
+    probe_mode_frame.grid(row=0, column=1, sticky="w", padx=(0, 2))
 
     # Radio buttons for probe type
     btn_shunt = tk.Radiobutton(probe_mode_frame, text="Shunt", variable=probe_type, value="shunt",
@@ -161,7 +178,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         activebackground="#333333", indicatoron=False, width=6, relief="raised")
     btn_clamp.pack(side="left", padx=1)
 
-    ttk.Label(probe_frame, text="Probe Value (Ω or A/V):").grid(row=0, column=2, sticky="e", padx=15)
+    ttk.Label(probe_frame, text="Value (Ω or A/V):").grid(row=0, column=2, sticky="e", padx=(0, 2))
     
     ttk.Label(
         probe_frame,
@@ -170,13 +187,29 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         wraplength=720, font=("TkDefaultFont", 8)
     ).grid(row=1, column=0, columnspan=6, sticky="w", padx=5, pady=(2, 8))
 
-    entry_probe_value = ttk.Entry(probe_frame, width=6)
+    entry_probe_value = ttk.Entry(probe_frame, width=3)
     entry_probe_value.insert(0, "1.0")
-    entry_probe_value.grid(row=0, column=3, sticky="w", padx=5)
+    entry_probe_value.grid(row=0, column=3, sticky="ew", padx=(0, 2))
 
-    ttk.Label(probe_frame, text="→ Base Scale (A/V):").grid(row=0, column=4, sticky="e", padx=15)
+    ttk.Label(probe_frame, text="Scale (A/V):").grid(row=0, column=4, sticky="e", padx=(0, 2))
+    ttk.Label(probe_frame, text="⚡ Formula").grid(row=0, column=6, sticky="e", padx=(0, 2))
+    method_menu = ttk.Combobox(probe_frame, textvariable=power_method_label, state="readonly", width=0)
+    method_menu['values'] = list(method_options.keys())
+    method_menu.current(0)
+    method_menu.grid(row=0, column=7, sticky="ew", padx=(0, 5))
     entry_current_scale = ttk.Entry(probe_frame, width=6, state="readonly")
-    entry_current_scale.grid(row=0, column=5, sticky="w", padx=5)
+    entry_current_scale.grid(row=0, column=5, sticky="ew", padx=(0, 5))
+
+    # Layout rules for each column in probe_frame
+    probe_frame.columnconfigure(0, weight=1, minsize=60)
+    probe_frame.columnconfigure(1, weight=1, minsize=50)
+    probe_frame.columnconfigure(2, weight=1, minsize=60)
+    probe_frame.columnconfigure(3, weight=1, minsize=30)
+    probe_frame.columnconfigure(4, weight=1, minsize=60)
+    probe_frame.columnconfigure(5, weight=1, minsize=50)
+    probe_frame.columnconfigure(6, weight=1, minsize=60)
+    probe_frame.columnconfigure(7, weight=2, minsize=100)  # dropdown expands/shrinks
+
 
     # Optimized scale calculation with caching
     def update_current_scale(*args):
@@ -211,7 +244,52 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     control_row.columnconfigure((0, 1, 2, 3, 4, 5), weight=1)
 
     ttk.Checkbutton(control_row, text="DC Offset", variable=remove_dc_var).grid(row=0, column=0, padx=3)
-    
+
+    def _ensure_pq3d():
+        global PQ3DBackend, _PQ3D_BACKEND, _PQ3D_MODULE
+        # bail if toggle is off or no backend available
+        if not pq3d_enabled.get() or PQ3DBackend is None or _PQ3D_BACKEND is None:
+            return
+
+        if pq3d["view"] is not None:
+            return  # already created
+
+        # create pop-out window as before
+        win = tk.Toplevel(root)
+
+        # show which backend is in use
+        title_backend = f" [{_PQ3D_BACKEND}]" if _PQ3D_BACKEND else ""
+        win.title(f"PQ 3D — (P,Q,t){title_backend}")
+
+        win.configure(bg="#000000", highlightthickness=0, bd=0)
+        pq3d["window"] = win
+
+        # log it once for the debug pane/file
+        from utils.debug import log_debug
+        log_debug("🧰 PQ3D backend = MPL (forced)")
+
+        # Create Matplotlib viewer (only path)
+        pq3d["view"] = PQ3DBackend(max_age_s=120, max_points=20000)
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        c3d = FigureCanvasTkAgg(pq3d["view"].fig, master=win)
+        w = c3d.get_tk_widget()
+        w.configure(bg="#000000", highlightthickness=0, bd=0, relief="flat")
+        w.pack(fill="both", expand=True)
+        pq3d["canvas"] = c3d
+
+        def _on_close():
+            pq3d_enabled.set(False)
+            _destroy_pq3d()
+        win.protocol("WM_DELETE_WINDOW", _on_close)
+
+    def _destroy_pq3d():
+        try:
+            if pq3d["window"] is not None:
+                pq3d["window"].destroy()
+        finally:
+            pq3d["view"] = pq3d["canvas"] = pq3d["window"] = None
+
+
     def toggle_auto_refresh():
         if not refresh_var.get():
             stop_auto_refresh()
@@ -250,7 +328,12 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 remove_dc=remove_dc_var.get(),
                 current_scale=raw_scale
             )
+            if result is None:
+                log_debug("⚠️ No waveform data — check memory depth/interleave/active channels")
+                return
+
             measured_p = result.get("Real Power (P)", None)
+
             if measured_p is None or measured_p <= 0:
                 log_debug("⚠️ Invalid measured power")
                 return
@@ -270,21 +353,25 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     refresh_chk = ttk.Checkbutton(control_row, text="Power Analysis", variable=refresh_var, command=toggle_auto_refresh)
     refresh_chk.grid(row=0, column=3, padx=3)
 
+    ttk.Checkbutton(
+        control_row, text="3D View (P,Q,t)",
+        variable=pq3d_enabled,
+        command=lambda: (_ensure_pq3d() if pq3d_enabled.get() else _destroy_pq3d())
+    ).grid(row=0, column=10, padx=8)
+
     def plot_last_power_log():
-        import glob, subprocess
+        import glob, subprocess, os
         files = glob.glob("oszi_csv/power_log_*.csv")
         if not files:
             log_debug("⚠️ No power log files found")
             return
 
         latest_file = max(files, key=os.path.getmtime)
-        try:
-            scale = float(entry_current_scale.get())
-        except Exception:
-            scale = 1.0
-        
-        log_debug(f"📊 Launching plot for {latest_file}")
-        subprocess.Popen(["python3", "utils/plot_rigol_csv.py", latest_file, "--scale", str(scale)])
+
+        #plot with no scaling
+        log_debug(f"📈 Plot Last (no scale): {latest_file}")
+        subprocess.Popen(["python3", "utils/plot_rigol_csv.py", latest_file])
+
 
     ttk.Button(control_row, text="📈 Plot Last", command=plot_last_power_log).grid(row=0, column=2, padx=3)
     #ttk.Button(control_row, text="⚙ Auto-Calibrate", command=auto_calibrate).grid(row=0, column=6, padx=3)
@@ -299,22 +386,45 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     ttk.Checkbutton(control_row, text="25M[v]", variable=use_25m_v_var).grid(row=0, column=8, padx=3)
     ttk.Checkbutton(control_row, text="25M[i]", variable=use_25m_i_var).grid(row=0, column=9, padx=3)
 
-    # Result Display Setup
+    #Analysis Output Header (1-row grid layout)
     result_header = tk.Frame(power_frame, bg="#1a1a1a")
     result_header.grid(row=3, column=0, columnspan=2, sticky="ew", padx=5, pady=(5, 0))
     result_header.grid_columnconfigure(0, weight=0)
     result_header.grid_columnconfigure(1, weight=1)
+    result_header.grid_columnconfigure(2, weight=0)
+    result_header.grid_columnconfigure(3, weight=0)
+    result_header.grid_columnconfigure(4, weight=0)
 
     tk.Label(result_header, text="📊 Analysis Output", font=("TkDefaultFont", 10, "bold"),
              bg="#1a1a1a", fg="white").grid(row=0, column=0, sticky="w")
 
+    # DC Offset status (left-aligned)
+    global dc_status_var, dc_status_label
     dc_status_var = tk.StringVar(value="DC Offset Removal is OFF — full waveform is analyzed.")
+    dc_status_label = tk.Label(result_header, textvariable=dc_status_var,
+                               bg="#1a1a1a", fg="#cccccc", font=("TkDefaultFont", 9))
+    dc_status_label.grid(row=0, column=1, sticky="e", padx=(10, 5))
+
+    # Offset warning (middle-right)
+    global offset_status_var, offset_status_label
     offset_status_var = tk.StringVar(value="")
-    tk.Label(result_header, textvariable=dc_status_var, bg="#1a1a1a", fg="#cccccc",
-             font=("TkDefaultFont", 9)).grid(row=0, column=1, sticky="e", padx=(10, 5))
     offset_status_label = tk.Label(result_header, textvariable=offset_status_var,
-        bg="#1a1a1a", fg="#ff9999", font=("TkDefaultFont", 9))
-    offset_status_label.grid(row=1, column=1, sticky="e", padx=(10, 5))
+                                   bg="#1a1a1a", fg="#ff9999", font=("TkDefaultFont", 9))
+    offset_status_label.grid(row=0, column=2, sticky="e", padx=(10, 5))
+
+    # Unit/probe warning (rightmost)
+    global unit_status_var, unit_status_label
+    unit_status_var = tk.StringVar(value="")
+    unit_status_label = tk.Label(result_header, textvariable=unit_status_var,
+                                 bg="#1a1a1a", fg="#ffaa00", font=("TkDefaultFont", 9))
+    unit_status_label.grid(row=0, column=3, sticky="e", padx=(10, 5))
+
+    global deskew_status_var, deskew_status_label
+    deskew_status_var = tk.StringVar(value="")
+    deskew_status_label = tk.Label(result_header, textvariable=deskew_status_var,
+                                   bg="#1a1a1a", fg="#888888", font=("TkDefaultFont", 9))
+    deskew_status_label.grid(row=0, column=4, sticky="e", padx=(10, 5))
+
 
     # Output Text Box
     result_frame = tk.Frame(power_frame, bg="#202020", bd=1, relief="solid")
@@ -353,8 +463,8 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         "PF_sum": 0.0, "Vrms_sum": 0.0, "Irms_sum": 0.0,
         "start_time": None
     }
-    pq_trail = []
     MAX_TRAIL = 30
+    pq_trail = deque(maxlen=MAX_TRAIL)
     dc_offset_logged = {"status": None}
     
     # Pre-compute common values to avoid repeated calculations
@@ -481,6 +591,29 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
             with open(power_csv_path, "w", newline="") as f:
                 writer = csv.writer(f)
+
+                # --- New: self-describing metadata rows (commented) ---
+                # Safe reads (avoid exceptions if fields temporarily empty)
+                _method = method_options.get(power_method_label.get(), "standard")
+                _ptype  = probe_type.get()
+                _pval   = entry_probe_value.get()
+                _cscale = entry_current_scale.get()
+                _corr   = correction_factor.get()
+                _rmdc   = str(remove_dc_var.get())
+                _freq   = scpi_data.get("freq_ref", "N/A")
+                _vch    = entry_vch.get().strip()
+                _ich    = entry_ich.get().strip()
+
+                writer.writerow(["# File", "Power Log"])
+                writer.writerow(["# Created", datetime.now().isoformat()])
+                writer.writerow(["# VoltageCh", _vch, "CurrentCh", _ich])
+                writer.writerow(["# Method", _method])
+                writer.writerow(["# ProbeType", _ptype, "ProbeValue", _pval])
+                writer.writerow(["# CurrentScale(A/V)", _cscale, "CorrectionFactor", _corr])
+                writer.writerow(["# RemoveDC", _rmdc, "FrequencyRef", _freq])
+                # --- End new metadata ---
+
+                # Existing numeric header (unchanged)
                 writer.writerow([
                     "Timestamp", "P (W)", "S (VA)", "Q (VAR)", "PF", "PF Angle (°)",
                     "Vrms (V)", "Irms (A)", "Real Energy (Wh)", "Apparent Energy (VAh)", "Reactive Energy (VARh)"
@@ -498,11 +631,18 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
         # Update PQ plot with throttling
         pq_trail.append((avg_p, avg_q))
-        if len(pq_trail) > MAX_TRAIL:
-            pq_trail.pop(0)
 
+        if pq3d_enabled.get() and pq3d["view"] is not None:
+            pq3d["view"].push(time.time(), avg_p, avg_q)
+
+        # existing throttle for 2D
         if optimizer.should_update_plot():
             draw_pq_plot(avg_p, avg_q, metadata)
+            # NEW: throttle the 3D draw with the same gate
+            if pq3d_enabled.get() and pq3d["view"] is not None:
+                pq3d["view"].draw()
+                if pq3d["canvas"] is not None:
+                    pq3d["canvas"].draw_idle()
 
     def draw_pq_plot(p, q, metadata=None):
         import math
@@ -673,20 +813,99 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
             chan_v = vch if vch.startswith("MATH") else f"CHAN{vch}"
             chan_i = ich if ich.startswith("MATH") else f"CHAN{ich}"
+
+            # Map 'CHAN1' → 'CH1' to match scpi_data keys
+            ci = scpi_data.get("channel_info", {})
+            key_v = chan_v.replace("CHAN", "CH")
+            key_i = chan_i.replace("CHAN", "CH")
+
+            try:
+                t_v = float(ci.get(key_v, {}).get("tcal_s", 0.0) or 0.0)
+                t_i = float(ci.get(key_i, {}).get("tcal_s", 0.0) or 0.0)
+            except Exception:
+                t_v, t_i = 0.0, 0.0
+
+            deskew_ns = (t_v - t_i) * 1e9
+            deskew_status_var.set(f"Deskew Δt(V−I): {deskew_ns:+.1f} ns")
+            deskew_status_label.config(fg="#ffaa00" if abs(deskew_ns) >= 5 else "#888888")
+
             try:
                 v_offset = float(safe_query(scope, f":{chan_v}:OFFS?", "0"))
                 i_offset = float(safe_query(scope, f":{chan_i}:OFFS?", "0"))
             except Exception as e:
                 log_debug(f"⚠️ Failed to read channel offset: {e}")
                 v_offset, i_offset = 0.0, 0.0
+            
+            scope_probe = None
+            #Unit check + probe mismatch detection
+            try:
+                unit_info = safe_query(scope, f":{chan_i}:UNIT?", "VOLT").strip().upper()
+                log_debug(f"🧪 {chan_i} unit = {unit_info}")
 
+                if unit_info == "AMP":
+                    unit_status_var.set(f"{chan_i} Unit:A — scaling disabled. Script expects true current waveform")
+                    unit_status_label.config(fg="#99ccff")
+
+                elif unit_info == "VOLT":
+                    # Softer default message (info, not warning)
+                    msg = f"ℹ {chan_i} Unit:V — scaling applied"
+
+                    chan_info_all = scpi_data.get("channel_info", {})
+                    log_debug(f"📋 [Check] channel_info keys: {list(chan_info_all.keys())} (lookup {key_i})")
+                    chan_info = chan_info_all.get(key_i, None)
+
+                    if not chan_info:
+                        log_debug(f"⚠️ chan_info for {chan_i} not found — skipping probe mismatch check")
+                    else:
+                        log_debug(f"🧪 chan_info for {chan_i} = {chan_info}")
+                        try:
+                            scope_probe = float(chan_info.get("probe", 1.0))
+                            log_debug(f"🧪 scope_probe = {scope_probe}")
+                        except Exception as e:
+                            log_debug(f"⚠️ Could not parse probe value: {e}")
+                            scope_probe = None
+
+                        ptype = probe_type.get().strip().lower()
+                        log_debug(f"🧪 probe_type = {ptype}")
+
+                        # Gentle info for shunt, real warning for clamp
+                        if scope_probe is not None:
+                            if ptype == "shunt" and abs(scope_probe - 1.0) > 0.5:
+                                # Info, not warning — results remain correct (only SNR consideration)
+                                msg += f"  |  ℹ Using {scope_probe:.1f}× probe with shunt: results are correct; 1× may improve SNR."
+                            elif ptype == "clamp" and scope_probe < 2.0:
+                                # Keep this a warning — this is more likely a real setup issue
+                                log_debug(f"⚠️ Detected clamp probe mismatch — scope_probe={scope_probe}")
+                                msg += f"  |  ⚠ Mismatch: scope={scope_probe:.1f}× — clamp probes often need 10×+"
+
+                    unit_status_var.set(msg)
+                    # Color: warning only if we actually added a ⚠ message
+                    unit_status_label.config(fg="#ffaa00" if "⚠" in msg else "#bbbbbb")
+                    unit_status_label.update_idletasks()
+
+                else:
+                    unit_status_var.set("")
+
+            except Exception as e:
+                log_debug(f"⚠️ Unit/probe mismatch check failed: {e}")
+                unit_status_var.set("")
+
+
+
+            # ✅ Offset status message
             if abs(v_offset) > 0.01 or abs(i_offset) > 0.01:
-                log_debug(f"⚠️ Offset active! Voltage Ch={chan_v} = {v_offset:.3f} V, Current Ch={chan_i} = {i_offset:.3f} V — results may be distorted!", level="MINIMAL")
-                offset_status_var.set(f"⚠ Offset active: V={v_offset:.2f} V, I={i_offset:.2f} V — waveform is shifted!")
+                log_debug(
+                    f"⚠️ Offset active! Voltage Ch={chan_v} = {v_offset:.3f} V, Current Ch={chan_i} = {i_offset:.3f} V — results may be distorted!",
+                    level="MINIMAL"
+                )
+                offset_status_var.set(
+                    f"⚠ Offset active: V={v_offset:.2f} V, I={i_offset:.2f} V — waveform is shifted!"
+                )
                 offset_status_label.config(fg="#ff9999")
             else:
-                offset_status_var.set("✓ No active offset — raw signal used.")
+                offset_status_var.set("✓ No active offset")
                 offset_status_label.config(fg="#00dd88")
+
 
             # Use cached scaling calculation
             scaling = optimizer.get_cached_scale(
@@ -700,8 +919,14 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 remove_dc=remove_dc_var.get(),
                 current_scale=scaling,
                 use_25m_v=use_25m_v_var.get(),
-                use_25m_i=use_25m_i_var.get()
+                use_25m_i=use_25m_i_var.get(),
+                method=method_options.get(power_method_label.get(), "standard")
             )
+            if result is None:
+                show_power_results(
+                    {"Error": "No waveform data — check memory depth/interleave/active channels"}, {}
+                )
+                return
 
             if result:
                 p = result.get("Real Power (P)", 0)
@@ -728,6 +953,10 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             elapsed = time.time() - start  # ⏱ end timing
             interval_s = refresh_interval.get()
             log_debug(f"⏱ analyze_power() took {elapsed:.2f}s", level="MINIMAL")
+            log_debug(f"📋 [Check] probe_type = {probe_type.get()}")
+            log_debug(f"📋 [Check] entry_probe_value = {entry_probe_value.get()}")
+            log_debug(f"📋 [Check] scope_probe = {scope_probe}")
+            log_debug(f"📋 [Check] unit_status_var = {unit_status_var.get()}")
 
             if elapsed > interval_s:
                 lag = elapsed - interval_s
@@ -785,6 +1014,15 @@ def setup_power_analysis_tab(tab_frame, ip, root):
         log_debug("🛑 Stopping auto-refresh")
         refresh_var.set(False)
         app_state.is_power_analysis_active = False
+
+        # --- 3D view cleanup ---
+        try:
+            if pq3d_enabled.get():
+                pq3d_enabled.set(False)
+            _destroy_pq3d()   # closes the pop-out window and drops refs
+            log_debug("🧹 PQ 3D view cleaned up")
+        except Exception as e:
+            log_debug(f"⚠️ PQ 3D cleanup issue: {e}")
 
         # Save final PQ plot if we have data
         if global_power_csv_path[0] and len(pq_trail) > 1:

@@ -11,6 +11,7 @@ from utils.debug import log_debug
 BILDPFAD = "/tmp/oszi_screenshot.png"
 OSZI_IP = None
 img_label = None
+update_after_id = [None]
 
 def set_ip(ip):
     global OSZI_IP
@@ -39,6 +40,12 @@ def screenshot_loop():
 
 def update_image(root):
     try:
+        from app import app_state
+        if getattr(app_state, "is_shutting_down", False):
+            return
+        if img_label is None or not isinstance(img_label, tk.Widget) or not img_label.winfo_exists():
+            return
+
         if os.path.exists(BILDPFAD):
             with open(BILDPFAD, "rb") as f:
                 img = Image.open(f)
@@ -62,7 +69,23 @@ def update_image(root):
             img_label.image = img_tk
     except Exception as e:
         log_debug(f"Image Load Error: {e}")
-    root.after(INTERVALL_BILD * 1000, lambda: update_image(root))
+
+    # Re-schedule only if still alive
+    try:
+        from app import app_state
+        if not getattr(app_state, "is_shutting_down", False) and img_label and img_label.winfo_exists():
+            update_after_id[0] = root.after(INTERVALL_BILD * 1000, lambda: update_image(root))
+    except tk.TclError:
+        return
+
+
+def cancel_image_updates(root):
+    try:
+        if update_after_id[0] is not None:
+            root.after_cancel(update_after_id[0])
+            update_after_id[0] = None
+    except Exception:
+        pass
 
 def start_screenshot_thread():
     thread = threading.Thread(target=screenshot_loop, daemon=True)

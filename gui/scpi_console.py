@@ -2,6 +2,8 @@
 
 import time
 import tkinter as tk
+import app.app_state as app_state
+
 from tkinter import ttk
 from scpi.interface import safe_query, scpi_lock, connect_scope
 from scpi.data import scpi_data
@@ -92,7 +94,13 @@ def setup_scpi_tab(tab_frame, ip):
 
         try:
             with scpi_lock:
-                resp = safe_query(scope, cmd, default="(no response)")
+                from scpi.interface import safe_query, safe_write
+
+                if "?" in cmd:
+                    resp = safe_query(scope, cmd, default="(no response)")
+                else:
+                    resp = safe_write(scope, cmd, wait_opc=True) or "(no reply)"
+
         except Exception as e:
             resp = f"❌ Exception: {e}"
             log_debug(f"❌ Exception during SCPI command: {e}", level="MINIMAL")

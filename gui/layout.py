@@ -109,6 +109,34 @@ def setup_styles():
         foreground=[("active", "#ffffff")]
     )
 
+    # Grouped sections for BH inputs
+    style.configure("Group.TLabelframe",
+        background=DARK_BG,
+        foreground=DARK_FG)
+    style.configure("Group.TLabelframe.Label",
+        background=DARK_BG,
+        foreground="#dddddd",
+        font=("TkDefaultFont", 10, "bold"))
+
+    # Subtle card container (used under some frames)
+    style.configure("Card.TFrame",
+        background="#202020")
+    style.configure("TEntry",
+        fieldbackground="#111111",
+        foreground="#ffffff")
+    style.configure("TCombobox",
+        fieldbackground="#111111",
+        background=DARK_TAB_BG,
+        foreground=DARK_FG)
+    style.map(
+        "TCombobox",
+        fieldbackground=[
+            ("readonly", "#222222")  # your desired dark background
+        ],
+        foreground=[
+            ("readonly", "#ffffff")  # your desired visible text color
+        ]
+    )
 
 def create_main_gui(container, ip):
     root = container.winfo_toplevel()
@@ -125,7 +153,7 @@ def create_main_gui(container, ip):
 
     tabs = {}
 
-    for tab_name in ["System Info", "Licenses", "Debug Log", "Channel Data", "Long-Time Measurement", "Power Analysis", "SCPI"]:
+    for tab_name in ["System Info", "Licenses", "Debug Log", "Channel Data", "Long-Time Measurement", "Power Analysis", "BH Curve", "Harmonics/THD", "SCPI"]:
         frame = ttk.Frame(notebook)
         notebook.add(frame, text=tab_name)
         tabs[tab_name] = frame

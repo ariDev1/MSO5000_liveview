@@ -1,30 +1,45 @@
-# #logger/longtime.py
+# logger/longtime.py
+"""
+Long-Time Measurement Logger
+----------------------------
+This module handles background logging of channel measurements (Vpp, Vavg, Vrms) 
+from the Rigol MSO5000 series oscilloscope.
 
+Features:
+- Logs selected channels over a user-defined duration (in hours) at fixed intervals (seconds).
+- Writes results into a CSV file with timestamped rows inside a dedicated session folder.
+- Supports pause/resume and manual stop during logging.
+- Detects channel units (Volt vs. Amp) and applies scaling if necessary.
+- Prevents conflicts with other modes (e.g., Power Analysis).
+- Uses a background thread for non-blocking operation while GUI remains responsive.
+"""
 import csv
 import os
 import time
 import threading
 from datetime import datetime, timedelta
-from scpi.waveform import get_channel_waveform_data
-from scpi.interface import safe_query
-from scpi.interface import scpi_lock
-from app.app_state import is_logging_active
-import app.app_state as app_state
-from scpi.data import scpi_data
-from utils.debug import log_debug, set_debug_level
 
-is_logging = False
-pause_flag = False
-stop_flag = False
+# Internal imports
+from scpi.waveform import get_channel_waveform_data   # fetch Vpp, Vavg, Vrms
+from scpi.interface import safe_query, scpi_lock      # safe SCPI communication
+import app.app_state as app_state                     # global application state
+from utils.debug import log_debug, set_debug_level    # debug logging
+
+# Global flags controlling logging state
+is_logging = False     # True when a logging session is running
+pause_flag = False     # True when logging is paused
+stop_flag = False      # True when user requests stop
 
 def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled, vrms_enabled, status_callback, current_scale=1.0):
     if app_state.is_power_analysis_active:
         status_callback("⚠️ Cannot start long-time logging during power analysis.")
         return
+
     from app.app_state import scope
     if not scope:
         log_debug("❌ Scope not connected")
         return
+
     global is_logging, pause_flag, stop_flag
 
     if is_logging:
@@ -34,6 +49,7 @@ def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled,
     session_dir = f"oszi_csv/session_{datetime.now():%Y%m%d_%H%M%S}"
     os.makedirs(session_dir, exist_ok=True)
     csv_path = os.path.join(session_dir, "session_log.csv")
+
     total = int((duration * 3600) // interval)
     end_time = datetime.now() + timedelta(seconds=duration * 3600)
 
@@ -77,12 +93,12 @@ def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled,
                         log_debug("🛑 Logging stopped during pause", level="MINIMAL")
                         break
 
-
                     row = [datetime.now().isoformat()]
+
                     for ch in channels:
                         vpp, vavg, vrms = get_channel_waveform_data(scope, ch, use_simple_calc=True)
                         chname = f"CH{ch}" if isinstance(ch, int) else ch
-                        log_debug(f"{chname} ➜ Vpp={vpp:.3f}  Vavg={vavg:.3f}  Vrms={vrms:.3f}")
+                        log_debug(f"{chname} ➜ Vpp={vpp:.3f}  Vavg={vavg:.3f}  Vrms={vrms:.3f}", level="MINIMAL")
 
                         try:
                             chnum = str(ch).replace("CH", "").strip()
@@ -94,7 +110,7 @@ def start_logging(_scope_unused, ip, channels, duration, interval, vavg_enabled,
                                 scale = current_scale
                                 log_debug(f"⚙️ {chname} is in VOLT — applying scale {scale}")
                         except Exception as e:
-                            log_debug(f"⚠️ Unit detection failed for {chname}: {e}")
+                            log_debug(f"⚠️ Unit detection failed for {chname}: {e}", level="MINIMAL")
                             scale = current_scale
 
                         row.append(f"{vpp * scale:.4f}" if vpp is not None else "")

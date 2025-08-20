@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# utils/plot_rigol_csv.py
 
 import os
 import sys
@@ -52,15 +53,16 @@ def is_waveform_csv(path):
 
 def is_session_log(path):
     try:
-        df = pd.read_csv(path, nrows=1)
+        df = pd.read_csv(path, nrows=1, comment="#", encoding="utf-8-sig")
         return "Timestamp" in df.columns
     except Exception:
         return False
 
 def is_power_log(path):
     try:
-        df = pd.read_csv(path, nrows=1)
-        return "P (W)" in df.columns and "S (VA)" in df.columns and "Q (VAR)" in df.columns
+        df = pd.read_csv(path, nrows=1, comment="#", encoding="utf-8-sig")
+        needed = {"P (W)", "S (VA)", "Q (VAR)"}
+        return needed.issubset(set(df.columns))
     except Exception:
         return False
 
@@ -121,7 +123,7 @@ def plot_waveform_csv(path, smooth=False, window=5, spline=False, scale=1.0):
 
 def plot_session_log(path, smooth=False, window=5, spline=False):
     try:
-        df = pd.read_csv(path, parse_dates=["Timestamp"])
+        df = pd.read_csv(path, parse_dates=["Timestamp"], comment="#", encoding="utf-8-sig")
         columns = [col for col in df.columns if col != "Timestamp"]
     except Exception as e:
         print(f"❌ Error reading session log: {e}")
@@ -169,76 +171,103 @@ def plot_session_log(path, smooth=False, window=5, spline=False):
 
 def plot_power_log(path, smooth=False, window=5, spline=False, scale=1.0):
     try:
-        df = pd.read_csv(path, parse_dates=["Timestamp"])
+        df = pd.read_csv(path, parse_dates=["Timestamp"], comment="#", encoding="utf-8-sig")
         metrics = [
             "P (W)", "S (VA)", "Q (VAR)", "PF", "Vrms (V)", "Irms (A)",
             "Real Energy (Wh)", "Apparent Energy (VAh)", "Reactive Energy (VARh)"
         ]
 
-        # Compute energy from power over time
-        df["Elapsed (s)"] = (df["Timestamp"] - df["Timestamp"].iloc[0]).dt.total_seconds()
-        df["Elapsed (h)"] = df["Elapsed (s)"] / 3600.0
+        # --- Energy from integral (not P * total elapsed) ---
+        df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
+        df = df.dropna(subset=["Timestamp"]).reset_index(drop=True)
+        dt_s = df["Timestamp"].diff().dt.total_seconds().fillna(0.0)
 
-        df["Real Energy (Wh)"] = df["P (W)"] * df["Elapsed (h)"]
-        df["Apparent Energy (VAh)"] = df["S (VA)"] * df["Elapsed (h)"]
-        df["Reactive Energy (VARh)"] = df["Q (VAR)"] * df["Elapsed (h)"]
+        df["Real Energy (Wh)"]       = (df.get("P (W)", 0.0).astype(float) * dt_s / 3600.0).cumsum()
+        df["Apparent Energy (VAh)"]  = (df.get("S (VA)", 0.0).astype(float) * dt_s / 3600.0).cumsum()
+        df["Reactive Energy (VARh)"] = (df.get("Q (VAR)", 0.0).astype(float) * dt_s / 3600.0).cumsum()
 
         df = df[["Timestamp"] + [m for m in metrics if m in df.columns]]
     except Exception as e:
         print(f"❌ Error reading power log: {e}")
         return
 
-    # Copy and scale data (except PF)
+    # --- Copy and scale data (physically correct) ---
     scaled_df = df.copy()
-    for col in scaled_df.columns:
-        if col == "PF" or col == "Timestamp":
-            continue
-        if scaled_df[col].dtype.kind in "fi":  # numeric
-            scaled_df[col] *= scale
+    scale_cols = [c for c in ["P (W)", "S (VA)", "Q (VAR)", "Irms (A)"] if c in scaled_df.columns]
+    energy_cols = [c for c in ["Real Energy (Wh)", "Apparent Energy (VAh)", "Reactive Energy (VARh)"] if c in scaled_df.columns]
 
-    timestamp_num = scaled_df["Timestamp"].astype("int64") // 10**9
+    if scale != 1.0:
+        for col in scale_cols + energy_cols:
+            scaled_df[col] = scaled_df[col].astype(float) * scale  # Vrms and PF are NOT scaled
+
+    # for spline timing
+    timestamp_num = (scaled_df["Timestamp"].astype("int64") // 10**9).to_numpy()
 
     plt.figure(figsize=(14, 7))
-    for col in scaled_df.columns[1:]:
-        if col in ["Real Energy (Wh)", "Apparent Energy (VAh)", "Reactive Energy (VARh)"]:
-            continue  # we do NOT plot these as curves
-        raw = scaled_df[col]
-        label = f"{col} (raw × {scale})" if scale != 1.0 else f"{col} (raw)"
+    for col in [c for c in scaled_df.columns[1:] if c not in energy_cols]:
+        raw = scaled_df[col].astype(float)
+        is_scaled = (scale != 1.0) and (col in scale_cols)
+        label = f"{col} (raw × {scale})" if is_scaled else f"{col} (raw)"
         plt.plot(scaled_df["Timestamp"], raw, label=label, alpha=0.85)
 
         if smooth or spline:
             y = raw.rolling(window=window, center=True).mean() if smooth else raw
-            mask = ~np.isnan(y)
+            mask = ~np.isnan(y.to_numpy())
 
-            if spline and sum(mask) > 3:
+            if spline and mask.sum() > 3:
                 x_smooth = np.linspace(timestamp_num[mask].min(), timestamp_num[mask].max(), 300)
-                spline_fit = make_interp_spline(timestamp_num[mask], y[mask], k=3)
+                spline_fit = make_interp_spline(timestamp_num[mask], y.to_numpy()[mask], k=3)
                 y_smooth = spline_fit(x_smooth)
                 time_smooth = pd.to_datetime(x_smooth, unit="s")
                 plt.plot(time_smooth, y_smooth, linestyle="dotted", label=f"{col} (spline)")
             else:
                 plt.plot(scaled_df["Timestamp"], y, linestyle="dotted", label=f"{col} (smooth)")
 
+    # --- Robust y-limits to avoid early outliers dominating ---
+    plot_cols = [c for c in scaled_df.columns[1:] if c not in energy_cols]
+    y_stack = np.concatenate([scaled_df[c].astype(float).to_numpy() for c in plot_cols]) if plot_cols else np.array([])
+    if y_stack.size:
+        lo, hi = np.nanpercentile(y_stack, [1, 99])
+        if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
+            pad = 0.05 * (hi - lo)
+            plt.ylim(lo - pad, hi + pad)
+
     plt.title(f"Power Analyzer Log (scale ×{scale})")
+
     plt.xlabel("Time")
     plt.ylabel("Power / Voltage / Current")
     plt.grid(True)
 
-    # --- Energy totals (legend injection)
+    # --- Energy totals (legend injection) ---
     last = scaled_df.iloc[-1]
-    energy_labels = [
-        f"Real Energy: {last['Real Energy (Wh)']:.2f} Wh",
-        f"Apparent Energy: {last['Apparent Energy (VAh)']:.2f} VAh",
-        f"Reactive Energy: {last['Reactive Energy (VARh)']:.2f} VARh"
-    ]
+    energy_labels = []
+    if "Real Energy (Wh)" in scaled_df:      energy_labels.append(f"Real Energy: {last['Real Energy (Wh)']:.2f} Wh")
+    if "Apparent Energy (VAh)" in scaled_df: energy_labels.append(f"Apparent Energy: {last['Apparent Energy (VAh)']:.2f} VAh")
+    if "Reactive Energy (VARh)" in scaled_df:energy_labels.append(f"Reactive Energy: {last['Reactive Energy (VARh)']:.2f} VARh")
     energy_handles = [Line2D([0], [0], color='none') for _ in energy_labels]
 
     handles, labels = plt.gca().get_legend_handles_labels()
     handles += energy_handles
     labels += energy_labels
-    plt.legend(handles, labels, loc="upper left", framealpha=1.0)
+    #plt.legend(handles, labels, loc="lower right", framealpha=1.0)
+    # transparent legend (no white box)
+    leg = plt.legend(
+        handles, labels,
+        loc="lower right",
+        frameon=False,         # no background/frame
+        handlelength=2.0,
+        borderpad=0.2,
+        labelspacing=0.3,
+        fontsize=8
+    )
+    # harden against style overrides
+    frame = leg.get_frame()
+    if frame is not None:
+        frame.set_alpha(0.0)
+        frame.set_facecolor("none")
+        frame.set_edgecolor("none")
 
-    # --- Footer metadata
+    # --- Footer metadata ---
     metadata = load_operator_info()
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     metadata["Timestamp"] = timestamp
@@ -259,6 +288,7 @@ def plot_power_log(path, smooth=False, window=5, spline=False, scale=1.0):
     print(f"✅ Saved plot to: {png_path}")
 
     plt.show()
+
 
 def main():
     parser = argparse.ArgumentParser(

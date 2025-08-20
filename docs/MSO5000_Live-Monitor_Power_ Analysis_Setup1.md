@@ -1,5 +1,5 @@
-# ✅ MSO5000 Live Monitor — Power Analysis Setup Checklist  
-### 🧪 For Shunt-Based DC Power Measurements (Low-Side Current Sensing)
+# ✅ MSO5000 Live Monitor — Power Analysis Setup Checklist DC
+🧪 For Shunt-Based DC Power Measurements (Low-Side Current Sensing)
 
 ---
 

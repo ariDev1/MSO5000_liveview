@@ -2,43 +2,48 @@ name: Docker Build & Push
 
 on:
   push:
-    tags: [ 'v*stable*' ]  # ✅ Only trigger for tags like v0.9.8e-stable
+    tags: [ 'v*stable*' ]  # ✅ Only trigger for tags like v0.9.8h-stable
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
 
     steps:
-    - name: 🧾 Checkout code
-      uses: actions/checkout@v4
-    
-    - name: 🐍 Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.x'
+      - name: 🧾 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # make sure history is available
 
-    - name: 🏷️ Stamp version.py from Git tag
-      run: |
-        python3 build_version.py
-        echo "---- version.py ----"
-        cat version.py
+      - name: 🏷️ Ensure tags are present
+        run: git fetch --tags --force
 
-    - name: 🔐 Login to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
-    - name: 🛠️ Build image
-      run: |
-        docker build -t aridev1/mso5000_liveview:latest .
+      - name: 🏷️ Stamp version.py from Git tag
+        run: |
+          python3 build_version.py
+          echo "---- version.py ----"
+          cat version.py
 
-    - name: 📦 Push 'latest' tag
-      run: |
-        docker push aridev1/mso5000_liveview:latest
+      - name: 🔐 Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
-    - name: 🏷️ Tag and push versioned image
-      run: |
-        VERSION=${GITHUB_REF#refs/tags/}
-        docker tag aridev1/mso5000_liveview:latest aridev1/mso5000_liveview:$VERSION
-        docker push aridev1/mso5000_liveview:$VERSION
+      - name: 🛠️ Build image
+        run: |
+          docker build -t aridev1/mso5000_liveview:latest .
+
+      - name: 📦 Push 'latest' tag
+        run: |
+          docker push aridev1/mso5000_liveview:latest
+
+      - name: 🏷️ Tag and push versioned image
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          docker tag aridev1/mso5000_liveview:latest aridev1/mso5000_liveview:$VERSION
+          docker push aridev1/mso5000_liveview:$VERSION
