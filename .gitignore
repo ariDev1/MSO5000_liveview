@@ -6,7 +6,7 @@ venv/
 oszi_csv/
 
 # Generated build/version info
-version.py
+#version.py
 utils/idn.txt
 
 # Compiled Python
