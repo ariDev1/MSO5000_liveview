@@ -62,7 +62,6 @@ def safe_query(scope, command, default="N/A"):
     finally:
         app_state.is_scpi_busy = False
 
-
 def safe_write(scope, command, wait_opc=True, default_ok="OK"):
     """
     Send a write-only SCPI command. Optionally block on *OPC? for completion.

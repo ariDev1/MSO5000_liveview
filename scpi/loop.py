@@ -21,12 +21,10 @@ def _to_float(s, default=0.0):
     except Exception:
         return default
 
-
 def _read_tcal_seconds(scope, ch_index: int) -> float:
     # Documented: :CHANnel<n>:TCALibrate? → seconds (may be '', '0', or float)
     s = safe_query(scope, f":CHANnel{ch_index}:TCALibrate?", "")
     return _to_float(s, 0.0)
-
 
 def start_scpi_loop(ip):
     def loop():
