@@ -14,7 +14,7 @@ import tkinter as tk
 from tkinter import ttk
 
 # --- Lightweight imports that don't trigger side effects ---
-from version import APP_NAME, VERSION, GIT_COMMIT, BUILD_DATE
+import version as V
 from utils.debug import attach_debug_widget, start_debug_updater, log_debug, set_debug_level
 from gui.layout import create_main_gui
 from gui.image_display import attach_image_label, update_image, set_ip, start_screenshot_thread
@@ -25,24 +25,6 @@ from scpi.data import scpi_data
 import app.app_state as app_state
 
 # NOTE: Tab setup functions are imported lazily inside build_tabs() to keep import order clean.
-
-# ----------------------------------------------------------------------------
-# Build/version metadata generation
-# ----------------------------------------------------------------------------
-
-def _generate_version_file():
-    """Run build_version.py without crashing app if unavailable."""
-    try:
-        # Prefer importing to avoid shelling out; fall back to subprocess if needed.
-        try:
-            import build_version  # noqa: F401 (module has side-effects generating version.py)
-        except Exception:
-            # Fall back to calling python if import path is non-standard.
-            os.system("python3 build_version.py")
-    except Exception:
-        # Non-fatal; CI may generate version.py
-        pass
-
 
 # ----------------------------------------------------------------------------
 # CLI
@@ -101,7 +83,7 @@ def connect_and_prepare(ip: str):
 
 def build_root(ip: str):
     root = tk.Tk()
-    root.title(f"{APP_NAME} {VERSION} [{GIT_COMMIT}] 🢒 {ip}")
+    root.title(f"{V.APP_NAME} {V.VERSION} [{V.GIT_COMMIT}] 🢒 {ip}")
     root.geometry("1200x800")
     root.minsize(800, 600)
 
@@ -355,14 +337,12 @@ def make_shutdown(root, activity_after_id_ref, activity_canvas, power_shutdown, 
 # ----------------------------------------------------------------------------
 
 def main(argv=None):
-    _generate_version_file()
-
     args = parse_args(argv)
 
     if args.version:
-        print(f"{APP_NAME} {VERSION}")
-        print(f"Git Commit: {GIT_COMMIT}")
-        print(f"Build Date: {BUILD_DATE}")
+        print(f"{V.APP_NAME} {V.VERSION}")
+        print(f"Git Commit: {V.GIT_COMMIT}")
+        print(f"Build Date: {V.BUILD_DATE}")
         sys.exit(0)
 
     # Optional override of WAV_POINTS (keeps existing behavior)

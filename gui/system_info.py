@@ -2,17 +2,11 @@
 
 import tkinter as tk
 from tkinter import ttk
-from version import APP_NAME, VERSION, GIT_COMMIT, BUILD_DATE, AUTHOR, PROJECT_URL
+import version as V
 from scpi.data import scpi_data
 from utils.debug import log_debug
 
 def setup_system_info_tab(tab_frame, root):
-    import tkinter as tk
-    from tkinter import ttk
-    from version import APP_NAME, VERSION, GIT_COMMIT, BUILD_DATE, AUTHOR, PROJECT_URL
-    from scpi.data import scpi_data
-    from utils.debug import log_debug
-
     # ---------------- Left panel: text + scrollbar + bottom controls --------
     left_panel = tk.Frame(tab_frame, bg="#1a1a1a")
     left_panel.pack(side="left", fill="both", expand=True)
@@ -193,11 +187,11 @@ def setup_system_info_tab(tab_frame, root):
     def copy_system_info_to_clipboard():
         meta_info = (
             f"\n\n{'-'*60}\n"
-            f"{APP_NAME} {VERSION}\n"
-            f"Build Date : {BUILD_DATE}\n"
-            f"Git Commit : {GIT_COMMIT}\n"
-            f"Maintainer : {AUTHOR}\n"
-            f"Project    : {PROJECT_URL}\n"
+            f"{V.APP_NAME} {V.VERSION}\n"
+            f"Build Date : {V.BUILD_DATE}\n"
+            f"Git Commit : {V.GIT_COMMIT}\n"
+            f"Maintainer : {V.AUTHOR}\n"
+            f"Project    : {V.PROJECT_URL}\n"
         )
         host_block = _build_host_env_block()
         status_block = _build_status_block()
@@ -244,11 +238,11 @@ def setup_system_info_tab(tab_frame, root):
 
         meta_info = (
             f"\n\n{'-'*60}\n"
-            f"{APP_NAME} {VERSION}\n"
-            f"Build Date : {BUILD_DATE}\n"
-            f"Git Commit : {GIT_COMMIT}\n"
-            f"Maintainer : {AUTHOR}\n"
-            f"Project    : {PROJECT_URL}\n"
+            f"{V.APP_NAME} {V.VERSION}\n"
+            f"Build Date : {V.BUILD_DATE}\n"
+            f"Git Commit : {V.GIT_COMMIT}\n"
+            f"Maintainer : {V.AUTHOR}\n"
+            f"Project    : {V.PROJECT_URL}\n"
         )
 
         host_block = _build_host_env_block()
