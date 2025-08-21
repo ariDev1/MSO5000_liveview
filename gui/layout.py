@@ -2,7 +2,7 @@
 
 import tkinter as tk
 from tkinter import ttk
-from version import APP_NAME, VERSION, GIT_COMMIT
+import version as V
 
 DARK_BG = "#1a1a1a"
 DARK_FG = "#ffffff"
@@ -140,7 +140,7 @@ def setup_styles():
 
 def create_main_gui(container, ip):
     root = container.winfo_toplevel()
-    root.title(f"{APP_NAME} {VERSION} [{GIT_COMMIT}] 🢒 {ip}")
+    root.title(f"{V.APP_NAME} {V.VERSION} [{V.GIT_COMMIT}] 🢒 {ip}")
     root.geometry("1200x800")
     root.minsize(800, 600)
     root.configure(bg=DARK_BG)
