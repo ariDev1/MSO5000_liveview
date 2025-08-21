@@ -19,3 +19,4 @@ __pycache__/
 .vscode/
 .idea/
 *.swp
+*.bak
