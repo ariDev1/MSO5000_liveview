@@ -3,6 +3,7 @@
 import tkinter as tk
 from tkinter import ttk
 import version as V
+
 from scpi.data import scpi_data
 from utils.debug import log_debug
 

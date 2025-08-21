@@ -13,13 +13,6 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 
-# Ensure version.py exists
-try:
-    os.system("python3 build_version.py")
-except Exception:
-    # Non-fatal; version.py may be pre-generated
-    pass
-
 # --- Lightweight imports that don't trigger side effects ---
 import version as V
 from utils.debug import attach_debug_widget, start_debug_updater, log_debug, set_debug_level
@@ -344,6 +337,7 @@ def make_shutdown(root, activity_after_id_ref, activity_canvas, power_shutdown, 
 # ----------------------------------------------------------------------------
 
 def main(argv=None):
+
     args = parse_args(argv)
 
     if args.version:
