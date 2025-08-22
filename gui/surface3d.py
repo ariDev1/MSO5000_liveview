@@ -15,11 +15,19 @@ _surface_state = {
     "window": None,
     "ax": None,
     "canvas": None,
-    "history": None,   # deque of (x, y_row, t)
-    "t0": None,        # first timestamp to make relative time axis
-    "max_lines": 60,   # tune as you like
-    "log_z": False,    # optional log magnitude
+    "history": None,
+    "t0": None,
+    "max_lines": 60,
+    "log_z": False,
+
+    # NEW — performance controls (view-only)
+    "render_mode": "lines",       # "lines" | "wire" | "surface"
+    "t_stride": 1,                # draw every Nth time-slice (1 = all)
+    "target_pts_per_line": 400,   # downsample X to about this many points (view only)
+    "min_redraw_interval": 0.15,  # seconds; throttle to ~6–7 FPS
+    "last_draw": 0.0,
 }
+
 
 def ensure_surface3d(root):
     """Create (or focus) the 3D surface window."""
@@ -37,19 +45,40 @@ def ensure_surface3d(root):
     # Top bar
     bar = tk.Frame(win, bg="#1a1a1a")
     bar.pack(fill="x", padx=8, pady=6)
-    ttk.Label(bar, text="Last N lines:").pack(side="left")
+
+    ttk.Label(bar, text="Last N:").pack(side="left")
     n_var = tk.IntVar(value=st["max_lines"])
-    n_spin = ttk.Spinbox(bar, from_=10, to=500, width=5, textvariable=n_var)
-    n_spin.pack(side="left", padx=(4,10))
+    ttk.Spinbox(bar, from_=10, to=500, width=5, textvariable=n_var).pack(side="left", padx=(4,10))
 
     log_var = tk.BooleanVar(value=st["log_z"])
-    ttk.Checkbutton(bar, text="Log Z", variable=log_var).pack(side="left")
+    ttk.Checkbutton(bar, text="Log Z", variable=log_var).pack(side="left", padx=(0,10))
+
+    ttk.Label(bar, text="Mode:").pack(side="left")
+    mode_var = tk.StringVar(value=st.get("render_mode", "lines"))
+    ttk.Combobox(bar, state="readonly", width=9, textvariable=mode_var,
+                 values=["lines", "wire", "surface"]).pack(side="left", padx=(4,10))
+
+    ttk.Label(bar, text="Time stride:").pack(side="left")
+    stride_var = tk.IntVar(value=st.get("t_stride", 1))
+    ttk.Spinbox(bar, from_=1, to=10, width=4, textvariable=stride_var).pack(side="left", padx=(4,10))
+
+    ttk.Label(bar, text="Pts/line:").pack(side="left")
+    tpp_var = tk.IntVar(value=st.get("target_pts_per_line", 400))
+    ttk.Spinbox(bar, from_=100, to=2000, width=6, textvariable=tpp_var).pack(side="left", padx=(4,10))
 
     def apply_opts():
         st["max_lines"] = max(10, int(n_var.get() or 60))
         st["log_z"] = bool(log_var.get())
+        st["render_mode"] = mode_var.get()
+        st["t_stride"] = max(1, int(stride_var.get() or 1))
+        st["target_pts_per_line"] = max(50, int(tpp_var.get() or 400))
+        # align deque length if changed
+        if st["history"] is not None and st["history"].maxlen != st["max_lines"]:
+            st["history"] = deque(list(st["history"]), maxlen=st["max_lines"])
         _redraw()
+
     ttk.Button(bar, text="Apply", command=apply_opts).pack(side="left", padx=8)
+
 
     # Figure / 3D axis
     fig = plt.Figure(figsize=(7,4), dpi=100, facecolor="#1a1a1a")
@@ -104,6 +133,14 @@ def push_surface_line(y, x=None, t=None):
     if st["history"].maxlen != st["max_lines"]:
         st["history"] = deque(list(st["history"]), maxlen=st["max_lines"])
 
+    _redraw_throttled()
+
+def _redraw_throttled():
+    st = _surface_state
+    now = time.time()
+    if now - float(st.get("last_draw", 0.0)) < float(st.get("min_redraw_interval", 0.15)):
+        return
+    st["last_draw"] = now
     _redraw()
 
 def _style_3d(ax):
@@ -125,53 +162,57 @@ def _redraw():
     if not hist:
         return
 
-    # Tunables (view-only; no effect on saved/analysis data)
-    SURF_MIN_LINES = 3          # need at least 3 time-slices to show a real surface
-    TARGET_PTS_PER_LINE = 600   # decimate X for view if longer than this
-    MAX_SURF_POINTS = 200_000   # total X*Y threshold to fall back to lines
+    SURF_MIN_LINES = 3
+    MAX_SURF_POINTS = 150_000  # if surface mesh exceeds this, fall back to wire/lines
 
     ax.clear()
     _style_3d(ax)
+
+    # Apply time decimation (view-only): draw every Nth line
+    t_stride = max(1, int(st.get("t_stride", 1)))
+    hist = hist[::t_stride] if t_stride > 1 else hist
 
     xs = [row[0] for row in hist]
     ys = [row[1] for row in hist]
     ts = [row[2] for row in hist]
 
     nlines = len(xs)
-    # All rows same length?
     M0 = len(xs[0])
     uniform = all(len(x) == M0 and len(y) == M0 for x, y in zip(xs, ys))
 
     t0 = st["t0"] or ts[0]
     times = np.array(ts) - t0
 
-    # Decide decimation for view (no data modification!)
-    decim = 1
-    if M0 > TARGET_PTS_PER_LINE:
-        decim = max(1, int(np.ceil(M0 / TARGET_PTS_PER_LINE)))
+    # Decimate X for view only
+    target = int(st.get("target_pts_per_line", 400))
+    decim = max(1, int(np.ceil(M0 / max(1, target))))
 
     def _plot_lines():
         for (x, y, t) in hist:
-            x_v = x[::decim]
-            y_v = np.log10(np.maximum(y, 1e-12)) if st["log_z"] else y
-            y_v = y_v[::decim]
-            ax.plot(x_v, np.full_like(x_v, t - t0), y_v, linewidth=1)
+            xv = x[::decim]
+            zv = np.log10(np.maximum(y, 1e-12)) if st["log_z"] else y
+            zv = zv[::decim]
+            ax.plot(xv, np.full_like(xv, t - t0), zv, linewidth=1)
 
-    # Too few lines for a surface, or non-uniform rows -> draw “fences”
-    if (nlines < SURF_MIN_LINES) or not uniform:
+    mode = st.get("render_mode", "lines")
+    if (nlines < SURF_MIN_LINES) or not uniform or mode == "lines":
         _plot_lines()
+        ax.margins(x=0.02, y=0.02, z=0.02)
         canvas.draw_idle()
         return
 
-    # Build decimated surface
+    # Build decimated surface arrays
     X = np.vstack([x[::decim] for x in xs])
     Z = np.vstack([(np.log10(np.maximum(y, 1e-12)) if st["log_z"] else y)[::decim] for y in ys])
     Y = np.tile(times[:, None], (1, X.shape[1]))
 
-    # If it would be too heavy, fall back to lines
-    if X.size > MAX_SURF_POINTS:
-        _plot_lines()
+    mesh_pts = X.size
+
+    if mode == "wire" or mesh_pts > MAX_SURF_POINTS:
+        # wireframe is much lighter
+        ax.plot_wireframe(X, Y, Z, rstride=1, cstride=max(1, int(X.shape[1] // 200)))
     else:
+        # surface mode, still capped
         ax.plot_surface(X, Y, Z, rstride=1, cstride=1, linewidth=0, antialiased=False, cmap=cm.viridis)
 
     ax.margins(x=0.02, y=0.02, z=0.02)
