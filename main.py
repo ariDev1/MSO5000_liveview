@@ -17,6 +17,7 @@ from tkinter import ttk
 import version as V
 from utils.debug import attach_debug_widget, start_debug_updater, log_debug, set_debug_level
 from gui.layout import create_main_gui
+from gui.noise_inspector import setup_noise_inspector_tab
 from gui.image_display import attach_image_label, update_image, set_ip, start_screenshot_thread
 from gui.activity_monitor import start_meter_thread, draw_meter
 from scpi.interface import connect_scope, safe_query
@@ -200,6 +201,7 @@ def build_tabs(main_frame, ip, root):
     setup_channel_tab(tabs["Channel Data"], ip, root)
     setup_logging_tab(tabs["Long-Time Measurement"], ip, root)
     setup_scpi_tab(tabs["SCPI"], ip)
+    setup_noise_inspector_tab(tabs["Noise Inspector"], ip, root)
 
     setup_power_analysis_tab(tabs["Power Analysis"], ip, root)
     power_tab = tabs["Power Analysis"]

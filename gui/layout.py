@@ -137,6 +137,30 @@ def setup_styles():
             ("readonly", "#ffffff")  # your desired visible text color
         ]
     )
+    style.configure(
+        "Dark.Treeview",
+        background=DARK_BG, fieldbackground=DARK_BG,
+        foreground=DARK_FG, bordercolor="#333333",
+        rowheight=22
+    )
+    style.map(
+        "Dark.Treeview",
+        background=[("selected", "#2a72b5")],
+        foreground=[("selected", "#ffffff")]
+    )
+    style.configure(
+        "Dark.Treeview.Heading",
+        background="#222222", foreground=DARK_FG,
+        relief="flat"
+    )
+    style.configure(
+        "Dark.TSpinbox",
+        fieldbackground="#111111", background=DARK_BG, foreground=DARK_FG
+    )
+    style.configure(
+        "Dark.TCheckbutton",
+        background=DARK_BG, foreground=DARK_FG
+    )
 
 def create_main_gui(container, ip):
     root = container.winfo_toplevel()
@@ -153,7 +177,7 @@ def create_main_gui(container, ip):
 
     tabs = {}
 
-    for tab_name in ["System Info", "Licenses", "Debug Log", "Channel Data", "Long-Time Measurement", "Power Analysis", "BH Curve", "Harmonics/THD", "SCPI"]:
+    for tab_name in ["System Info", "Licenses", "Debug Log", "Channel Data", "Long-Time Measurement", "Power Analysis", "BH Curve", "Harmonics/THD", "Noise Inspector", "SCPI"]:
         frame = ttk.Frame(notebook)
         notebook.add(frame, text=tab_name)
         tabs[tab_name] = frame
