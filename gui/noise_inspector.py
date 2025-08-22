@@ -341,7 +341,7 @@ class NoiseInspectorTab:
             "AR Spectrum": ("Type","f0_Hz","SNR_dB","BW_Hz","Notes"),
         }
         init_cols = self.headers.get(self.method.get(), self.headers["PSD+CFAR"])
-        self.table = ttk.Treeview(self.frame, columns=init_cols, show="headings", height=8)
+        self.table = ttk.Treeview(self.frame, columns=init_cols, show="headings", height=5)
 
         _style = ttk.Style(self.frame)
         _style.configure("Dark.Treeview",
@@ -368,6 +368,7 @@ class NoiseInspectorTab:
         self.btns = ttk.Frame(self.frame); self.btns.pack(side="top", fill="x", padx=6, pady=(0,8))
         ttk.Button(self.btns, text="Save CSV", command=self._save_csv).pack(side="left", padx=4)
         ttk.Button(self.btns, text="Save PNG", command=self._save_png).pack(side="left", padx=4)
+        ttk.Button(self.btns, text="🧊 3D Surface", command=self._open_surface3d).pack(side="left", padx=6)
         self.adv_btn = ttk.Button(self.btns, text="Advanced ▾", style="Action.TButton", command=self._toggle_advanced)
         self.adv_btn.pack(side="left", padx=8)
 
@@ -417,6 +418,19 @@ class NoiseInspectorTab:
             try: self.adv_btn.config(text="Advanced ▾")
             except Exception: pass
 
+    def _open_surface3d(self):
+        """Open (or focus) the shared 3D surface window."""
+        try:
+            from gui.surface3d import ensure_surface3d
+            ensure_surface3d(self.root)
+            self.status.config(text="3D Surface ready")
+        except Exception as e:
+            self.status.config(text="3D Surface not available (gui/surface3d.py missing).")
+            try:
+                from utils.debug import log_debug
+                log_debug(f"[Noise] 3D Surface unavailable: {e}")
+            except Exception:
+                pass
 
     # -- Auto mode (like Harmonics) --
     def toggle_auto(self):
@@ -684,6 +698,22 @@ class NoiseInspectorTab:
         df = r.get("df_Hz", None)
         df_txt = f", Δf≈{self._eng.format_data(df)}" if df is not None else ""
         self.status.config(text=f"{method} — {len(r.get('detections',[]))} detections; {r.get('elapsed_s',0):.2f}s{df_txt}")
+        
+        # --- 3D surface streaming (visualization-only; no data alteration) ---
+        try:
+            from gui.surface3d import push_surface_line
+        except Exception:
+            push_surface_line = None
+
+        # Only for 1-D methods (skip if an image is present) and only when Auto is ON,
+        # mirroring your persistence rule to keep single-run plots clean.
+        if push_surface_line and "image" not in r:
+            try:
+                push_surface_line(y, x=x, t=time.time())
+            except Exception:
+                pass
+
+
         self.canvas.draw_idle()
 
     def _on_row_select(self, _event=None):
