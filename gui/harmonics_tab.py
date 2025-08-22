@@ -130,6 +130,22 @@ class HarmonicsTab:
         self._style_axes(self.ax)
         self.canvas.draw_idle()
 
+    def _open_surface3d(self):
+        """Open (or focus) the shared 3D surface window."""
+        try:
+            # defer import so the tab still loads if gui/surface3d.py is missing
+            from gui.surface3d import ensure_surface3d
+        except Exception as e:
+            self.status_var.set("3D Surface not available (gui/surface3d.py missing).")
+            try:
+                from utils.debug import log_debug
+                log_debug(f"⚠️ 3D Surface not available: {e}")
+            except Exception:
+                pass
+            return
+
+        ensure_surface3d(self.root)
+
     def _style_axes(self, ax):
         ax.set_facecolor(self.DARK_BG)
         ax.tick_params(colors=self.DARK_FG)
@@ -193,16 +209,21 @@ class HarmonicsTab:
         self.status_var = tk.StringVar(value="Idle.")
         tk.Label(controls, textvariable=self.status_var, fg="#ddd", bg="#1a1a1a").grid(row=0, column=13, sticky="e")
 
-        # Make the rightmost column expand so the status text doesn’t collide
-        controls.columnconfigure(13, weight=1)
-        
         # --- compact two-row control layout (10 lines) ---
         self.clear_persist.grid_configure(row=1, column=0, padx=4, pady=(2,6))
         self.measure_btn.grid_configure(row=1, column=1, padx=4, pady=(2,6))
         self.auto_btn.grid_configure(row=1, column=2, padx=4, pady=(2,6))
+
+        # 3D Surface button (opens separate window)
+        self.surface3d_btn = ttk.Button(
+            controls,
+            text="3D Surface",
+            command=self._open_surface3d
+        )
+        self.surface3d_btn.grid(row=1, column=3, padx=(8,4), pady=(2,6))
         self.status_lbl = controls.grid_slaves(row=0, column=13)[0]
-        self.status_lbl.grid_configure(row=1, column=3, columnspan=11, sticky="w", padx=(12,4))
-        controls.columnconfigure(3, weight=0)
+        self.status_lbl.grid_configure(row=1, column=4, sticky="w", padx=(8,4))
+        controls.columnconfigure(4, weight=1)
         controls.rowconfigure(1, weight=0)
         # smaller font for the "Window" combobox (col 3 in row 0)
         ttk.Style().configure("Small.TCombobox", font=("TkDefaultFont", 8))
@@ -980,6 +1001,22 @@ class HarmonicsTab:
             self.ax.axvline(row.f_hz, linestyle="--", alpha=0.25)
         if res.f1_hz > 0:
             self.ax.axvline(res.f1_hz, color="#bbbbbb", alpha=0.6)
+        
+        # --- 3D surface streaming (visualization only; no data alteration) ---
+        try:
+            # Deferred import keeps the tab working even if gui/surface3d.py isn’t present.
+            from gui.surface3d import push_surface_line
+        except Exception:
+            push_surface_line = None
+
+        if push_surface_line:
+            try:
+                # Push the exact data you’re plotting (no resampling/interpolation).
+                # x-axis = frequency bins `f`, y-row = RMS spectrum `mag_rms`, timestamp = now.
+                push_surface_line(mag_rms, x=f, t=time.time())
+            except Exception:
+                # Never let the UI fail due to the optional 3D view.
+                pass
 
         self.canvas.draw_idle()
 
