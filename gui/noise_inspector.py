@@ -134,8 +134,6 @@ class NoiseInspectorTab:
         self._stop = threading.Event()
 
         self.auto_flag = False  # Auto re-run like Harmonics
-        self.auto_interval_s = tk.DoubleVar(value=2.0)  # seconds
-        self.lock_to_len = tk.BooleanVar(value=False)
 
         # Plot colors
         self._col_curve   = "#6fa8dc"  # main curve
@@ -193,6 +191,11 @@ class NoiseInspectorTab:
             }
         }
 
+        self.auto_interval_s = tk.DoubleVar(value=2.0)   # seconds
+        self.lock_to_len      = tk.BooleanVar(value=False)
+        self.auto_log_csv     = tk.BooleanVar(value=True)
+        self.auto_log_only_hits = tk.BooleanVar(value=True)
+        
         self._build_ui()
         self.root.after(100, self._poll_results)
     # -- UI --
@@ -226,34 +229,18 @@ class NoiseInspectorTab:
                      values=["0.5","1","2","5","From CSV"], width=10,
                      state="readonly").pack(side="left", padx=4)
 
-        # Analyze / Auto
         self.analyze_btn = ttk.Button(top, text="Analyze", command=self._on_analyze)
         self.analyze_btn.pack(side="left", padx=8)
-
+        
         self.auto_btn = ttk.Button(top, text="Auto: OFF", style="Action.TButton", command=self.toggle_auto)
         self.auto_btn.pack(side="left", padx=4)
+        self.log_chk = ttk.Checkbutton(top, text="Auto Log CSV", variable=self.auto_log_csv, style="Dark.TCheckbutton")
+        self.log_hits_chk = ttk.Checkbutton(top, text="Only on detections", variable=self.auto_log_only_hits, style="Dark.TCheckbutton")
+        self.log_chk.pack(side="left", padx=(8,0))
+        self.log_hits_chk.pack(side="left", padx=(6,0))
 
-        # Auto cadence + lock (use your dark styles)
-        ttk.Label(top, text="Auto Δt [s]").pack(side="left", padx=(8,0))
-
-        # Use ttk.Spinbox so the ttk style applies
-        self.auto_spin = ttk.Spinbox(
-            top, from_=1, to=10, increment=1, width=4,
-            textvariable=self.auto_interval_s, style="Dark.TSpinbox"
-        )
-        self.auto_spin.pack(side="left", padx=4)
-
-        self.lock_chk = ttk.Checkbutton(
-            top, text="Lock to Length",
-            variable=self.lock_to_len, command=self._sync_auto_interval,
-            style="Dark.TCheckbutton"
-        )
-        self.lock_chk.pack(side="left", padx=(6,0))
-
-        # Status (inherits your theme)
         self.status = ttk.Label(top, text="", width=64)
         self.status.pack(side="left", padx=8)
-
 
         # CSV row (used for From CSV and Matched Filter template path)
         self.csv_row = ttk.Frame(self.frame); self.csv_row.pack_forget()
@@ -416,31 +403,6 @@ class NoiseInspectorTab:
                 except Exception: pass
         self.status.config(text=f"{method} preset: {name}")
 
-    
-    # -- Auto helpers --
-    def _compute_auto_interval_s(self) -> float:
-        """Return auto interval seconds; if lock enabled and Length is numeric, use it."""
-        try:
-            if self.lock_to_len.get():
-                L = self.len_s.get()
-                if L != "From CSV":
-                    return max(1.0, float(L))
-        except Exception:
-            pass
-        try:
-            return float(self.auto_interval_s.get())
-        except Exception:
-            return 2.0
-
-    def _sync_auto_interval(self, *_):
-        """If lock enabled, mirror spinbox to Length; used on toggle and Length change."""
-        try:
-            if self.lock_to_len.get():
-                L = self.len_s.get()
-                if L != "From CSV":
-                    self.auto_interval_s.set(max(1.0, float(L)))
-        except Exception:
-            pass
     def _toggle_advanced(self):
         new_state = not self.adv_open.get()
         self.adv_open.set(new_state)
@@ -458,82 +420,24 @@ class NoiseInspectorTab:
 
     # -- Auto mode (like Harmonics) --
     def toggle_auto(self):
-        # Toggle flag + button label
         self.auto_flag = not self.auto_flag
         try:
             self.auto_btn.config(text=f"Auto: {'ON' if self.auto_flag else 'OFF'}")
         except Exception:
             pass
-
-        # If we're locking cadence to Length, keep the spinbox in sync
-        try:
-            self._sync_auto_interval()
-        except Exception:
-            pass
-
-        # If turning ON (and not From CSV), schedule the first automatic run
+        # Kick off immediately if idle and not From CSV
         if self.auto_flag and self.len_s.get() != "From CSV":
-            # don't call _on_analyze() directly; let the scheduler check if we're idle
-            self._auto_rearm()   # no delay passed; _auto_rearm will compute it
+            if not (self._worker and self._worker.is_alive()):
+                self._on_analyze()
 
-
-    
-    def _auto_tick(self):
-        """Fire a new analyze only when idle and conditions allow; otherwise reschedule soon."""
-        if not getattr(self, "auto_flag", False):
-            return
-        try:
-            if self.len_s.get() == "From CSV":
-                return
-        except Exception:
-            pass
-        # If still running, check again shortly without interrupting
-        if self._worker and self._worker.is_alive():
-            try:
-                self.root.after(200, self._auto_tick)
-            except Exception:
-                pass
-            return
-        # Safe to start a new run
-        self._on_analyze()
-
-    def _compute_auto_interval_s(self) -> float:
-        """Return auto interval seconds; if lock enabled and Length is numeric, use it."""
-        try:
-            if self.lock_to_len.get():
-                L = self.len_s.get()
-                if L != "From CSV":
-                    return max(1.0, float(L))
-        except Exception:
-            pass
-        # fall back to spinner
-        try:
-            return float(self.auto_interval_s.get())
-        except Exception:
-            return 2.0
-
-    def _auto_tick(self):
-        """Only fire a new Analyze when the worker is idle; otherwise poll again soon."""
-        if not self.auto_flag or self.len_s.get() == "From CSV":
-            return
-        if not (self._worker and self._worker.is_alive()):
-            self._on_analyze()
-        else:
-            # worker still busy: check again soon
-            self.root.after(200, self._auto_tick)
-
-    def _auto_rearm(self, delay_ms: int | None = None):
-        """Schedule the next _auto_tick with the computed cadence."""
-        if not self.auto_flag or self.len_s.get() == "From CSV":
-            return
-        if delay_ms is None:
-            interval_s = self._compute_auto_interval_s()
-            delay_ms = int(max(1.0, interval_s) * 1000)
-        try:
-            self.root.after(delay_ms, self._auto_tick)
-        except Exception:
-            pass
-
+    def _auto_rearm(self, delay_ms: int = 2000):
+        # Schedule another run if Auto is ON, we are idle, and not in From CSV mode
+        if self.auto_flag and self.len_s.get() != "From CSV":
+            if not (self._worker and self._worker.is_alive()):
+                try:
+                    self.root.after(delay_ms, self._on_analyze)
+                except Exception:
+                    pass
     # -- Run / Stop --
     def _set_running(self, running: bool):
         for widget in (self.analyze_btn,):
@@ -541,7 +445,11 @@ class NoiseInspectorTab:
         for child in self.frame.winfo_children():
             if isinstance(child, ttk.Frame):
                 for w in child.winfo_children():
-                    if isinstance(w, (ttk.Combobox, ttk.Entry, ttk.Button)) and w not in (self.analyze_btn, getattr(self, 'auto_btn', None), getattr(self, 'auto_spin', None), getattr(self, 'lock_chk', None)):
+                    if isinstance(w, (ttk.Combobox, ttk.Entry, ttk.Button)) and w not in (
+                        self.analyze_btn, getattr(self, 'auto_btn', None),
+                        getattr(self, 'auto_spin', None), getattr(self, 'lock_chk', None),
+                        getattr(self, 'log_chk', None), getattr(self, 'log_hits_chk', None)
+                    ):
                         try:
                             if isinstance(w, ttk.Combobox):
                                 w.config(state="disabled" if running else "readonly")
@@ -688,7 +596,7 @@ class NoiseInspectorTab:
             while True:
                 kind, payload = self._q.get_nowait()
                 if kind == "result":
-                    self._show_result(payload); self._set_running(False); self._auto_rearm()
+                    self._show_result(payload); self._auto_log_result(payload); self._set_running(False); self._auto_rearm()
                 elif kind == "error":
                     self.status.config(text=f"Error: {payload}")
                     log_debug(f"[Noise] Error: {payload}")
@@ -791,6 +699,63 @@ class NoiseInspectorTab:
         self.canvas.draw_idle()
 
     # -- Saving --
+    
+    # -- Auto CSV logging --
+    def _auto_log_result(self, r: dict):
+        """Append results to a daily CSV if auto logging is enabled.
+        Writes one row per detection, or a summary row when no detections (if configured).
+        """
+        try:
+            if not self.auto_flag or not self.auto_log_csv.get():
+                return
+        except Exception:
+            return
+
+        dets = list(r.get("detections", []))
+        try:
+            if self.auto_log_only_hits.get() and len(dets) == 0:
+                return
+        except Exception:
+            pass
+
+        import csv, datetime as _dt, json as _json
+        outdir = os.path.join("oszi_csv", "noise_inspector", "logs")
+        os.makedirs(outdir, exist_ok=True)
+        day = _dt.datetime.now().strftime("%Y%m%d")
+        path = os.path.join(outdir, f"NI_auto_{day}.csv")
+
+        ts = _dt.datetime.now().isoformat(timespec="seconds")
+        method = r.get("method","")
+        meta = r.get("meta", {})
+        chan = meta.get("chan","")
+        Fs = meta.get("Fs","")
+        N = meta.get("N","")
+        df = r.get("df_Hz", None)
+        elapsed = r.get("elapsed_s", 0.0)
+        params = meta.get("params", {})
+
+        need_header = not os.path.exists(path)
+        with open(path, "a", newline="") as f:
+            w = csv.writer(f)
+            if need_header:
+                w.writerow(["timestamp","method","chan","Fs","N","df_Hz","elapsed_s","det_index","type","f0_Hz","metric","BW_Hz","notes","params_json"])
+            metric_keys = ("SNR_dB","Occup_%","MSC","SK","Score","Value")
+            if dets:
+                for i, d in enumerate(dets):
+                    val = ""
+                    for k in metric_keys:
+                        if k in d:
+                            val = d[k]; break
+                    w.writerow([ts, method, chan, Fs, N, df, f"{elapsed:.3f}", i,
+                                d.get("type",""), d.get("f0_Hz",""), val, d.get("BW_Hz",""), d.get("notes",""),
+                                _json.dumps(params, separators=(",",":"))])
+            else:
+                w.writerow([ts, method, chan, Fs, N, df, f"{elapsed:.3f}", -1, "", "", "", "", "no detections",
+                            _json.dumps(params, separators=(",",":"))])
+        try:
+            self.status.config(text=f"Auto-logged to {path}")
+        except Exception:
+            pass
     def _save_png(self):
         try:
             ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
