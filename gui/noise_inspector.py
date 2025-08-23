@@ -36,6 +36,8 @@ def _fetch_waveform_local_exclusive(scope, chan_name: str, raw: bool = False):
     """Exclusive read under scpi_lock; defaults to NORM for responsiveness.
        Returns (t[s], y[SI], fs[Hz])."""
     import time as _time
+    import numpy as _np
+    raw_bytes = _np.array([], dtype=_np.uint8)
     with scpi_lock:
         try:
             app_state.is_scpi_busy = True
@@ -268,6 +270,7 @@ class NoiseInspectorTab:
                 self.csv_row.pack(side="top", fill="x", padx=6, pady=(0,6))
             else:
                 self.csv_row.pack_forget()
+            self._context_reset("length changed")
 
         def _on_method_change(*_):
             # Switch label when Matched Filter is selected
@@ -283,9 +286,18 @@ class NoiseInspectorTab:
             # Refresh presets for the new method
             self._refresh_preset_choices()
             self._bacc = None  # reset any running bicoherence accumulator on method change
+            self._context_reset("length changed")
 
         self.len_s.trace_add("write", _on_len_change)
         self.method.trace_add("write", _on_method_change)
+        self.ch_var.trace_add("write",  lambda *_: self._context_reset("channel changed"))
+
+        def _on_preset_change(*_):
+            self._apply_preset(self.method.get(), self.preset.get())
+            self._context_reset("preset changed")
+
+        self.preset.trace_add("write", _on_preset_change)
+
 
         # Advanced panel
         self.adv_open = tk.BooleanVar(value=False)
@@ -400,6 +412,7 @@ class NoiseInspectorTab:
         self.btns = ttk.Frame(self.frame); self.btns.pack(side="top", fill="x", padx=6, pady=(0,8))
         ttk.Button(self.btns, text="Save CSV", command=self._save_csv).pack(side="left", padx=4)
         ttk.Button(self.btns, text="Save PNG", command=self._save_png).pack(side="left", padx=4)
+        ttk.Button(self.btns, text="⭮ Clear", command=lambda: self._context_reset("manual clear")).pack(side="left", padx=6)
         ttk.Button(self.btns, text="🧊 3D Surface", command=self._open_surface3d).pack(side="left", padx=6)
         self.adv_btn = ttk.Button(self.btns, text="Advanced ▾", style="Action.TButton", command=self._toggle_advanced)
         self.adv_btn.pack(side="left", padx=8)
@@ -408,8 +421,6 @@ class NoiseInspectorTab:
 
         # Initialize Preset list for current method and apply Default
         self._refresh_preset_choices()
-        def _on_preset_change(*_):
-            self._apply_preset(self.method.get(), self.preset.get())
         self.preset.trace_add("write", _on_preset_change)
 
     def _refresh_preset_choices(self):
@@ -491,6 +502,88 @@ class NoiseInspectorTab:
                     self.root.after(delay_ms, self._on_analyze)
                 except Exception:
                     pass
+
+    def _context_reset(self, reason: str = ""):
+        """Hard reset of the Noise Inspector *UI state only*.
+        Does not touch any files or scope settings."""
+        # 1) Pause Auto temporarily
+        was_auto = bool(getattr(self, "auto_flag", False))
+        self.auto_flag = False
+        try: self.auto_btn.config(text="Auto: OFF")
+        except Exception: pass
+
+        # 2) Ask running worker to stop and wait briefly
+        try:
+            if self._worker and self._worker.is_alive():
+                self._stop.set()
+                self.status.config(text=f"Reset ({reason}) — waiting for worker…")
+                self._worker.join(timeout=1.2)  # don't block GUI
+        except Exception:
+            pass
+
+        # 3) Drain result queue (old payloads no longer valid)
+        import queue as _q
+        try:
+            while True:
+                self._q.get_nowait()
+        except _q.Empty:
+            pass
+
+        # 4) Reset per-method accumulators/persistence
+        self._bacc = None
+        try:
+            self._persist_store.clear()
+            self._persist_key = None
+        except Exception:
+            # present in this file already; ignore if not yet created
+            pass
+        self._last_result = None
+
+        # 5) Clear table
+        try:
+            for item in self.table.get_children():
+                self.table.delete(item)
+        except Exception:
+            pass
+
+        # 6) Clear the plots and redraw in dark theme
+        for ax in (self.ax_main, self.ax_prev):
+            try:
+                ax.clear()
+                # hard reset so image/aspect state from Bicoherence cannot leak
+                ax.set_aspect("auto", adjustable="box")
+                ax.images.clear()
+                ax.set_xlim(auto=True); ax.set_ylim(auto=True)
+                ax.autoscale(enable=True)
+
+                ax.set_facecolor("#1a1a1a")
+                for s in ax.spines.values(): s.set_color("#cccccc")
+                ax.tick_params(axis="both", colors="white")
+                ax.xaxis.label.set_color("white")
+                ax.yaxis.label.set_color("white")
+                ax.title.set_color("white")
+            except Exception:
+                pass
+
+        try:
+            self.ax_prev.set_visible(False)
+            self.canvas.draw_idle()
+        except Exception:
+            pass
+
+        self._set_running(False)
+        try: self.status.config(text=f"Reset done ({reason}).")
+        except Exception: pass
+
+        # 7) Restore Auto if it was on and we are not in CSV mode
+        if was_auto and self.len_s.get() != "From CSV":
+            self.auto_flag = True
+            try: self.auto_btn.config(text="Auto: ON")
+            except Exception: pass
+            # start a fresh run with the new context
+            try: self.root.after(80, self._on_analyze)
+            except Exception: pass
+
     # -- Run / Stop --
     def _set_running(self, running: bool):
         for widget in (self.analyze_btn,):
@@ -773,7 +866,11 @@ class NoiseInspectorTab:
         method = r.get("method","")
         ax = self.ax_main; ax2 = self.ax_prev
         for a in (ax, ax2):
-            a.clear(); a.set_facecolor("#1a1a1a")
+            a.clear()
+            a.set_aspect("auto", adjustable="box")
+            a.set_xlim(auto=True); a.set_ylim(auto=True)
+            a.autoscale(enable=True)
+            a.set_facecolor("#1a1a1a")
             for s in a.spines.values(): s.set_color("#cccccc")
             a.tick_params(axis="both", colors="white")
             a.xaxis.label.set_color("white"); a.yaxis.label.set_color("white"); a.title.set_color("white")
