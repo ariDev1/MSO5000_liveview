@@ -145,6 +145,11 @@ class NoiseInspectorTab:
         self._persist_max = 12             # number of past curves to show
         self._persist_key = None           # last key to reset on method/chan change
 
+        # --- Bicoherence state ---
+        self._bacc = None  # persistent accumulator when "accumulate" enabled
+        self.bico_accum = tk.BooleanVar(value=True)
+        self.bico_vmax  = tk.DoubleVar(value=1.0)  # color bar max (0..1)
+
         # State
         self._last_result = None  # for saving with params
 
@@ -188,6 +193,15 @@ class NoiseInspectorTab:
                 "Default": {"ar_order": 32, "nfft": 4096},
                 "Sharp peaks": {"ar_order": 64, "nfft": 8192},
                 "Fast scan": {"ar_order": 24, "nfft": 2048}
+            },
+            "Cyclostationary": {
+                "Default": {"nfft": 4096, "hop": 2048, "alpha_max": 5000.0},
+                "Deep":    {"nfft": 8192, "hop": 2048, "alpha_max": 10000.0},
+                "Fast":    {"nfft": 2048, "hop": 1024, "alpha_max": 3000.0}
+            },
+            "Bicoherence": {
+                "Default": {"nfft": 512, "seglen": 512, "overlap": 0.75},
+                "Fast": {"nfft": 256, "seglen": 256, "overlap": 0.5}
             }
         }
 
@@ -216,7 +230,7 @@ class NoiseInspectorTab:
 
         ttk.Label(top, text="Method").pack(side="left", padx=(8,0))
         ttk.Combobox(top, textvariable=self.method,
-                     values=["PSD+CFAR","Spectrogram","MSC","Multitaper","Spectral Kurtosis","Cepstrum","Matched Filter","AR Spectrum"],
+                     values=["PSD+CFAR","Spectrogram","MSC","Multitaper","Spectral Kurtosis","Cepstrum","Matched Filter","AR Spectrum","Cyclostationary","Bicoherence"],
                      width=12, state="readonly").pack(side="left", padx=4)
 
         ttk.Label(top, text="Preset").pack(side="left", padx=(8,0))
@@ -268,6 +282,7 @@ class NoiseInspectorTab:
                     self.csv_row.pack_forget()
             # Refresh presets for the new method
             self._refresh_preset_choices()
+            self._bacc = None  # reset any running bicoherence accumulator on method change
 
         self.len_s.trace_add("write", _on_len_change)
         self.method.trace_add("write", _on_method_change)
@@ -290,6 +305,8 @@ class NoiseInspectorTab:
         self.qmin_ms = tk.DoubleVar(value=0.02)
         self.qmax_ms = tk.DoubleVar(value=5.0)
         self.ar_order = tk.IntVar(value=32)
+        self.alpha_max = tk.DoubleVar(value=5000.0)   # Hz
+        self.db_floor  = tk.DoubleVar(value=-40.0)    # dB floor for image display
 
         row1 = ttk.Frame(self.adv); row1.pack(side="top", fill="x", padx=6, pady=2)
         for label, var, w in [("NFFT", self.nfft, 8),
@@ -313,6 +330,19 @@ class NoiseInspectorTab:
                               ("AR_order", self.ar_order, 8)]:
             ttk.Label(row3, text=label).pack(side="left", padx=(0,4))
             ttk.Entry(row3, textvariable=var, width=w).pack(side="left", padx=(0,8))
+
+        ttk.Label(row3, text="α_max (Hz)").pack(side="left", padx=(0,4))
+        ttk.Entry(row3, textvariable=self.alpha_max, width=10).pack(side="left", padx=(0,8))
+        ttk.Label(row3, text="dB_floor").pack(side="left", padx=(0,4))
+        ttk.Entry(row3, textvariable=self.db_floor, width=8).pack(side="left", padx=(0,8))
+
+        # --- Bicoherence controls (appear in Advanced panel) ---
+        row_bico = ttk.Frame(self.adv); row_bico.pack(side="top", fill="x", padx=6, pady=2)
+        ttk.Checkbutton(row_bico, text="Bico: accumulate across runs",
+                        variable=self.bico_accum, style="Dark.TCheckbutton").pack(side="left", padx=(0,10))
+        ttk.Label(row_bico, text="Bico vmax").pack(side="left", padx=(0,4))
+        ttk.Entry(row_bico, textvariable=self.bico_vmax, width=6).pack(side="left", padx=(0,10))
+        ttk.Button(row_bico, text="Clear Bico", command=self._clear_bico).pack(side="left", padx=(0,10))
 
         # Matplotlib figure with GridSpec
         fig = Figure(figsize=(5, 4.8), dpi=100)
@@ -339,6 +369,8 @@ class NoiseInspectorTab:
             "Cepstrum": ("Type","f0_Hz","SNR_dB","BW_Hz","Notes"),
             "Matched Filter": ("Type","f0_Hz","SNR_dB","BW_Hz","Notes"),
             "AR Spectrum": ("Type","f0_Hz","SNR_dB","BW_Hz","Notes"),
+            "Cyclostationary": ("Type","f0_Hz","α_Hz","SCD_dB","BW_Hz","Notes"),
+            "Bicoherence": ("Type","f1_Hz","f2_Hz","b2","Notes"),
         }
         init_cols = self.headers.get(self.method.get(), self.headers["PSD+CFAR"])
         self.table = ttk.Treeview(self.frame, columns=init_cols, show="headings", height=5)
@@ -397,12 +429,19 @@ class NoiseInspectorTab:
             "msc_thr": self.msc_thr, "hop": self.hop, "k_tapers": self.k_tapers,
             "sk_thr": self.sk_thr, "qmin_ms": self.qmin_ms, "qmax_ms": self.qmax_ms,
             "ar_order": self.ar_order,
+            "alpha_max": self.alpha_max,   # <-- add
+            "db_floor": self.db_floor      # <-- add
         }
         for k, v in params.items():
             if k in var_map:
                 try: var_map[k].set(v)
                 except Exception: pass
         self.status.config(text=f"{method} preset: {name}")
+
+    def _clear_bico(self):
+        self._bacc = None
+        try: self.status.config(text="Bicoherence accumulator cleared")
+        except Exception: pass
 
     def _toggle_advanced(self):
         new_state = not self.adv_open.get()
@@ -573,6 +612,116 @@ class NoiseInspectorTab:
             elif method == "AR Spectrum":
                 from gui.noise.ar_spectrum import run_ar_spectrum
                 r = run_ar_spectrum(yA, fsA, order=params["ar_order"], nfft=params["nfft"], stop_event=self._stop)
+            elif method == "Cyclostationary":
+                from gui.noise.cyclo import run_cyclo
+                r = run_cyclo(yA, fsA, stop_event=self._stop,
+                              nfft=int(self.nfft.get()),
+                              hop=int(self.hop.get()),
+                              alpha_max=float(self.alpha_max.get()),
+                              db_floor=float(self.db_floor.get()),
+                              normalize=True)
+
+            elif method == "Bicoherence":
+                # Lazy import: keine harte Abhängigkeit
+                from gui.noise.cyclo_bispec import BicoherenceAccumulator
+                import numpy as np
+
+                n_avail = len(yA)
+                nfft_req = int(self.nfft.get())
+
+                # NFFT an vorhandene Punkte anpassen (power-of-two, min. 128)
+                if n_avail < nfft_req:
+                    nfft = 1 << int(np.floor(np.log2(max(128, n_avail))))
+                    if nfft > n_avail:
+                        nfft = max(32, n_avail)  # Sicherheitsnetz
+                else:
+                    nfft = nfft_req
+
+                noverlap = int(max(0, min(0.95, float(self.overlap.get()))) * nfft)
+                adj_note = "" if nfft == nfft_req else f" (NFFT→{nfft} due to {n_avail} pts)"
+
+                # persistent vs one-shot
+                if self.bico_accum.get():
+                    acc = self._bacc
+                    if (acc is None) or (acc.nfft != nfft) or (acc.noverlap != noverlap):
+                        acc = BicoherenceAccumulator(nfft=nfft, noverlap=noverlap, window="hann", demean=True)
+                        self._bacc = acc
+                else:
+                    acc = BicoherenceAccumulator(nfft=nfft, noverlap=noverlap, window="hann", demean=True)
+
+                # Update + Heatmap
+                acc.update(yA, fsA)
+                f, _B, b2 = acc.results()
+
+                # -------- Peak-Picker (Top-K) für Tabelle/CSV --------
+                try:
+                    K = int(self.topk.get())
+                except Exception:
+                    K = 8
+
+                det_rows = []
+                b2_work = b2.copy()
+                if b2_work.size:
+                    # DC + Ränder unterdrücken
+                    b2_work[0, :] = 0; b2_work[:, 0] = 0
+                    b2_work[-1, :] = 0; b2_work[:, -1] = 0
+
+                    b2_max = float(np.nanmax(b2_work)) if np.isfinite(np.nanmax(b2_work)) else 0.0
+                    thr = max(0.2, 0.5 * b2_max)
+
+                    try:
+                        from scipy.ndimage import maximum_filter
+                        locmax = (b2_work == maximum_filter(b2_work, size=3, mode="nearest")) & (b2_work >= thr)
+                        ii, jj = np.nonzero(locmax)
+                        vals = b2_work[ii, jj]
+                        if vals.size > 0:
+                            order = np.argsort(vals)[::-1][:K]
+                            ii, jj, vals = ii[order], jj[order], vals[order]
+                            for i, j, v in zip(ii, jj, vals):
+                                det_rows.append({
+                                    "type": "b2-peak",
+                                    "f1_Hz": float(f[j]),
+                                    "f2_Hz": float(f[i]),
+                                    "b2": float(v),
+                                    "notes": f"f3≈{(f[j]+f[i]):.1f} Hz"
+                                })
+                    except Exception:
+                        # Fallback ohne SciPy: global Top-K
+                        flat = b2_work.ravel()
+                        if flat.size > 0:
+                            idx = np.argpartition(flat, -K)[-K:]
+                            order = np.argsort(flat[idx])[::-1]
+                            ii, jj = np.unravel_index(idx[order], b2_work.shape)
+                            for i, j in zip(ii, jj):
+                                v = float(b2_work[i, j])
+                                if v <= 0: 
+                                    continue
+                                det_rows.append({
+                                    "type": "b2-peak",
+                                    "f1_Hz": float(f[j]),
+                                    "f2_Hz": float(f[i]),
+                                    "b2": v,
+                                    "notes": f"f3≈{(f[j]+f[i]):.1f} Hz"
+                                })
+
+                # Result-Payload (mit Detections!)
+                r = {
+                    "method": "Bicoherence",
+                    "image": b2,
+                    "extent": [f[0], f[-1], f[0], f[-1]],
+                    "xlabel": "f1 (Hz)",
+                    "ylabel": "f2 (Hz)",
+                    "title": "Bicoherence" + adj_note,
+                    "vmin": 0.0,
+                    "vmax": float(self.bico_vmax.get()),
+                    "df_Hz": float(fsA) / max(1, nfft),
+                    "detections": det_rows,
+                    "aspect": "equal",
+                    "draw_diag": True,
+                    "interpolation": "nearest"
+                }
+
+
             else:
                 raise NotImplementedError(f"Unknown method: {method}")
 
@@ -634,10 +783,32 @@ class NoiseInspectorTab:
             a.get_yaxis().get_offset_text().set_visible(False)
 
         if "image" in r:
-            img = r["image"]; extent = r.get("extent")
-            ax.imshow(img, aspect="auto", origin="lower", extent=extent)
-            ax.set_ylabel("Frequency (Hz)"); ax.set_xlabel("Time (s)")
-            ax.set_title(method if method else "Spectrogram", pad=6)
+            img = r["image"]
+            extent = r.get("extent", None)
+
+            # Build imshow kwargs once
+            imshow_kwargs = dict(origin="lower")
+            if extent is not None:
+                imshow_kwargs["extent"] = extent
+            if r.get("interpolation") is not None:
+                imshow_kwargs["interpolation"] = r["interpolation"]
+            if (r.get("vmin") is not None) or (r.get("vmax") is not None):
+                imshow_kwargs["vmin"] = r.get("vmin")
+                imshow_kwargs["vmax"] = r.get("vmax")
+
+            ax.imshow(img, aspect=r.get("aspect", "auto"), **imshow_kwargs)
+
+            # Axes formatting + labels/title (always)
+            ax.yaxis.set_major_formatter(self._eng)
+            ax.set_ylabel(r.get("ylabel", "Frequency (Hz)"))
+            ax.set_xlabel(r.get("xlabel", "Time (s)"))
+            ax.set_title(r.get("title", method if method else "Spectrogram"), pad=6)
+
+            # Optional visual cue for triangular domains (e.g., bicoherence)
+            if r.get("draw_diag") and extent is not None:
+                xmin, xmax, ymin, ymax = extent
+                ax.plot([xmin, xmax], [ymax, ymin], linestyle="--", linewidth=0.8, color="#666666")
+
         else:
             x = r["plot_x"]; y = r["plot_y"]
             # Build a key per method+channel so trails reset when context changes
@@ -682,17 +853,29 @@ class NoiseInspectorTab:
             self.table.column(c, width=widths.get(c, 100), anchor=anchors.get(c, "e"), stretch=(c=="Notes"))
 
         for iid in self.table.get_children(): self.table.delete(iid)
+
         for d in r.get("detections", []):
-            metric_keys = ("SNR_dB","Occup_%","MSC","SK","Score","Value")
-            val = 0.0
-            for _k in metric_keys:
-                if _k in d:
-                    val = d[_k]; break
-            row = (d.get("type","line"),
-                   round(float(d.get("f0_Hz", 0.0)), 3),
-                   round(float(val), 3),
-                   round(float(d.get("BW_Hz", 0.0)), 3),
-                   d.get("notes",""))
+            if method == "Bicoherence":
+                row = (
+                    d.get("type", "b2-peak"),
+                    round(float(d.get("f1_Hz", 0.0)), 3),
+                    round(float(d.get("f2_Hz", 0.0)), 3),
+                    round(float(d.get("b2", 0.0)), 3),
+                    d.get("notes", "")
+                )
+            else:
+                # ← dein bisheriger Code für andere Methoden (unverändert)
+                metric_keys = ("SNR_dB","Occup_%","MSC","SK","Score","Value")
+                val = 0.0
+                for _k in metric_keys:
+                    if _k in d:
+                        val = d[_k]; break
+                row = (d.get("type","line"),
+                       round(float(d.get("f0_Hz", 0.0)), 3),
+                       round(float(val), 3),
+                       round(float(d.get("BW_Hz", 0.0)), 3),
+                       d.get("notes",""))
+
             self.table.insert("", "end", values=row)
 
         df = r.get("df_Hz", None)
