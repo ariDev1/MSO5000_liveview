@@ -171,9 +171,9 @@ class NoiseInspectorTab:
                 "High resolution": {"nfft": 8192, "hop": 2048, "pfa": 1e-3, "smooth_bins": 41, "topk": 10}
             },
             "MSC": {
-                "Default": {"nfft": 4096, "seglen": 4096, "overlap": 0.5, "msc_thr": 0.5},
-                "Deep": {"nfft": 8192, "seglen": 8192, "overlap": 0.75, "msc_thr": 0.6},
-                "Fast scan": {"nfft": 2048, "seglen": 2048, "overlap": 0.25, "msc_thr": 0.5}
+                "Default": {"nfft": 4096, "seglen": 512, "overlap": 0.5, "msc_thr": 0.5},
+                "Deep": {"nfft": 8192, "seglen": 1024, "overlap": 0.75, "msc_thr": 0.6},
+                "Fast scan": {"nfft": 2048, "seglen": 256, "overlap": 0.25, "msc_thr": 0.5}
             },
             "Multitaper": {
                 "Default": {"k_tapers": 6, "nfft": 4096, "seglen": 4096, "overlap": 0.5, "pfa": 1e-3, "smooth_bins": 31},
