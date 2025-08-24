@@ -221,9 +221,12 @@ class HarmonicsTab:
             command=self._open_surface3d
         )
         self.surface3d_btn.grid(row=1, column=3, padx=(8,4), pady=(2,6))
+
         self.status_lbl = controls.grid_slaves(row=0, column=13)[0]
-        self.status_lbl.grid_configure(row=1, column=4, sticky="w", padx=(8,4))
-        controls.columnconfigure(4, weight=1)
+        self.status_lbl.grid_configure(row=1, column=4, sticky="ew", padx=(8,4), columnspan=9)
+        controls.columnconfigure(4, weight=1)  # let col 4 take all extra width
+        self.status_lbl.configure(anchor="w")  # keep text left-aligned while stretching
+
         controls.rowconfigure(1, weight=0)
         # smaller font for the "Window" combobox (col 3 in row 0)
         ttk.Style().configure("Small.TCombobox", font=("TkDefaultFont", 8))
