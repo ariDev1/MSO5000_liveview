@@ -61,3 +61,26 @@ BLACKLISTED_COMMANDS = [
     # (optional variants if Rigol firmware ever changes spelling)
     # ":MATH1:PROBe?", ":MATH2:PROBe?", ":MATH3:PROBe?", ":MATH4:PROBe?",
 ]
+
+# --- UI / Window preferences (operator-tunable) ---
+
+# Start maximized/fullscreen-like. On some Linux WMs this maps to the WM's maximize.
+WINDOW_START_MAXIMIZED = False
+
+# Fallback geometry if not maximized (standard Tk WxH or WxH+X+Y)
+WINDOW_GEOMETRY = "1200x800"
+
+# Minimum window size the app will allow
+WINDOW_MINSIZE = (800, 600)
+
+# Optional pixel density scaling for HiDPI (1.0 = 100%)
+# Try 1.25 or 1.5 if UI looks too small on 4K monitors.
+TK_SCALING = 1.0
+
+# Optional placement override (add to geometry), e.g. "+1920+0" for 2nd monitor
+WINDOW_PLACEMENT = None  # or "+1920+0"
+
+# If True, the live scope screenshot may scale larger than its native resolution
+# when the window is big (e.g., maximized). If False, it will never exceed
+# the original pixel size (still allowed to scale down to fit).
+SCOPE_IMAGE_ALLOW_UPSCALE = False

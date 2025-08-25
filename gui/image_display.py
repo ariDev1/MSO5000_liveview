@@ -5,7 +5,7 @@ import time
 import threading
 from PIL import Image, ImageTk
 import tkinter as tk
-from config import INTERVALL_BILD
+from config import INTERVALL_BILD, SCOPE_IMAGE_ALLOW_UPSCALE
 from utils.debug import log_debug
 
 BILDPFAD = "/tmp/oszi_screenshot.png"
@@ -43,6 +43,7 @@ def update_image(root):
         from app import app_state
         if getattr(app_state, "is_shutting_down", False):
             return
+            
         if img_label is None or not isinstance(img_label, tk.Widget) or not img_label.winfo_exists():
             return
 
@@ -50,23 +51,34 @@ def update_image(root):
             with open(BILDPFAD, "rb") as f:
                 img = Image.open(f)
                 img.load()
-            window_width = root.winfo_width()
-            window_height = root.winfo_height()
-            available_height = max(300, window_height - 250)
-            available_width = max(600, window_width - 50)
 
-            img_ratio = img.width / img.height
-            if available_width / available_height > img_ratio:
-                new_height = available_height
-                new_width = int(available_height * img_ratio)
-            else:
-                new_width = available_width
-                new_height = int(available_width / img_ratio)
+        # Window-fit area (keep your own margins if you like)
+        window_width  = root.winfo_width()
+        window_height = root.winfo_height()
+        available_height = max(300, window_height - 250)
+        available_width  = max(600,  window_width  - 50)
 
-            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            img_tk = ImageTk.PhotoImage(img)
-            img_label.config(image=img_tk)
-            img_label.image = img_tk
+        # Compute scale factors vs. the original image size
+        factor_w = available_width  / img.width
+        factor_h = available_height / img.height
+        scale = min(factor_w, factor_h)
+
+        # Respect operator preference: disallow upscaling if requested
+        if not SCOPE_IMAGE_ALLOW_UPSCALE:
+            scale = min(scale, 1.0)
+
+        new_w = max(1, int(img.width  * scale))
+        new_h = max(1, int(img.height * scale))
+
+        # Avoid needless resampling when scale ≈ 1.0
+        if abs(scale - 1.0) > 0.01:
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        # else: keep original img size (crisp, no blur)
+
+        img_tk = ImageTk.PhotoImage(img)
+        img_label.configure(image=img_tk)
+        img_label.image = img_tk
+
     except Exception as e:
         log_debug(f"Image Load Error: {e}")
 
