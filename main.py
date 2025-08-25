@@ -82,16 +82,61 @@ def connect_and_prepare(ip: str):
 # GUI wiring helpers
 # ----------------------------------------------------------------------------
 
+def apply_window_prefs(root: tk.Tk, ip: str):
+    # Title (always set here)
+    root.title(f"{V.APP_NAME} {V.VERSION} [{V.GIT_COMMIT}] 🢒 {ip}")
+
+    # Read config with safe fallbacks
+    try:
+        import config
+    except Exception:
+        config = type("cfg", (), {})()  # dummy
+
+    # DPI / Tk scaling
+    scaling = getattr(config, "TK_SCALING", 1.0)
+    try:
+        root.tk.call("tk", "scaling", scaling)
+    except Exception:
+        pass
+
+    # Decide between maximized vs explicit geometry
+    start_max = bool(getattr(config, "WINDOW_START_MAXIMIZED", False))
+    geom = os.environ.get("MSO5000_GEOMETRY",
+            getattr(config, "WINDOW_GEOMETRY", "1200x800"))
+
+    placement = getattr(config, "WINDOW_PLACEMENT", None)
+    if placement and "+" in geom and "+" not in placement:
+        # ignore malformed placement
+        placement = None
+    if placement:
+        geom = f"{geom}{placement}"
+
+    if start_max:
+        # Try common “maximize” options across platforms/WMs
+        try:
+            root.state("zoomed")
+        except Exception:
+            try:
+                root.attributes("-zoomed", True)
+            except Exception:
+                # Fallback: fill screen
+                sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+                root.geometry(f"{sw}x{sh}+0+0")
+    else:
+        root.geometry(geom)
+
+    # Min size
+    min_w, min_h = getattr(config, "WINDOW_MINSIZE", (800, 600))
+    root.minsize(int(min_w), int(min_h))
+
+
 def build_root(ip: str):
     root = tk.Tk()
-    root.title(f"{V.APP_NAME} {V.VERSION} [{V.GIT_COMMIT}] 🢒 {ip}")
-    root.geometry("1200x800")
-    root.minsize(800, 600)
+    apply_window_prefs(root, ip)  # ← single source of truth
 
     main_frame = tk.Frame(root, bg="#1a1a1a")
     main_frame.pack(fill="both", expand=True)
     return root, main_frame
-
 
 def build_topbar(parent, no_marquee: bool):
     """Top row with marquee and action buttons. Returns (toggle_btn, marquee_widget)."""
