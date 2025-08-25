@@ -31,6 +31,7 @@ from cycler import cycler
 from matplotlib import cm
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
+from matplotlib.colors import LightSource
 
 # ------------------------------- state ---------------------------------------
 _surface_state = {
@@ -56,6 +57,10 @@ _surface_state = {
     "proj": "persp",             # "persp" | "ortho"
     "focal": 0.75,               # smaller => stronger perspective (if MPL supports it)
     "dist": 7.0,                 # fallback for older MPL (smaller => stronger perspective; default ~10)
+    # visual tuning (view-only)
+    "z_gain": 1.0,            # exaggerate Z relief for visibility
+    "clip_pct": 98.0,         # percentile clip for color/lighting stability (1..99.9)
+    "shade": True,            # LightSource shading for surfaces
     "_proj_supports_focal": None,
 }
 
@@ -302,6 +307,7 @@ def _overlay_text():
         f"Z: {'log' if st.get('log_z') else 'linear'}   (L)",
         f"Last N: {st.get('max_lines',60)}   stride: {st.get('t_stride',1)}   ([ / ] , / .)",
         f"Pts/line: ~{st.get('target_pts_per_line',400)}   (p / P)",
+        f"Z×: {st.get('z_gain',1.0):.2f} (g/G)  Clip: {st.get('clip_pct',98.0):.1f}% (;/:)  Shade: {'on' if st.get('shade',True) else 'off'} (S)",
         f"Layout: {'full-bleed' if st.get('full_bleed',True) else 'fit-all'}   (F)",
         f"Proj: {st.get('proj','persp')}   (Z)  —  {proj_extra}",
         "H: toggle help overlay",
@@ -407,6 +413,14 @@ def _on_key(event):
         st["target_pts_per_line"] = min(2000, int(st.get("target_pts_per_line",400)) + 50); changed = True
     if k.lower() == 'c':
         _clear_history(); return
+    # Z gain
+    if k == 'g':  st["z_gain"] = max(0.1, float(st.get("z_gain",1.0)) * 0.8);  changed = True
+    if k == 'G':  st["z_gain"] = min(10.0, float(st.get("z_gain",1.0)) * 1.25); changed = True
+    # percentile clip
+    if k == ';':  st["clip_pct"] = max(50.0, float(st.get("clip_pct",98.0)) - 2.0); changed = True
+    if k == ':':  st["clip_pct"] = min(99.9, float(st.get("clip_pct",98.0)) + 2.0); changed = True
+    # shading toggle
+    if k.lower() == 's': st["shade"] = not st.get("shade", True); changed = True
 
     if st.get("history") is not None and st["history"].maxlen != st["max_lines"]:
         st["history"] = deque(list(st["history"]), maxlen=st["max_lines"])
@@ -426,6 +440,11 @@ def _redraw_throttled():
     _redraw()
 
 def _redraw():
+    import time
+    import numpy as np
+    from matplotlib import cm, colors
+    from matplotlib.colors import LightSource
+
     st = _surface_state
     ax = st.get("ax")
     canvas = st.get("canvas")
@@ -433,14 +452,27 @@ def _redraw():
     if ax is None or canvas is None or not hist:
         return
 
-    SURF_MIN_LINES = 3
-    MAX_SURF_POINTS = 150_000  # cap grid size for plot_surface
+    # ---- view-only knobs (safe defaults) ----
+    z_gain       = float(st.get("z_gain", 1.0))             # Z exaggeration (view only)
+    clip_pct     = float(st.get("clip_pct", 98.0))          # percentile for robust clim
+    color_gamma  = float(st.get("color_gamma", 1.0))        # gamma for midtone detail
+    cmap_name    = st.get("cmap", "viridis")                # 'viridis' | 'magma' | ...
+    shade        = bool(st.get("shade", True))              # enable lighting at all
+    dynamic_light= bool(st.get("dynamic_light", False))     # re-light with camera (slower)
+    allow_interp = bool(st.get("allow_interpolate", False)) # interp non-uniform rows
+
+    # Performance caps (tuned for interactivity)
+    SURF_MIN_LINES      = 3
+    MAX_SURF_POINTS     = 150_000      # auto switch to wire above this
+    SURFACE_POLYS_CAP   = int(st.get("surface_polys_cap", 70_000))  # ~triangles
+    CAM_EPS_DEG         = 8.0          # min angle change to recompute lighting
+    SAMPLE_MAX_ELEMS    = 80_000       # percentile sample cap
 
     ax.clear()
     _style_3d(ax)
     _apply_projection(ax)
 
-    # apply stride (time decimation)
+    # time decimation (view-only)
     t_stride = max(1, int(st.get("t_stride", 1)))
     if t_stride > 1:
         hist = hist[::t_stride]
@@ -453,7 +485,7 @@ def _redraw():
         _update_overlay(); canvas.draw_idle(); return
 
     M0 = len(xs[0])
-    uniform = all(len(x)==M0 and len(y)==M0 for x,y in zip(xs,ys))
+    uniform = all(len(x) == M0 and len(y) == M0 for x, y in zip(xs, ys))
 
     t0 = st.get("t0") or ts[0]
     times = np.array(ts, dtype=float) - float(t0)
@@ -470,14 +502,22 @@ def _redraw():
             ax.plot(xv, np.full_like(xv, t - t0), zv, linewidth=0.9, alpha=0.95)
 
     mode = st.get("render_mode", "lines")
-    if (nlines < SURF_MIN_LINES) or not uniform or mode == "lines":
+    if (nlines < SURF_MIN_LINES) or (mode == "lines"):
         _plot_lines()
         ax.margins(x=0.02, y=0.02, z=0.02)
         _update_overlay()
         canvas.draw_idle()
         return
 
-    # Surface/wire need a common X grid (use first row as reference)
+    # Need a common X grid; if non-uniform and not allowed to interp -> fallback to lines
+    if (not uniform) and (not allow_interp):
+        _plot_lines()
+        ax.margins(x=0.02, y=0.02, z=0.02)
+        _update_overlay()
+        canvas.draw_idle()
+        return
+
+    # Reference grid from first row (decimated)
     X = xs[0][::decim]
     if X.size < 2:
         _plot_lines()
@@ -486,19 +526,119 @@ def _redraw():
         canvas.draw_idle()
         return
 
-    # Build Z (nlines x len(X)) and tile Y (same shape)
+    # Build Z rows (view-only), with optional interpolation for non-uniform rows
     Z_rows = []
-    for y in ys:
-        z = np.log10(np.maximum(y, 1e-12)) if st.get("log_z") else y
-        Z_rows.append(z[::decim])
+    if uniform:
+        for y in ys:
+            z = np.log10(np.maximum(y, 1e-12)) if st.get("log_z") else y
+            Z_rows.append(z[::decim])
+    else:
+        for xrow, yrow in zip(xs, ys):
+            yv = np.interp(X, xrow[::decim], yrow[::decim], left=yrow[0], right=yrow[-1])
+            z = np.log10(np.maximum(yv, 1e-12)) if st.get("log_z") else yv
+            Z_rows.append(z)
+
     Z = np.vstack(Z_rows)
     Y = np.tile(times[:, None], (1, X.shape[0]))
+    Z_view = Z * z_gain  # view-only geometry exaggeration
 
     mesh_pts = X.size * Y.shape[0]
-    if mode == "wire" or mesh_pts > MAX_SURF_POINTS:
-        ax.plot_wireframe(X, Y, Z, rstride=1, cstride=max(1, int(X.shape[0] // 200)))
+
+    # --- Wireframe path (unchanged visual, adaptive density) ---
+    if (mode == "wire") or (mesh_pts > MAX_SURF_POINTS):
+        max_wires_y = 120
+        rstride = max(1, int(np.ceil(Y.shape[0] / max_wires_y)))
+        max_wires_x = 220
+        cstride = max(1, int(np.ceil(X.shape[0] / max_wires_x)))
+        ax.plot_wireframe(
+            X, Y, Z_view,
+            rstride=rstride, cstride=cstride,
+            linewidth=0.4, alpha=0.65, color="#7aa5ff"
+        )
+        ax.margins(x=0.02, y=0.02, z=0.02)
+        _update_overlay(); canvas.draw_idle(); return
+
+    # -------- Fast surface path --------
+    # Cap triangles aggressively for interactivity
+    tri_est = max(1, (Y.shape[0]-1) * (X.shape[0]-1) * 2)
+    if tri_est > SURFACE_POLYS_CAP:
+        factor = float(np.sqrt(tri_est / float(SURFACE_POLYS_CAP)))
+        rstride_s = max(1, int(np.floor(factor)))
+        cstride_s = max(1, int(np.ceil(factor)))
     else:
-        ax.plot_surface(X, Y, Z, rstride=1, cstride=1, linewidth=0, antialiased=False, cmap=cm.viridis)
+        rstride_s = 1
+        cstride_s = 1
+
+    # Decimate the geometry BEFORE shading/coloring (big win)
+    Xp = X[::cstride_s]
+    Zp = Z_view[::rstride_s, ::cstride_s]
+    Yp = Y[::rstride_s, ::cstride_s]
+
+    # Robust clim from a bounded sample (cheap on big grids)
+    if Zp.size > SAMPLE_MAX_ELEMS:
+        step = int(np.ceil(np.sqrt(Zp.size / SAMPLE_MAX_ELEMS)))
+        Zs = Zp[::step, ::step]
+    else:
+        Zs = Zp
+    p = np.clip(clip_pct, 50.0, 99.9)
+    vmin = np.percentile(Zs, 100.0 - p)
+    vmax = np.percentile(Zs, p)
+    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin >= vmax:
+        vmin, vmax = float(np.min(Zs)), float(np.max(Zs))
+
+    cmap_obj = getattr(cm, cmap_name, cm.viridis)
+    norm = colors.PowerNorm(gamma=max(0.1, color_gamma), vmin=vmin, vmax=vmax)
+
+    # Prepare (possibly cached) facecolors
+    rgb = None
+    cache = st.setdefault("_surf_cache", {})
+    az = float(getattr(ax, "azim", 45.0))
+    el = float(getattr(ax, "elev", 30.0))
+
+    # Static or dynamic lighting choice (dynamic is slower)
+    if shade:
+        if dynamic_light:
+            # Recompute only if camera moved enough or data changed
+            sig = (Zp.shape, round(float(Zp.mean()), 6), round(float(Zp.std()), 6), round(times[-1], 6))
+            last_sig = cache.get("sig_dyn")
+            last_az  = cache.get("az_dyn")
+            last_el  = cache.get("el_dyn")
+            if cache.get("rgb_dyn") is not None and last_sig == sig and \
+               abs(az - last_az) < CAM_EPS_DEG and abs(el - last_el) < CAM_EPS_DEG and \
+               cache.get("cmap_dyn") == cmap_name and cache.get("gamma_dyn") == color_gamma and \
+               cache.get("zgain_dyn") == z_gain:
+                rgb = cache["rgb_dyn"]
+            else:
+                ls = LightSource(azdeg=(az - 35.0) % 360.0, altdeg=float(np.clip(el + 5.0, 10.0, 80.0)))
+                rgb = ls.shade(Zp, cmap=cmap_obj, norm=norm, fraction=1.0)
+                cache.update({
+                    "rgb_dyn": rgb, "sig_dyn": sig, "az_dyn": az, "el_dyn": el,
+                    "cmap_dyn": cmap_name, "gamma_dyn": color_gamma, "zgain_dyn": z_gain
+                })
+        else:
+            # Fast static light; cache per data signature
+            sig = (Zp.shape, round(float(Zp.mean()), 6), round(float(Zp.std()), 6), round(times[-1], 6))
+            if cache.get("rgb_sta") is not None and cache.get("sig_sta") == sig and \
+               cache.get("cmap_sta") == cmap_name and cache.get("gamma_sta") == color_gamma and \
+               cache.get("zgain_sta") == z_gain:
+                rgb = cache["rgb_sta"]
+            else:
+                ls = LightSource(azdeg=320, altdeg=35)
+                rgb = ls.shade(Zp, cmap=cmap_obj, norm=norm, fraction=0.9)
+                cache.update({
+                    "rgb_sta": rgb, "sig_sta": sig,
+                    "cmap_sta": cmap_name, "gamma_sta": color_gamma, "zgain_sta": z_gain
+                })
+    else:
+        # No lighting: straight colormap (fastest)
+        rgb = cmap_obj(norm(Zp))
+
+    ax.plot_surface(
+        Xp, Yp, Zp,
+        rstride=1, cstride=1,
+        facecolors=rgb,
+        linewidth=0, antialiased=False, shade=False
+    )
 
     ax.margins(x=0.02, y=0.02, z=0.02)
     _update_overlay()
