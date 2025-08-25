@@ -286,6 +286,7 @@ class NoiseInspectorTab:
             # Refresh presets for the new method
             self._refresh_preset_choices()
             self._bacc = None  # reset any running bicoherence accumulator on method change
+            log_debug(f"★ Noise: Method → {self.method.get()}", level="MINIMAL")
             self._context_reset("length changed")
 
         self.len_s.trace_add("write", _on_len_change)
@@ -448,6 +449,15 @@ class NoiseInspectorTab:
                 try: var_map[k].set(v)
                 except Exception: pass
         self.status.config(text=f"{method} preset: {name}")
+        try:
+            # params is already defined in this function
+            summary = " ".join(f"{k}={v}" for k, v in params.items() if k in (
+                "nfft","seglen","overlap","pfa","smooth_bins","topk","msc_thr","hop",
+                "k_tapers","sk_thr","qmin_ms","qmax_ms","ar_order","alpha_max","db_floor"
+            ) and v is not None)
+            log_debug(f"★ Noise: Preset applied → {method}/{name} | {summary}", level="MINIMAL")
+        except Exception:
+            pass
 
     def _clear_bico(self):
         self._bacc = None
@@ -615,6 +625,11 @@ class NoiseInspectorTab:
             length = 1.0
         args = (ch, method, length, self.csv_path.get())
         self._worker = threading.Thread(target=self._worker_run, args=args, daemon=True)
+        log_debug(
+            f"★ Noise: Run → ch={ch} | method={method} | length={length_s}"
+            + (f" | csv={self.csv_path.get()}" if str(length_s) == "From CSV" else ""),
+            level="MINIMAL"
+        )
         self._worker.start()
 
     # -- Worker --
@@ -864,6 +879,58 @@ class NoiseInspectorTab:
     # -- Rendering --
     def _show_result(self, r: dict):
         method = r.get("method","")
+        # --- MINIMAL result headline for the debug log ---
+        try:
+            meta    = r.get("meta", {})
+            chan    = meta.get("chan", "?")
+            Fs      = meta.get("Fs", "")
+            N       = meta.get("N", "")
+            elapsed = r.get("elapsed_s", "")
+            dets    = list(r.get("detections", []))
+
+            def _safe(v):
+                try: return f"{float(v):.3g}"
+                except Exception: return str(v)
+
+            if method == "Bicoherence":
+                if dets:
+                    d0 = dets[0]
+                    log_debug(
+                        f"★ Noise[{method}] {chan}: hits={len(dets)} "
+                        f"top=(f1={_safe(d0.get('f1_Hz'))} Hz, f2={_safe(d0.get('f2_Hz'))} Hz, b2={_safe(d0.get('b2'))}) "
+                        f"| Fs={_safe(Fs)} Hz N={N} t={_safe(elapsed)} s",
+                        level="MINIMAL"
+                    )
+                else:
+                    log_debug(
+                        f"★ Noise[{method}] {chan}: hits=0 | Fs={_safe(Fs)} Hz N={N} t={_safe(elapsed)} s",
+                        level="MINIMAL"
+                    )
+            else:
+                if dets:
+                    d0 = dets[0]
+                    # take the first available score-like field
+                    score = None
+                    for k in ("SNR_dB","MSC","SK","Score","Value","corr","Occup_%"):
+                        if k in d0: score = d0[k]; break
+                    fkey = "f0_Hz" if "f0_Hz" in d0 else ("f_Hz" if "f_Hz" in d0 else None)
+                    ftxt = f"{_safe(d0.get(fkey))} Hz" if fkey else "?"
+                    stxt = f"{_safe(score)}" if score is not None else "-"
+                    log_debug(
+                        f"★ Noise[{method}] {chan}: hits={len(dets)} top={ftxt} val={stxt} "
+                        f"| Fs={_safe(Fs)} Hz N={N} t={_safe(elapsed)} s",
+                        level="MINIMAL"
+                    )
+                else:
+                    log_debug(
+                        f"★ Noise[{method}] {chan}: hits=0 | Fs={_safe(Fs)} Hz N={N} t={_safe(elapsed)} s",
+                        level="MINIMAL"
+                    )
+        except Exception:
+            # Never let logging break rendering
+            pass
+        # --- end headline log ---
+        
         ax = self.ax_main; ax2 = self.ax_prev
         for a in (ax, ax2):
             a.clear()
