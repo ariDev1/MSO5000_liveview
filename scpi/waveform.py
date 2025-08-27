@@ -380,21 +380,6 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
     except Exception:
         pass
 
-    # Overlapping time window (avoid extrapolation)
-    t0 = max(t_v[0], t_i[0])
-    t1 = min(t_v[-1], t_i[-1])
-    if not np.isfinite(t0) or not np.isfinite(t1) or t1 <= t0:
-        log_debug("🛑 No valid time overlap between V and I — aborting power analysis")
-        return None
-
-    # Uniform common grid over the overlap (use min length to avoid upsampling too much)
-    N_common = max(8, min(len(raw_v), len(raw_i)))
-    t = np.linspace(t0, t1, N_common)
-
-    # Interpolate onto the common grid
-    v = np.interp(t, t_v, v_raw)
-    i = np.interp(t, t_i, i_raw)
-
     # Optional DC removal (after alignment)
     if remove_dc:
         v -= np.mean(v)
@@ -421,6 +406,22 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
     Vspec = np.fft.rfft(v_phase)
     Ispec = np.fft.rfft(i_phase)
     freqs = np.fft.rfftfreq(len(v_phase), d=dt_phase)
+
+    from scpi.data import scpi_data
+    import re
+
+    # Prefer bin nearest the scope’s frequency reference, if present
+    k = None
+    ref = scpi_data.get("freq_ref")
+    if isinstance(ref, str):
+        m = re.search(r"([\d.]+)", ref)   # handles "49.999 Hz"
+        if m and len(freqs) > 1:
+            f_ref = float(m.group(1))
+            k = int(np.argmin(np.abs(freqs - f_ref)))
+
+    # Fallback: dominant non-DC bin from V
+    if (k is None) or (k <= 0) or (k >= len(freqs)):
+        k = 1 + np.argmax(np.abs(Vspec[1:])) if len(Vspec) > 2 else 0
 
     # dominant non-DC bin from V
     if len(Vspec) > 2:
