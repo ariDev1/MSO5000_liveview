@@ -203,7 +203,87 @@ def get_channel_waveform_data(scope, channel, use_simple_calc=True, retries=1):
     log_debug(f"All waveform fetch attempts failed for {chan}")
     return None, None, None
 
+def fetch_waveform_with_fallback(scope, chan, retries=1):
 
+    def try_fetch(mode_label):
+        try:
+            with scpi_lock:
+                scope.write(":WAV:FORM BYTE")
+                scope.write(f":WAV:MODE {mode_label}")
+                scope.write(":WAV:POIN:MODE RAW")
+                scope.write(f":WAV:POIN {WAV_POINTS}")
+                scope.write(f":WAV:SOUR {chan}")
+                scope.query(":WAV:PRE?")
+                time.sleep(0.1)
+                pre = scope.query(":WAV:PRE?").split(",")
+                xinc  = float(pre[4])
+                xorig = float(pre[5])
+                yinc  = float(pre[7])
+                yorig = float(pre[8])
+                yref  = float(pre[9])
+
+                # Optional: what the scope actually accepted
+                try:
+                    accepted = int(scope.query(":WAV:POIN?"))
+                except Exception:
+                    accepted = None
+
+                # Timed binary transfer
+                t0  = time.time()
+                raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
+                dt  = time.time() - t0
+
+                # Throughput / size log
+                try:
+                    pts   = int(len(raw))
+                    mb    = getattr(raw, "nbytes", pts) / (1024.0 * 1024.0)
+                    rate  = (mb / dt) if dt > 0 else 0.0
+                    io_to = getattr(scope, "timeout", None)
+                    io_cs = getattr(scope, "chunk_size", None)
+                    req   = WAV_POINTS  # what we asked for in this call
+
+                    if accepted is not None:
+                        log_debug(f"⏬ {mode_label}/{chan}: {pts} pts ({mb:.1f} MiB) in {dt:.2f}s → {rate:.2f} MiB/s; requested={req}, accepted={accepted}, chunk={io_cs}, timeout={io_to}ms")
+                    else:
+                        log_debug(f"⏬ {mode_label}/{chan}: {pts} pts ({mb:.1f} MiB) in {dt:.2f}s → {rate:.2f} MiB/s; requested={req}, chunk={io_cs}, timeout={io_to}ms")
+                except Exception:
+                    pass
+
+                # Small safety guard
+                if raw is None or len(raw) == 0:
+                    log_debug(f"⚠️ {mode_label}/{chan}: empty DATA block")
+                    return [], xinc, xorig, yinc, yorig, yref
+
+                return raw, xinc, xorig, yinc, yorig, yref
+
+        except Exception as e:
+            log_debug(f"❌ {mode_label} fetch failed: {e}")
+            return None
+        
+
+    #Disable RAW completely during long-time logging
+    if app_state.is_logging_active:
+        log_debug("⚠️ Skipping RAW mode during long-time logging")
+        app_state.raw_mode_failed_once = True  # avoid future RAW attempts
+
+    # --- Try RAW mode ---
+    if not app_state.raw_mode_failed_once:
+        for attempt in range(retries):
+            result = try_fetch("RAW")
+            if result is None or len(result[0]) < WAV_POINTS * 0.8:
+                log_debug(f"⚠️ RAW attempt {attempt+1} failed or incomplete")
+                continue
+            return result
+        log_debug("⚠️ RAW mode failed — fallback to NORM")
+        app_state.raw_mode_failed_once = True
+
+    # --- Always fallback to NORM ---
+    result = try_fetch("NORM")
+    if result:
+        return result
+    else:
+        raise RuntimeError("🛑 Both RAW and NORM fetch failed")
+        
 def export_channel_csv(scope, channel, outdir="oszi_csv", retries=2):
     """
     Export channel waveform to CSV file.
