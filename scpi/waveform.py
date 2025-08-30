@@ -7,147 +7,225 @@ import math
 import numpy as np
 import app.app_state as app_state
 
-from utils.debug import log_debug, set_debug_level
+from utils.debug import log_debug
 from config import WAV_POINTS
-from scpi.interface import safe_query
-from scpi.interface import scpi_lock
+from scpi.interface import safe_query, scpi_lock
 from scpi.power_formulas import compute_power_standard, compute_power_rms_cos_phi
 
-def fetch_waveform_with_fallback(scope, chan, retries=1):
 
-    def try_fetch(mode_label):
-        try:
-            with scpi_lock:
-                scope.write(":WAV:FORM BYTE")
-                scope.write(f":WAV:MODE {mode_label}")
-                scope.write(":WAV:POIN:MODE RAW")
-                scope.write(f":WAV:POIN {WAV_POINTS}")
-                scope.write(f":WAV:SOUR {chan}")
-                scope.query(":WAV:PRE?")
-                time.sleep(0.1)
-                pre = scope.query(":WAV:PRE?").split(",")
-                xinc  = float(pre[4])
-                xorig = float(pre[5])
-                yinc  = float(pre[7])
-                yorig = float(pre[8])
-                yref  = float(pre[9])
+def _normalize_channel(ch):
+    """Consistent channel normalization across all functions."""
+    s = str(ch).strip().upper()
+    if s.startswith("CHAN") or s.startswith("MATH"):
+        return s
+    return f"CHAN{s}"
 
-                # Optional: what the scope actually accepted
+
+def _fetch_wave(scope, channel: str, use_raw: bool):
+    """
+    Unified waveform fetch function with consistent scaling between NORM and RAW modes.
+    Returns (t, y_volts, xinc) for the given channel.
+    """
+    RAW_MAX_POINTS = int(os.getenv("RAW_MAX_POINTS", "5000000"))
+    
+    old_timeout = getattr(scope, "timeout", None)
+    old_chunk = getattr(scope, "chunk_size", None)
+
+    try:
+        with scpi_lock:
+            # Query channel settings for validation; skip for MATH sources
+            is_math = channel.startswith("MATH")
+            if not is_math:
+                chan_scale = float(safe_query(scope, f":{channel}:SCALe?", "1.0"))
+                chan_offset = float(safe_query(scope, f":{channel}:OFFSet?", "0.0"))
+            else:
+                chan_scale = 1.0
+                chan_offset = 0.0
+            
+            scope.write(":WAV:FORM BYTE")
+
+            if use_raw:
+                # RAW mode: stop scope and optimize I/O
+                try: 
+                    scope.write(":STOP")
+                    time.sleep(0.1)
+                except Exception: 
+                    pass
+                    
+                # Increase timeout and chunk size for large transfers
                 try:
-                    accepted = int(scope.query(":WAV:POIN?"))
-                except Exception:
-                    accepted = None
-
-                # Timed binary transfer
-                t0  = time.time()
-                raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
-                dt  = time.time() - t0
-
-                # Throughput / size log
-                try:
-                    pts   = int(len(raw))
-                    mb    = getattr(raw, "nbytes", pts) / (1024.0 * 1024.0)
-                    rate  = (mb / dt) if dt > 0 else 0.0
-                    io_to = getattr(scope, "timeout", None)
-                    io_cs = getattr(scope, "chunk_size", None)
-                    req   = WAV_POINTS  # what we asked for in this call
-
-                    if accepted is not None:
-                        log_debug(f"⏬ {mode_label}/{chan}: {pts} pts ({mb:.1f} MiB) in {dt:.2f}s → {rate:.2f} MiB/s; requested={req}, accepted={accepted}, chunk={io_cs}, timeout={io_to}ms")
-                    else:
-                        log_debug(f"⏬ {mode_label}/{chan}: {pts} pts ({mb:.1f} MiB) in {dt:.2f}s → {rate:.2f} MiB/s; requested={req}, chunk={io_cs}, timeout={io_to}ms")
+                    if old_timeout is None or old_timeout < 180000:
+                        scope.timeout = 180000
+                    if old_chunk is None or old_chunk < 8 * 1024 * 1024:
+                        scope.chunk_size = 8 * 1024 * 1024
                 except Exception:
                     pass
 
-                # Small safety guard
-                if raw is None or len(raw) == 0:
-                    log_debug(f"⚠️ {mode_label}/{chan}: empty DATA block")
-                    return [], xinc, xorig, yinc, yorig, yref
+                scope.write(":WAV:MODE RAW")
+                scope.write(":WAV:POIN:MODE RAW")
+                scope.write(f":WAV:SOUR {channel}")
 
-                return raw, xinc, xorig, yinc, yorig, yref
+                # Request maximum points, then cap if needed
+                scope.write(":WAV:POIN 25000000")
+                try:
+                    accepted = int(scope.query(":WAV:POIN?"))
+                    req = min(accepted, RAW_MAX_POINTS)
+                    if req != accepted:
+                        scope.write(f":WAV:POIN {req}")
+                except Exception:
+                    pass
+            else:
+                # NORM mode with correct point mode
+                scope.write(":WAV:MODE NORM")
+                scope.write(":WAV:POIN:MODE NORM")
+                scope.write(f":WAV:POIN {WAV_POINTS}")
+                scope.write(f":WAV:SOUR {channel}")
 
-        except Exception as e:
-            log_debug(f"❌ {mode_label} fetch failed: {e}")
-            return None
+            # Robust PRE query with validation
+            pre_data = None
+            for attempt in range(3):
+                try:
+                    scope.query(":WAV:PRE?")  # Prime the query
+                    time.sleep(0.1 if use_raw else 0.05)
+                    
+                    pre = scope.query(":WAV:PRE?").split(",")
+                    
+                    if len(pre) >= 10:
+                        xinc = float(pre[4])
+                        xorig = float(pre[5]) 
+                        yinc = float(pre[7])
+                        yorig = float(pre[8])
+                        yref = float(pre[9])
+                        
+                        # Validate PRE data
+                        if (xinc > 0 and abs(yinc) > 1e-12 and 
+                            0 <= yref <= 255 and abs(yorig) < 1e6):
+                            pre_data = (xinc, xorig, yinc, yorig, yref)
+                            break
+                        else:
+                            log_debug(f"Invalid PRE attempt {attempt+1}: xinc={xinc}, yinc={yinc}, yref={yref}")
+                            
+                except Exception as e:
+                    log_debug(f"PRE query attempt {attempt+1} failed: {e}")
+                    time.sleep(0.05)
+            
+            if pre_data is None:
+                log_debug("Failed to get valid PRE data")
+                return None, None, None
+                
+            xinc, xorig, yinc, yorig, yref = pre_data
+
+            # Debug logging
+            log_debug(f"{channel} {'RAW' if use_raw else 'NORM'} PRE: xinc={xinc:.2e}, yinc={yinc:.2e}, yref={yref}, yorig={yorig:.2e}")
+            if not is_math:
+                log_debug(f"{channel} Settings: scale={chan_scale}V/div, offset={chan_offset}V")
+
+            # Fetch waveform data
+            t0 = time.time()
+            raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
+            dt = time.time() - t0
+
+        if raw is None or len(raw) == 0:
+            return None, None, None
+
+        # Log transfer performance for RAW mode
+        if use_raw:
+            try:
+                mb = len(raw) / (1024.0 * 1024.0)
+                rate = (mb / dt) if dt > 0 else 0.0
+                log_debug(f"RAW/{channel}: {len(raw)} pts ({mb:.1f} MiB) in {dt:.2f}s -> {rate:.2f} MiB/s")
+            except Exception:
+                pass
+
+        # Convert to voltage with validation
+        t = xorig + np.arange(len(raw)) * xinc
+        y = (raw.astype(np.float64) - yref) * yinc + yorig
         
+        # Sanity check: compare with expected range (skip for MATH channels)
+        if not is_math:
+            expected_range = chan_scale * 8  # ±4 divisions
+            actual_range = np.ptp(y)
+            scale_ratio = actual_range / expected_range if expected_range > 0 else 1.0
+            
+            log_debug(f"{channel} Range: expected~{expected_range:.3f}V, actual={actual_range:.3f}V, ratio={scale_ratio:.3f}")
+            
+            if scale_ratio > 10 or scale_ratio < 0.1:
+                log_debug(f"Suspicious scaling for {channel} - ratio {scale_ratio:.3f}")
+        
+        return t, y, xinc
 
-    #Disable RAW completely during long-time logging
-    if app_state.is_logging_active:
-        log_debug("⚠️ Skipping RAW mode during long-time logging")
-        app_state.raw_mode_failed_once = True  # avoid future RAW attempts
+    except Exception as e:
+        log_debug(f"_fetch_wave({channel}, RAW={use_raw}) failed: {e}")
+        return None, None, None
 
-    # --- Try RAW mode ---
-    if not app_state.raw_mode_failed_once:
-        for attempt in range(retries):
-            result = try_fetch("RAW")
-            if result is None or len(result[0]) < WAV_POINTS * 0.8:
-                log_debug(f"⚠️ RAW attempt {attempt+1} failed or incomplete")
-                continue
-            return result
-        log_debug("⚠️ RAW mode failed — fallback to NORM")
-        app_state.raw_mode_failed_once = True
+    finally:
+        # Restore I/O settings and resume acquisition
+        try:
+            if use_raw:
+                if old_timeout is not None: 
+                    scope.timeout = old_timeout
+                if old_chunk is not None: 
+                    scope.chunk_size = old_chunk
+                try: 
+                    scope.write(":RUN")
+                except Exception: 
+                    pass
+        except Exception:
+            pass
 
-    # --- Always fallback to NORM ---
-    result = try_fetch("NORM")
-    if result:
-        return result
-    else:
-        raise RuntimeError("🛑 Both RAW and NORM fetch failed")
-
-def export_channel_csv(scope, channel, outdir="oszi_csv", retries=2):
+def get_channel_waveform_data(scope, channel, use_simple_calc=True, retries=1):
     """
-    Export one channel (CH1..CH4 or MATHn) to CSV.
-    - For MATH channels, skip :PROB? (not supported) to avoid 60 s timeouts.
-    - All SCPI-critical parts remain under scpi_lock; file I/O is outside.
+    Get basic waveform statistics for a channel.
     """
-    from .interface import scpi_lock, safe_query
-    import numpy as np
-    import os, time, csv
-    from utils.debug import log_debug
-    from config import WAV_POINTS
-
-    # Normalize to SCPI source name expected by the scope
-    is_math = str(channel).upper().startswith("MATH")
-    chan = str(channel).upper() if is_math else f"CHAN{int(channel)}"
+    chan = _normalize_channel(channel)
 
     for attempt in range(1, retries + 2):
         try:
-            with scpi_lock:
-                try:
-                    scope.write(":STOP")
-                    time.sleep(0.2)
-                    scope.write(":WAV:FORM BYTE")
-                    scope.write(":WAV:MODE NORM")
-                    scope.write(":WAV:POIN:MODE RAW")
-                    scope.write(f":WAV:POIN {WAV_POINTS}")
-                    scope.write(f":WAV:SOUR {chan}")
+            if safe_query(scope, f":{chan}:DISP?") != "1":
+                log_debug(f"Channel {chan} not displayed")
+                return None, None, None
 
-                    # Rigol quirk: prime header, then read it
-                    scope.query(":WAV:PRE?")
-                    time.sleep(0.1)
-                    pre = scope.query(":WAV:PRE?").split(",")
-                    xinc  = float(pre[4]); xorig = float(pre[5])
-                    yinc  = float(pre[7]); yorig = float(pre[8]); yref = float(pre[9])
-
-                    # 🔑 Key change: do NOT query :MATHn:PROB?
-                    if is_math:
-                        probe = 1.0
-                    else:
-                        probe = float(safe_query(scope, f":{chan}:PROB?", "1.0"))
-
-                    raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
-
-                finally:
-                    scope.write(":RUN")
-                    log_debug("▶️ Scope acquisition resumed after export")
-
-            if len(raw) == 0:
-                log_debug(f"⚠️ Empty waveform data on attempt {attempt} for {chan}")
+            # Use unified fetch function
+            t, volts, xinc = _fetch_wave(scope, chan, use_raw=False)
+            if volts is None or len(volts) == 0:
+                log_debug(f"Empty waveform on attempt {attempt} for {chan}")
                 continue
 
-            # Convert to engineering units
-            times = xorig + np.arange(len(raw)) * xinc
-            volts = ((raw - yref) * yinc + yorig)
+            vpp = volts.max() - volts.min()
+            vavg = volts.mean()
+            vrms = np.sqrt(np.mean(np.square(volts)))
+            return vpp, vavg, vrms
+
+        except Exception as e:
+            log_debug(f"Attempt {attempt} failed for {chan}: {e}")
+            time.sleep(0.3)
+
+    log_debug(f"All waveform fetch attempts failed for {chan}")
+    return None, None, None
+
+
+def export_channel_csv(scope, channel, outdir="oszi_csv", retries=2):
+    """
+    Export channel waveform to CSV file.
+    """
+    # Normalize channel name consistently
+    chan = _normalize_channel(channel)
+    is_math = chan.startswith("MATH")
+
+    for attempt in range(1, retries + 2):
+        try:
+            # Use unified fetch function (NORM mode for CSV export)
+            t, volts, xinc = _fetch_wave(scope, chan, use_raw=False)
+            
+            if volts is None or len(volts) == 0:
+                log_debug(f"Empty waveform data on attempt {attempt} for {chan}")
+                continue
+
+            # Get probe factor (skip for MATH channels)
+            if is_math:
+                probe = 1.0
+            else:
+                probe = float(safe_query(scope, f":{chan}:PROB?", "1.0"))
 
             # Prepare output path
             os.makedirs(outdir, exist_ok=True)
@@ -155,299 +233,117 @@ def export_channel_csv(scope, channel, outdir="oszi_csv", retries=2):
             filename = f"{chan}_{timestamp}.csv"
             path = os.path.join(outdir, filename)
 
-            # Header + data (header uses safe_query; benign if loop is running)
+            # Write CSV with metadata
             with open(path, "w", newline="") as f:
                 f.write(f"# Device: {safe_query(scope, '*IDN?', 'Unknown')}\n")
                 f.write(f"# Channel: {chan}\n")
                 f.write(f"# Timebase: {safe_query(scope, ':TIMebase:SCALe?', 'N/A')} s/div\n")
                 f.write(f"# Scale: {safe_query(scope, f':{chan}:SCALe?', 'N/A')} V/div\n")
-                f.write(f"# Offset: {safe_query(scope, f':{chan}:OFFS?', 'N/A')} V\n")
+                f.write(f"# Offset: {safe_query(scope, f':{chan}:OFFSet?', 'N/A')} V\n")
                 f.write(f"# Trigger: {safe_query(scope, ':TRIGger:STATus?', 'N/A')}\n")
+                f.write(f"# Probe: {probe}x\n")
                 f.write(f"# Timestamp: {timestamp}\n")
+                
                 writer = csv.writer(f)
                 writer.writerow(["Time (s)", "Voltage (V)"])
-                writer.writerows(zip(times, volts))
+                writer.writerows(zip(t, volts))
 
-            log_debug(f"🔍 Probe factor for {chan} = {probe}")
-            log_debug(f"✅ Exported {chan} waveform to {path}")
+            log_debug(f"Exported {chan} waveform to {path}")
             return path
 
         except Exception as e:
-            log_debug(f"❌ Attempt {attempt} failed for {chan}: {e}")
+            log_debug(f"Export attempt {attempt} failed for {chan}: {e}")
             time.sleep(0.3)
 
-    log_debug(f"🛑 All attempts failed to export {chan}")
+    log_debug(f"All export attempts failed for {chan}")
     return None
 
 
-def get_channel_waveform_data(scope, channel, use_simple_calc=True, retries=1):
-    import numpy as np
-    from utils.debug import log_debug
-    from .interface import scpi_lock, safe_query
-    from .waveform import fetch_waveform_with_fallback
+def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, 
+                           current_scale=1.0, use_25m_v=False, use_25m_i=False, 
+                           method="standard"):
+    """
+    Compute power analysis from voltage and current channels.
+    """
+    chan_v = _normalize_channel(voltage_ch)
+    chan_i = _normalize_channel(current_ch)
 
-    chan = channel if str(channel).startswith("MATH") else f"CHAN{channel}"
+    log_debug(f"Power method: {method}")
+    log_debug(f"Analyzing: Voltage = {chan_v}, Current = {chan_i}")
 
-    for attempt in range(1, retries + 2):
-        try:
-            if safe_query(scope, f":{chan}:DISP?") != "1":
-                log_debug(f"⚠️ Channel {chan} not displayed")
-                return None, None, None
-
-            # Try waveform fetch with fallback logic
-            raw, xinc, xorig, yinc, yorig, yref = fetch_waveform_with_fallback(scope, chan)
-            if len(raw) == 0:
-                log_debug(f"⚠️ Empty waveform on attempt {attempt} for {chan}")
-                continue
-
-            volts = (raw - yref) * yinc + yorig
-            vpp = volts.max() - volts.min()
-            vavg = volts.mean()
-            vrms = np.sqrt(np.mean(np.square(volts)))
-            return vpp, vavg, vrms
-
-        except Exception as e:
-            log_debug(f"❌ Attempt {attempt} failed for {chan}: {e}")
-            import time
-            time.sleep(0.3)
-
-    log_debug(f"🛑 All waveform fetch attempts failed for {chan}")
-    return None, None, None
-
-
-def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, current_scale=1.0, use_25m_v=False, use_25m_i=False, method="standard"):
-    from scpi.interface import scpi_lock, safe_query
-    import numpy as np
-    from utils.debug import log_debug
-    import math
-
-    chan_v = voltage_ch if str(voltage_ch).startswith("MATH") else f"CHAN{voltage_ch}"
-    chan_i = current_ch if str(current_ch).startswith("MATH") else f"CHAN{current_ch}"
-
-    log_debug(f"🧮 Power method: {method}")
-
+    # Determine current scaling based on unit
     unit_i = safe_query(scope, f":{chan_i}:UNIT?", "VOLT").strip().upper()
-    log_debug(f"🧪 {chan_i} UNIT? → {unit_i}")
-    if unit_i == "AMP" and current_scale != 1.0:
-        log_debug(f"⚠️ {chan_i} is in AMP mode, but current_scale = {current_scale:.4f}. Set probe = 1.0")
+    scale_req = float(current_scale or 1.0)
+
     if unit_i == "AMP":
-        current_scale = 1.0
-        log_debug(f"⚠️ {chan_i} is in AMP mode — forcing current_scale = 1.0 to prevent double-scaling")
+        # Apply user scale/correction in AMP mode (so we can emulate mV/A in software)
+        scale_eff = scale_req
+        if abs(scale_eff - 1.0) > 1e-12:
+            log_debug(f"{chan_i} UNIT=A — applying amp-correction ×{scale_eff:.6g} (from Value/Corr)")
+    else:
+        # VOLT mode: scale is A/V (from Value/Corr)
+        scale_eff = scale_req
 
-    log_debug(f"📊 Analyzing: Voltage = {chan_v}, Current = {chan_i}", level="MINIMAL")
-    log_debug(f"⚙️ Current scaling factor: {current_scale:.4f} A/V")
-    probe_reported = safe_query(scope, f":{chan_i}:PROB?", "1.0")
-    log_debug(f"🧪 {chan_i} :PROB? = {probe_reported}")
+    log_debug(f"Current UNIT = {unit_i} | effective scale = {scale_eff:.6g} {'(A correction)' if unit_i=='AMP' else 'A/V'}")
 
-    if use_25m_v or use_25m_i:
-        log_debug("⏸️ Stopping scope for full waveform read")
-        scope.write(":STOP")
-        time.sleep(0.2)
+    # Fetch both channels using unified function
+    t_v, yv, xinc_v = _fetch_wave(scope, chan_v, use_25m_v)
+    t_i, yi, xinc_i = _fetch_wave(scope, chan_i, use_25m_i)
 
-    def fetch_waveform(channel, use_25m_flag):
-        # Uses outer `scope`, as in your original.
-        old_timeout = getattr(scope, "timeout", None)
-        old_chunk   = getattr(scope, "chunk_size", None)
-
-        try:
-            accepted = None
-
-            if use_25m_flag:
-                # Be generous for large transfers (temporary).
-                try:
-                    scope.timeout = max(scope.timeout, 180000)
-                except Exception:
-                    pass
-                try:
-                    scope.chunk_size = max(scope.chunk_size, 16 * 1024 * 1024)
-                except Exception:
-                    pass
-
-                scope.write(":WAV:MODE RAW")
-                scope.write(":WAV:FORM BYTE")
-                scope.write(":WAV:POIN:MODE RAW")
-                scope.write(":WAV:POIN 25000000")
-                # Ask what the scope actually accepted (it may cap this):
-                try:
-                    accepted = int(scope.query(":WAV:POIN?"))
-                    log_debug(f"📝 {channel} accepted points = {accepted}")
-                except Exception:
-                    accepted = None
-                log_debug("🧪 Fetching 25M samples in RAW mode")
-            else:
-                scope.write(":WAV:MODE NORM")
-                scope.write(":WAV:FORM BYTE")
-                scope.write(":WAV:POIN:MODE RAW")
-                from config import WAV_POINTS
-                scope.write(f":WAV:POIN {WAV_POINTS}")
-                log_debug(f"🔹 Fetching {WAV_POINTS} samples in NORM mode")
-
-            scope.write(f":WAV:SOUR {channel}")
-
-            # Header twice with a small delay tends to stabilize PRE on MSO5000
-            scope.query(":WAV:PRE?")
-            time.sleep(0.2)
-            pre = scope.query(":WAV:PRE?").split(",")
-            xinc  = float(pre[4])
-            xorig = float(pre[5])
-            yinc  = float(pre[7])
-            yorig = float(pre[8])
-            yref  = float(pre[9])
-
-            raw = scope.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
-
-            if use_25m_flag:
-                # Decide if RAW is "too short" vs what the scope accepted.
-                # If :WAV:POIN? wasn’t available, keep your original ~18M heuristic.
-                threshold = int(0.9 * accepted) if (accepted and accepted > 0) else 18_000_000
-                if len(raw) < max(1000, threshold):
-                    log_debug(f"⚠️ {channel}: got {len(raw)} < {threshold}, falling back to NORM")
-                    # Auto-fallback: try again in NORM (no recursion loop when use_25m_flag=False)
-                    return fetch_waveform(channel, False)
-
-            return raw, xinc, xorig, yinc, yorig, yref
-
-        except Exception as e:
-            log_debug(f"❌ fetch_waveform() failed for {channel}: {e}")
-            if use_25m_flag:
-                # One graceful retry in NORM before giving up
-                log_debug(f"↩️ {channel}: RAW failed — trying NORM fallback")
-                try:
-                    return fetch_waveform(channel, False)
-                except Exception as e2:
-                    log_debug(f"❌ NORM fallback failed for {channel}: {e2}")
-            return [], 1.0, 0.0, 1.0, 0.0, 0.0
-
-        finally:
-            # Restore I/O settings
-            try:
-                if old_timeout is not None:
-                    scope.timeout = old_timeout
-                if old_chunk is not None:
-                    scope.chunk_size = old_chunk
-            except Exception:
-                pass
-
-            
-    raw_v, xinc_v, xorig_v, yinc_v, yorig_v, yref_v = fetch_waveform(chan_v, use_25m_v)
-    raw_i, xinc_i, xorig_i, yinc_i, yorig_i, yref_i = fetch_waveform(chan_i, use_25m_i)
-
-
-    if use_25m_v or use_25m_i:
-        scope.write(":RUN")
-        log_debug("▶️ Resuming scope acquisition")
-
-    if len(raw_v) == 0 or len(raw_i) == 0:
-        log_debug("⚠️ Empty waveform data — aborting power analysis")
+    if t_v is None or t_i is None:
+        log_debug("Empty waveform(s) - abort")
         return None
 
-    # Build raw waveforms (keep original timing)
-    v_raw = ((raw_v - yref_v) * yinc_v + yorig_v)
-    i_raw = ((raw_i - yref_i) * yinc_i + yorig_i) * current_scale
+    # Log pre-scale current analysis
+    i_vrms_volt = float(np.sqrt(np.mean((yi - np.mean(yi))**2)))
+    i_peak_volt = float(np.ptp(yi))
+    unit_label = "A" if unit_i == "AMP" else "V"
+    log_debug(f"{chan_i} pre-scale: Vrms={i_vrms_volt:.6g}{unit_label}, Vpp={i_peak_volt:.6g}{unit_label}")
 
-    # Per-channel time bases
-    t_v = xorig_v + np.arange(len(raw_v)) * xinc_v
-    t_i = xorig_i + np.arange(len(raw_i)) * xinc_i
+    # Convert current to amps
+    i = yi * scale_eff
+    v = yv
 
+    # Log post-scale current
+    i_rms_amp = float(np.sqrt(np.mean((i - np.mean(i))**2)))
+    log_debug(f"{chan_i} post-scale: Irms={i_rms_amp:.6g}A (scale factor={scale_eff:.6g})")
 
-    # --- Fast path: if both streams already share the same grid, skip interpolation ---
-    same_len  = (len(raw_v) == len(raw_i))
-    same_xinc = abs(xinc_v - xinc_i) <= max(1e-15, 1e-9 * xinc_v)
-    same_xorg = abs((xorig_v - xorig_i)) <= (xinc_v + xinc_i)
+    # Align timebases if needed
+    tol = max(1e-15, 1e-9 * max(xinc_v, xinc_i))
+    same_len = (len(v) == len(i))
+    same_xinc = (abs(xinc_v - xinc_i) <= tol)
+    same_xorg = (abs(t_v[0] - t_i[0]) <= (xinc_v + xinc_i))
 
-    if same_len and same_xinc and same_xorg:
-        t = t_v  # identical to t_i within tolerance
-        v = v_raw
-        i = i_raw
-        xinc_eff = xinc_v
-    else:
-        # (keep your existing overlap + np.interp() block here)
+    if not (same_len and same_xinc and same_xorg):
+        log_debug("Aligning voltage and current timebases...")
         t0 = max(t_v[0], t_i[0])
         t1 = min(t_v[-1], t_i[-1])
-        if not np.isfinite(t0) or not np.isfinite(t1) or t1 <= t0:
-            log_debug("🛑 No valid time overlap between V and I — aborting power analysis")
+        if not (np.isfinite(t0) and np.isfinite(t1) and (t1 > t0)):
+            log_debug("No valid time overlap - abort")
             return None
-        N_common = max(8, min(len(raw_v), len(raw_i)))
-        t = np.linspace(t0, t1, N_common)
-        v = np.interp(t, t_v, v_raw)
-        i = np.interp(t, t_i, i_raw)
+        N = max(8, min(len(v), len(i)))
+        t = np.linspace(t0, t1, N)
+        v = np.interp(t, t_v, v)
+        i = np.interp(t, t_i, i)
         xinc_eff = (t[-1] - t[0]) / (len(t) - 1)
+    else:
+        t = t_v
+        xinc_eff = xinc_v
 
-
-    # Log quick stats on current before any interpolation
-    try:
-        log_debug(f"🧪 Raw CH3 stats: max = {np.max(i_raw):.4f} A, min = {np.min(i_raw):.4f} A, RMS = {np.sqrt(np.mean(i_raw**2)):.4f} A")
-    except Exception:
-        pass
-
-    # Optional DC removal (after alignment)
+    # Optional DC removal
     if remove_dc:
-        v -= np.mean(v)
-        i -= np.mean(i)
+        v_dc = np.mean(v)
+        i_dc = np.mean(i)
+        v = v - v_dc
+        i = i - i_dc
+        log_debug(f"DC removed: V_dc={v_dc:.6g}V, I_dc={i_dc:.6g}A")
 
-    # Effective dt for integration/FFT
-    xinc_eff = (t[-1] - t[0]) / (len(t) - 1)
-
-
-    # --- Robust & fast phase: dominant spectral bin on decimated copy ---
-    # We keep P/S/Q on full v,i; we only decimate for phase detection.
-    MAX_PHASE_SAMPLES = 16384
-
-    if len(v) > MAX_PHASE_SAMPLES:
-        idx = np.linspace(0, len(v) - 1, MAX_PHASE_SAMPLES).astype(np.int64)
-        v_phase = v[idx]
-        i_phase = i[idx]
-        dt_phase = (t[-1] - t[0]) / (MAX_PHASE_SAMPLES - 1)
-    else:
-        v_phase = v
-        i_phase = i
-        dt_phase = xinc_eff
-
-    Vspec = np.fft.rfft(v_phase)
-    Ispec = np.fft.rfft(i_phase)
-    freqs = np.fft.rfftfreq(len(v_phase), d=dt_phase)
-
-    from scpi.data import scpi_data
-    import re
-
-    # Prefer bin nearest the scope’s frequency reference, if present
-    k = None
-    ref = scpi_data.get("freq_ref")
-    if isinstance(ref, str):
-        m = re.search(r"([\d.]+)", ref)   # handles "49.999 Hz"
-        if m and len(freqs) > 1:
-            f_ref = float(m.group(1))
-            k = int(np.argmin(np.abs(freqs - f_ref)))
-
-    # Fallback: dominant non-DC bin from V
-    if (k is None) or (k <= 0) or (k >= len(freqs)):
-        k = 1 + np.argmax(np.abs(Vspec[1:])) if len(Vspec) > 2 else 0
-
-    # dominant non-DC bin from V
-    if len(Vspec) > 2:
-        k = 1 + np.argmax(np.abs(Vspec[1:]))
-    else:
-        k = 0
-
-    if k > 0 and k < len(freqs):
-        f0 = freqs[k]
-        phase_shift_rad = np.angle(Vspec[k]) - np.angle(Ispec[k])
-    else:
-        f0 = 0.0
-        phase_shift_rad = 0.0
-
-    # Normalize to [-180, 180]
-    phase_shift_deg = (np.degrees(phase_shift_rad) + 180.0) % 360.0 - 180.0
-    log_debug(f"📐 f0≈{f0:.3f} Hz, phase={phase_shift_deg:.2f}°")
-
-
-
-    # Always compute RMS values before using them
-    Vrms = np.sqrt(np.mean(v**2))
-    Irms = np.sqrt(np.mean(i**2))
+    # Calculate power metrics
+    Vrms = float(np.sqrt(np.mean(v**2)))
+    Irms = float(np.sqrt(np.mean(i**2)))
     S = Vrms * Irms
 
-    # Compute power based on method
+    # Compute instantaneous and average power
     if method == "standard":
         p_inst, P = compute_power_standard(v, i, xinc_eff)
     elif method == "rms_cos_phi":
@@ -455,14 +351,35 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
     else:
         raise ValueError(f"Unsupported power method: {method}")
 
-    Q = S * np.sin(phase_shift_rad)
-    PF = P / S if S != 0 else 0.0
-    PF = math.copysign(abs(PF), P)
+    # PF and phase magnitude from P and S
+    PF = 0.0 if S == 0 else math.copysign(abs(P / S), P)
+    try:
+        phase_rad = math.acos(max(0.0, min(1.0, abs(PF))))
+    except ValueError:
+        phase_rad = 0.0
+    phase_deg = math.degrees(phase_rad)
 
-    log_debug(f"🔢 Received {len(raw_v)} V-samples, {len(raw_i)} I-samples")
-    log_debug(f"🧪 Analyzer Vrms = {Vrms:.3f} V — Should match {chan_v}")
-    log_debug(f"🧪 Analyzer Irms = {Irms:.3f} A — Should match {chan_i}")
-    log_debug(f"📐 Phase shift (v vs i): {phase_shift_deg:.2f}°")
+    # --- Signed Q using fundamental phase (tiny, non-invasive addition)
+    # Sign convention: phi = angle(V) - angle(I); phi>0 ⇒ inductive (I lags), phi<0 ⇒ capacitive (I leads)
+    try:
+        Vf = np.fft.rfft(v)
+        If = np.fft.rfft(i)
+        k = 1 + np.argmax(np.abs(Vf[1:])) if len(Vf) > 2 else 1
+        if 1 <= k < len(Vf) and k < len(If):
+            phi = np.angle(Vf[k]) - np.angle(If[k])
+            sign_q = 1.0 if phi >= 0 else -1.0
+        else:
+            sign_q = 1.0
+    except Exception:
+        sign_q = 1.0
+
+    Q = sign_q * S * math.sin(phase_rad)
+
+    phase_deg_signed = phase_deg if sign_q >= 0 else -phase_deg
+
+    log_debug(f"Results: P={P:.6g}W | S={S:.6g}VA | Q={Q:.6g}VAr | PF={PF:.6g} | angle={phase_deg_signed:.4g}° ({'inductive' if sign_q >= 0 else 'capacitive'})")
+    scale_label = "A-corr" if unit_i == "AMP" else "A/V"
+    log_debug(f"Final: Vrms={Vrms:.6g}V | Irms={Irms:.6g}A | scale_used={scale_eff:.6g}{scale_label}")
 
     return {
         "Time": t,
@@ -473,7 +390,7 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True, curr
         "Apparent Power (S)": S,
         "Reactive Power (Q)": Q,
         "Power Factor": PF,
-        "Phase Angle (deg)": phase_shift_deg,
+        "Phase Angle (deg)": phase_deg_signed,
         "Vrms": Vrms,
-        "Irms": Irms
+        "Irms": Irms,
     }

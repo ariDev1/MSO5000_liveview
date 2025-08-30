@@ -182,7 +182,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     
     ttk.Label(
         probe_frame,
-        text="Tip: Use 0.01 for 10mΩ shunt, or 1.0 if scope shows Amps directly. For better power accuracy, enable 20MHz BW limit on Channels it filters noise, stabilizes FFT phase and PF. Avoid >20MHz unless needed.",
+        text="Tip: UNIT:V → set Value to shunt Ω (e.g., 0.01 for 10 mΩ). UNIT:A → set Value = 1.0. If you cannot set mV/A on the scope, use Scale as an Amp-correction. For better power accuracy, enable 20MHz BW limit on Channels it filters noise, stabilizes FFT phase and PF. Avoid >20MHz unless needed.",
         foreground="#bbbbbb", background="#1a1a1a",
         wraplength=720, font=("TkDefaultFont", 8)
     ).grid(row=1, column=0, columnspan=6, sticky="w", padx=5, pady=(2, 8))
@@ -843,8 +843,10 @@ def setup_power_analysis_tab(tab_frame, ip, root):
                 log_debug(f"🧪 {chan_i} unit = {unit_info}")
 
                 if unit_info == "AMP":
-                    unit_status_var.set(f"{chan_i} Unit:A — scaling disabled. Script expects true current waveform")
-                    unit_status_label.config(fg="#99ccff")
+                    # We now allow software correction in AMP mode (Scale acts as Amp-correction).
+                    msg = f"ℹ {chan_i} Unit:A — using scope mV/A; app 'Scale' acts as Amp-correction (×N)"
+                    unit_status_var.set(msg)
+                    unit_status_label.config(fg="#bbbbbb")  # neutral info color
 
                 elif unit_info == "VOLT":
                     # Softer default message (info, not warning)
@@ -889,9 +891,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
             except Exception as e:
                 log_debug(f"⚠️ Unit/probe mismatch check failed: {e}")
                 unit_status_var.set("")
-
-
-
+            
             # ✅ Offset status message
             if abs(v_offset) > 0.01 or abs(i_offset) > 0.01:
                 log_debug(
