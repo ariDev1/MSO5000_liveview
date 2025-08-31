@@ -439,23 +439,43 @@ def compute_power_from_scope(scope, voltage_ch, current_ch, remove_dc=True,
         phase_rad = 0.0
     phase_deg = math.degrees(phase_rad)
 
-    # --- Signed Q using fundamental phase (tiny, non-invasive addition)
-    # Sign convention: phi = angle(V) - angle(I); phi>0 ⇒ inductive (I lags), phi<0 ⇒ capacitive (I leads)
+    # --- Signed Q using fundamental phase (robust & wrap-safe) ---
     try:
-        Vf = np.fft.rfft(v)
-        If = np.fft.rfft(i)
-        k = 1 + np.argmax(np.abs(Vf[1:])) if len(Vf) > 2 else 1
-        if 1 <= k < len(Vf) and k < len(If):
-            phi = np.angle(Vf[k]) - np.angle(If[k])
-            sign_q = 1.0 if phi >= 0 else -1.0
-        else:
-            sign_q = 1.0
+        # Window the sequences for a stable fundamental phase (no impact on P/S magnitudes).
+        w = np.hanning(len(v))
+        vw = v * w
+        iw = i * w
+
+        # FFT of windowed signals
+        Vf = np.fft.rfft(vw)
+        If = np.fft.rfft(iw)
+        freqs = np.fft.rfftfreq(len(vw), d=xinc_eff)
+
+        # Lock to mains fundamental: prefer ~50 Hz, then ~60 Hz (narrow ±3 Hz window)
+        k = None
+        for f0 in (50.0, 60.0):
+            band = (freqs >= f0 - 3.0) & (freqs <= f0 + 3.0)
+            if np.any(band):
+                band_idx = np.where(band)[0]
+                # Choose the strongest voltage line in that band (exclude DC by construction)
+                k = band_idx[np.argmax(np.abs(Vf[band]))]
+                break
+
+        # Fallback: previous “largest non-DC anywhere” behavior if fundamental window missing
+        if k is None:
+            k = 1 + np.argmax(np.abs(Vf[1:])) if len(Vf) > 2 else 1
+
+        # Wrap-safe phase via cross-spectrum; φ = angle(V·I*)  (I lags → φ>0 inductive; I leads → φ<0 capacitive)
+        phi = np.angle(Vf[k] * np.conj(If[k]))
+        sign_q = 1.0 if phi >= 0 else -1.0
+
     except Exception:
+        # Conservative default if anything above fails
         sign_q = 1.0
 
     Q = sign_q * S * math.sin(phase_rad)
-
     phase_deg_signed = phase_deg if sign_q >= 0 else -phase_deg
+
 
     log_debug(f"Results: P={P:.6g}W | S={S:.6g}VA | Q={Q:.6g}VAr | PF={PF:.6g} | angle={phase_deg_signed:.4g}° ({'inductive' if sign_q >= 0 else 'capacitive'})")
     scale_label = "A-corr" if unit_i == "AMP" else "A/V"
