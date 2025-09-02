@@ -168,15 +168,44 @@ def create_main_gui(container, ip):
 
     setup_styles()
 
-    # Tabs
+    from config import (
+        ENABLE_BH_CURVE,
+        ENABLE_HARMONICS,
+        ENABLE_NOISE_INSPECTOR,
+    )
+
+    # Notebook
     notebook = ttk.Notebook(container)
     notebook.pack(fill="both", expand=True, padx=10, pady=5)
 
     tabs = {}
 
-    for tab_name in ["System Info", "Licenses", "Debug Log", "Channel Data", "Long-Time Measurement", "Power Analysis", "BH Curve", "Harmonics/THD", "Noise Inspector", "SCPI"]:
+    # Always-present tabs (fixed order)
+    base_tabs = [
+        "System Info",
+        "Licenses",
+        "Debug Log",
+        "Channel Data",
+        "Long-Time Measurement",
+        "Power Analysis",
+        "SCPI",
+    ]
+
+    # Optional/advanced tabs (opt-in via config.py)
+    optional_tabs = []
+    if ENABLE_BH_CURVE:
+        optional_tabs.append("BH Curve")
+    if ENABLE_HARMONICS:
+        optional_tabs.append("Harmonics")
+    if ENABLE_NOISE_INSPECTOR:
+        optional_tabs.append("Noise Inspector")
+
+    tab_order = base_tabs + optional_tabs
+
+    for tab_name in tab_order:
         frame = ttk.Frame(notebook)
         notebook.add(frame, text=tab_name)
         tabs[tab_name] = frame
 
     return tabs, notebook
+

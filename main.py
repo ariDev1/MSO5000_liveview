@@ -223,45 +223,131 @@ def start_activity_meter(main_frame):
 # ----------------------------------------------------------------------------
 
 def build_tabs(main_frame, ip, root):
-    """Create tabs and wire their setup functions; returns (tabs, notebook, power_shutdown, extras)."""
+    """Create tabs and wire their setup functions; returns (tabs, notebook, power_shutdown)."""
+    # Build the notebook + tabs (whatever layout.py decided to create)
     tabs, notebook = create_main_gui(main_frame, ip)
 
-    # Lazy imports to avoid heavy imports before Tk exists
+    # --- Logging helper (no hard dependency if debug module changes) ---
+    try:
+        from debug import log_debug  # type: ignore
+    except Exception:
+        def log_debug(msg):  # noqa: N802
+            try:
+                print(msg)
+            except Exception:
+                pass
+
+    # --- Core tabs: always present in UX policy; guard in case layout was customized ---
+    # Lazy imports (lighter before Tk exists)
     from gui.licenses import setup_licenses_tab
     from gui.system_info import setup_system_info_tab
     from gui.channel_info import setup_channel_tab
     from gui.logging_controls import setup_logging_tab
     from gui.scpi_console import setup_scpi_tab
     from gui.power_analysis import setup_power_analysis_tab
-    from gui.bh_curve import setup_bh_curve_tab
-    # Harmonics/THD tab is project-specific and may not exist in older builds
+
+    def _setup_core(tab_key, fn, *args):
+        if tab_key in tabs:
+            try:
+                fn(tabs[tab_key], *args)
+            except Exception as e:
+                log_debug(f"⚠️ Failed to set up core tab '{tab_key}': {e}")
+        else:
+            log_debug(f"⚠️ Core tab '{tab_key}' not present in layout; check layout.create_main_gui()")
+
+    _setup_core("Licenses", setup_licenses_tab, ip, root)
+    _setup_core("System Info", setup_system_info_tab, root)
+    _setup_core("Channel Data", setup_channel_tab, ip, root)
+    _setup_core("Long-Time Measurement", setup_logging_tab, ip, root)
+    _setup_core("SCPI", setup_scpi_tab, ip)
+
+    # Power Analysis (core) — also capture shutdown hook if present
+    _setup_core("Power Analysis", setup_power_analysis_tab, ip, root)
+    power_tab = tabs.get("Power Analysis")
+    power_shutdown = getattr(power_tab, "_shutdown", lambda: None) if power_tab else (lambda: None)
+
+    # --- Optional/advanced tabs (config-driven) ---
+    # Defaults are False if config.py is missing or flags not defined.
     try:
-        from gui.harmonics_tab import setup_harmonics_tab
+        import config  # type: ignore
     except Exception:
-        setup_harmonics_tab = None  # noqa: F401
+        config = None  # noqa: F841
 
-    # Wire tabs
-    setup_licenses_tab(tabs["Licenses"], ip, root)
-    setup_system_info_tab(tabs["System Info"], root)
-    setup_channel_tab(tabs["Channel Data"], ip, root)
-    setup_logging_tab(tabs["Long-Time Measurement"], ip, root)
-    setup_scpi_tab(tabs["SCPI"], ip)
-    setup_noise_inspector_tab(tabs["Noise Inspector"], ip, root)
+    def _flag(name: str) -> bool:
+        return bool(getattr(config, name, False)) if config else False
 
-    setup_power_analysis_tab(tabs["Power Analysis"], ip, root)
-    power_tab = tabs["Power Analysis"]
-    power_shutdown = getattr(power_tab, "_shutdown", lambda: None)
+    def _find_tab_key(candidates):
+        for k in candidates:
+            if k in tabs:
+                return k
+        return None
 
-    setup_bh_curve_tab(tabs["BH Curve"], ip, root)
+    def _safe_setup_optional(flag_name: str, tab_names, import_path: str, setup_func_name: str):
+        """
+        If flag enabled → import and set up; on error, hide tab.
+        If flag disabled → hide tab if present so UI stays clean.
+        """
+        tab_key = _find_tab_key(tab_names)
+        enabled = _flag(flag_name)
 
-    if setup_harmonics_tab and "Harmonics/THD" in tabs:
-        setup_harmonics_tab(tabs["Harmonics/THD"], ip, root)
+        if enabled:
+            if not tab_key:
+                log_debug(f"ℹ️ Optional tab '{tab_names[0]}' enabled in config, "
+                          f"but not created by layout; update layout.create_main_gui() if you want it visible.")
+                return
+            try:
+                mod = __import__(import_path, fromlist=[setup_func_name])
+                getattr(mod, setup_func_name)(tabs[tab_key], ip, root)
+            except Exception as e:
+                log_debug(f"⚠️ Disabling optional tab '{tab_key}' due to setup error: {e}")
+                try:
+                    notebook.forget(tabs[tab_key])
+                except Exception:
+                    pass
+        else:
+            # Hide the tab if layout created it but operator disabled it in config
+            if tab_key:
+                try:
+                    notebook.forget(tabs[tab_key])
+                    log_debug(f"ℹ️ Optional tab '{tab_key}' hidden (disabled in config).")
+                except Exception as e:
+                    log_debug(f"⚠️ Could not hide optional tab '{tab_key}': {e}")
 
-    # Debug tab widgets
-    debug_frame = tabs["Debug Log"]
-    _build_debug_pane(debug_frame, root)
+    # BH Curve
+    _safe_setup_optional(
+        flag_name="ENABLE_BH_CURVE",
+        tab_names=["BH Curve"],
+        import_path="gui.bh_curve",
+        setup_func_name="setup_bh_curve_tab",
+    )
+
+    # Harmonics (handle both historical captions)
+    _safe_setup_optional(
+        flag_name="ENABLE_HARMONICS",
+        tab_names=["Harmonics/THD", "Harmonics"],
+        import_path="gui.harmonics_tab",
+        setup_func_name="setup_harmonics_tab",
+    )
+
+    # Noise Inspector
+    _safe_setup_optional(
+        flag_name="ENABLE_NOISE_INSPECTOR",
+        tab_names=["Noise Inspector"],
+        import_path="gui.noise_inspector",
+        setup_func_name="setup_noise_inspector_tab",
+    )
+
+    # --- Debug pane widgets (if present) ---
+    if "Debug Log" in tabs:
+        try:
+            _build_debug_pane(tabs["Debug Log"], root)  # local helper in main.py
+        except Exception as e:
+            log_debug(f"⚠️ Debug pane build failed: {e}")
+    else:
+        log_debug("⚠️ 'Debug Log' tab not present; cannot build debug pane.")
 
     return tabs, notebook, power_shutdown
+
 
 
 def _build_debug_pane(debug_frame, root):

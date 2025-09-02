@@ -84,3 +84,8 @@ WINDOW_PLACEMENT = None  # or "+1920+0"
 # when the window is big (e.g., maximized). If False, it will never exceed
 # the original pixel size (still allowed to scale down to fit).
 SCOPE_IMAGE_ALLOW_UPSCALE = False
+
+# --- Optional/advanced tabs (opt-in) ---
+ENABLE_BH_CURVE = False
+ENABLE_HARMONICS = False
+ENABLE_NOISE_INSPECTOR = False
