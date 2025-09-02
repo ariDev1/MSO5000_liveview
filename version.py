@@ -1,5 +1,5 @@
 APP_NAME = "MSO5000 Live Monitor"
-VERSION = "v0.9.8h-stable"
+VERSION = "v0.9.8i-testing"
 GIT_COMMIT = "fc391f7"
 BUILD_DATE = "2025-08-21 06:58 UTC"
 AUTHOR = "ariDev1"
