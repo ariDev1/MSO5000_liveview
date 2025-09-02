@@ -159,7 +159,8 @@ class HarmonicsTab:
     # --------- UI ----------
     def _build_ui(self):
         self.parent.columnconfigure(0, weight=1)
-        self.parent.rowconfigure(3, weight=1)
+        self.parent.rowconfigure(2, weight=1)
+        self.parent.rowconfigure(3, weight=0)
 
         hdr = tk.Frame(self.parent, bg="#225577", padx=8, pady=8)
         hdr.grid(row=0, column=0, sticky="ew", padx=10, pady=(12, 4))
@@ -179,9 +180,9 @@ class HarmonicsTab:
         self.window_var = tk.StringVar(value="Hann")
         ttk.Combobox(controls, textvariable=self.window_var, values=list(WINDOWS.keys()), width=9, state="readonly").grid(row=0, column=3, padx=0)
 
-        tk.Label(controls, text="# Harmonics", fg="white", bg="#1a1a1a").grid(row=0, column=4, sticky="w", padx=(12,1))
+        tk.Label(controls, text="# Harmonics", fg="white", bg="#1a1a1a").grid(row=0, column=4, sticky="e", padx=(12,4))
         self.nharm_var = tk.IntVar(value=25)
-        ttk.Spinbox(controls, textvariable=self.nharm_var, from_=5, to=80, width=5).grid(row=0, column=5, padx=4)
+        ttk.Spinbox(controls, textvariable=self.nharm_var, from_=5, to=80, width=5).grid(row=0, column=5, padx=(4,12))               # small gap then the field
 
         self.include_dc_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(controls, text="Include DC", variable=self.include_dc_var).grid(row=0, column=6, padx=(12,1))
@@ -243,12 +244,12 @@ class HarmonicsTab:
 
         # Table
         table_frame = tk.Frame(self.parent, bg="#1a1a1a")
-        table_frame.grid(row=3, column=0, sticky="nsew", padx=10, pady=(4,12))
-        table_frame.rowconfigure(0, weight=1)
+        table_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=(4,12))  # no vertical stretch
+        table_frame.rowconfigure(0, weight=0)  # don't let the Treeview eat space
         table_frame.columnconfigure(0, weight=1)
 
         cols = ("k","f_hz","f_pred","df_hz","mag_rms","dBr1","percent","cumTHD_pct","phase_deg")
-        self.tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=8)
+        self.tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=6)
 
         # widths tuned for your dark theme and screenshot layout
         widths = {
