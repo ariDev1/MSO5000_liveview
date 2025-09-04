@@ -18,7 +18,7 @@ import version as V
 from utils.debug import attach_debug_widget, start_debug_updater, log_debug, set_debug_level
 from gui.layout import create_main_gui
 from gui.noise_inspector import setup_noise_inspector_tab
-from gui.image_display import attach_image_label, update_image, set_ip, start_screenshot_thread
+from gui.image_display import attach_image_label, update_image, set_ip, start_screenshot_thread, pause_screenshots, resume_screenshots
 from gui.activity_monitor import start_meter_thread, draw_meter
 from scpi.interface import connect_scope, safe_query
 from scpi.loop import start_scpi_loop
@@ -522,11 +522,21 @@ def main(argv=None):
     # Toggle button wiring for screenshot area
     def toggle_image():
         if img_visible[0]:
+            # Hide
             image_frame.pack_forget()
             toggle_btn.config(text="🗖 Show")
+            pause_screenshots()     #stop VNC captures
+            # (optional) free the in-memory Tk image
+            try:
+                img_label.config(image="")
+                img_label.image = None
+            except Exception:
+                pass
         else:
+            # Show
             image_frame.pack(before=notebook, fill="x", pady=5)
             toggle_btn.config(text="🗗 Hide")
+            resume_screenshots()    #resume VNC captures
         img_visible[0] = not img_visible[0]
 
     toggle_btn.config(command=toggle_image)

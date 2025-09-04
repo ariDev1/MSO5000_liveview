@@ -13,6 +13,26 @@ OSZI_IP = None
 img_label = None
 update_after_id = [None]
 
+_capture_event = threading.Event()
+_capture_event.set()  # start in 'running' state
+_paused = False  # track state for clean logging
+
+def pause_screenshots():
+    """Pause VNC captures (called when image is hidden)."""
+    global _paused
+    _capture_event.clear()
+    if not _paused:
+        _paused = True
+        log_debug("📷 Screenshots paused (Hide) — stopping VNC capture", level="MINIMAL")
+
+def resume_screenshots():
+    """Resume VNC captures (called when image is shown)."""
+    global _paused
+    if _paused:
+        log_debug("📷 Screenshots resumed (Show) — restarting VNC capture", level="MINIMAL")
+    _paused = False
+    _capture_event.set()
+
 def set_ip(ip):
     global OSZI_IP
     OSZI_IP = ip
@@ -29,8 +49,17 @@ def attach_image_label(label_widget):
 
 def screenshot_loop():
     tmpfile = BILDPFAD + ".tmp.png"
+    log_debug("📷 Screenshot thread started", level="MINIMAL")
     while True:
         try:
+            # Block here when paused
+            _capture_event.wait()
+
+            # If an IP isn’t set yet, don’t hammer vncdo; just idle briefly
+            if not OSZI_IP:
+                time.sleep(0.5)
+                continue
+
             os.system(f"vncdo -s {OSZI_IP} capture {tmpfile}")
             if os.path.exists(tmpfile):
                 os.replace(tmpfile, BILDPFAD)
@@ -43,53 +72,44 @@ def update_image(root):
         from app import app_state
         if getattr(app_state, "is_shutting_down", False):
             return
-            
         if img_label is None or not isinstance(img_label, tk.Widget) or not img_label.winfo_exists():
             return
 
-        if os.path.exists(BILDPFAD):
-            with open(BILDPFAD, "rb") as f:
-                img = Image.open(f)
-                img.load()
+        #Skip work if not currently visible
+        if not img_label.winfo_ismapped():
+            # Still reschedule, but do nothing heavy
+            pass
+        else:
+            if os.path.exists(BILDPFAD):
+                with open(BILDPFAD, "rb") as f:
+                    img = Image.open(f); img.load()
+                window_width = root.winfo_width()
+                window_height = root.winfo_height()
+                available_height = max(300, window_height - 250)
+                available_width = max(600, window_width - 50)
 
-        # Window-fit area (keep your own margins if you like)
-        window_width  = root.winfo_width()
-        window_height = root.winfo_height()
-        available_height = max(300, window_height - 250)
-        available_width  = max(600,  window_width  - 50)
+                img_ratio = img.width / img.height
+                if available_width / available_height > img_ratio:
+                    new_height = available_height
+                    new_width = int(available_height * img_ratio)
+                else:
+                    new_width = available_width
+                    new_height = int(available_width / img_ratio)
 
-        # Compute scale factors vs. the original image size
-        factor_w = available_width  / img.width
-        factor_h = available_height / img.height
-        scale = min(factor_w, factor_h)
-
-        # Respect operator preference: disallow upscaling if requested
-        if not SCOPE_IMAGE_ALLOW_UPSCALE:
-            scale = min(scale, 1.0)
-
-        new_w = max(1, int(img.width  * scale))
-        new_h = max(1, int(img.height * scale))
-
-        # Avoid needless resampling when scale ≈ 1.0
-        if abs(scale - 1.0) > 0.01:
-            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-        # else: keep original img size (crisp, no blur)
-
-        img_tk = ImageTk.PhotoImage(img)
-        img_label.configure(image=img_tk)
-        img_label.image = img_tk
-
+                img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                img_tk = ImageTk.PhotoImage(img)
+                img_label.config(image=img_tk)
+                img_label.image = img_tk
     except Exception as e:
         log_debug(f"Image Load Error: {e}")
 
-    # Re-schedule only if still alive
+    # Re-schedule...
     try:
         from app import app_state
         if not getattr(app_state, "is_shutting_down", False) and img_label and img_label.winfo_exists():
-            update_after_id[0] = root.after(INTERVALL_BILD * 1000, lambda: update_image(root))
+            root.after(INTERVALL_BILD * 1000, lambda: update_image(root))
     except tk.TclError:
         return
-
 
 def cancel_image_updates(root):
     try:
