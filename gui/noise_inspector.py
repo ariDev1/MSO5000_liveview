@@ -425,6 +425,21 @@ class NoiseInspectorTab:
             "Cyclostationary": ("Type","f0_Hz","α_Hz","SCD_dB","BW_Hz","Notes"),
             "Bicoherence": ("Type","f1_Hz","f2_Hz","b2","Notes"),
         }
+
+        # One-line operator hints for the headline above the plot
+        self.method_hint = {
+            "PSD+CFAR":        "Adaptive detector that flags narrowband lines buried in noise.",
+            "Spectrogram":     "Time–frequency view; reveals transients, chirps, and drifting tones.",
+            "MSC":             "Coherence vs. frequency between two channels; needs a channel pair.",
+            "Multitaper":      "Lower-variance PSD using DPSS tapers; stabilizes weak peaks in noise.",
+            "Spectral Kurtosis":"Measures non-Gaussian bursts; ideal for impulsive/transient detection.",
+            "Cepstrum":        "Finds periodic spacing of harmonics; useful for modulated/mechanical tones.",
+            "Matched Filter":  "Maximizes SNR for a known template; use when the waveform is known.",
+            "AR Spectrum":     "Model-based spectrum with sharp peaks; use when resolution matters most.",
+            "Cyclostationary": "Exposes periodic modulations (α-components); good for hidden carriers/comms.",
+            "Bicoherence":     "Detects quadratic phase coupling; reveals nonlinear mixing among tones.",
+        }
+
         init_cols = self.headers.get(self.method.get(), self.headers["PSD+CFAR"])
         self.table = ttk.Treeview(self.frame, columns=init_cols, show="headings", height=5)
 
@@ -470,6 +485,10 @@ class NoiseInspectorTab:
         presets = ["Default"] + [p for p in presets if p != "Default"]
         self.preset_box["values"] = presets
         self.preset.set("Default")
+
+    def _headline(self, method: str, fallback_title: str) -> str:
+        hint = getattr(self, "method_hint", {}).get(method, "")
+        return f"{fallback_title} — {hint}" if hint else fallback_title
 
     def _apply_preset(self, method: str, name: str):
         params = self._presets.get(method, {}).get(name, {})
@@ -1006,7 +1025,9 @@ class NoiseInspectorTab:
             ax.yaxis.set_major_formatter(self._eng)
             ax.set_ylabel(r.get("ylabel", "Frequency (Hz)"))
             ax.set_xlabel(r.get("xlabel", "Time (s)"))
-            ax.set_title(r.get("title", method if method else "Spectrogram"), pad=6)
+            base = r.get("title", method if method else "Spectrogram")
+            ax.set_title(self._headline(method, base), pad=6)
+
 
             # Optional visual cue for triangular domains (e.g., bicoherence)
             if r.get("draw_diag") and extent is not None:
@@ -1036,7 +1057,7 @@ class NoiseInspectorTab:
                     self.ax_main.plot(xi, yi, linewidth=1.0, alpha=alpha, color=self._col_curve, zorder=1)
 
             ax.plot(x, y, linewidth=0.9, color=self._col_curve, zorder=3)
-            ax.set_title(method, pad=6)
+            ax.set_title(self._headline(method, method), pad=6)
             ax.set_xlabel("Frequency (Hz)")
             ax.set_ylabel("Value (dB)" if method!="MSC" else "MSC")
             for d in r.get("detections", []):
