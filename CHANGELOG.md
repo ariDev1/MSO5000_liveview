@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented here.
 
+## v0.9.8j-testing (2026-08-24)
+
+### Verification and scientific integrity
+
+- Added deterministic regression tests for the established power calculations.
+- Added validation tests for empty, unequal-length, and non-finite waveform data.
+- Preserved the established power formulas, shunt handling, clamp handling, and signed-power behavior.
+
+### Scope display and analysis tools
+
+- Replaced shell-based VNC capture with an argument-safe subprocess call.
+- Added scope IPv4 address validation.
+- Paused VNC capture while the scope image is hidden.
+- Enabled the advanced B-H curve, harmonics, and noise inspector tabs by default.
+- Improved the harmonics layout and added operator guidance to the noise inspector.
+- Added power-analysis setup and standards-compatibility documents.
+
+### Docker and release workflow
+
+- Added X11 and Wayland launch checks with clear error messages.
+- Made Docker build metadata reproducible from Git information.
+- Aligned local and CI Docker builds with the same build procedure.
+- Kept Docker publication limited to stable release tags.
+
+---
+
 ## v0.9.8e-stable (2025-08-02)
 
 ### 🐳 Docker & CI Workflow Overhaul
