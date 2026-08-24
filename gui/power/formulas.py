@@ -4,6 +4,21 @@ import math
 
 SIGN_CONVENTION = "IEEE 1459: Q>0 inductive (I lags), Q<0 capacitive (I leads)"
 
+
+def _validate_waveform_pair(voltage, current):
+    voltage = np.asarray(voltage, dtype=float)
+    current = np.asarray(current, dtype=float)
+
+    if voltage.size == 0 or current.size == 0:
+        raise ValueError("Waveform inputs must not be empty.")
+    if voltage.shape != current.shape:
+        raise ValueError("Waveform inputs must have the same length.")
+    if not np.all(np.isfinite(voltage)) or not np.all(np.isfinite(current)):
+        raise ValueError("Waveform inputs must contain only finite values.")
+
+    return voltage, current
+
+
 def _estimate_f0(v, fs, mains_hint=None, span_hz=None, fmin=1.0, fmax=None):
     n = len(v)
     if fs is None or n < 8:
@@ -85,10 +100,7 @@ def compute_vi_mean(voltage, current, fs=None, mains_hint=50.0, allow_dc=True):
     """
     Instantaneous Power (Zeitbereich) + Q1 aus Grundschwingung (falls fs verfügbar).
     """
-    v = np.asarray(voltage, dtype=float)
-    i = np.asarray(current, dtype=float)
-    n = min(len(v), len(i))
-    v, i = v[:n], i[:n]
+    v, i = _validate_waveform_pair(voltage, current)
 
     if not allow_dc:
         v = v - np.mean(v)
@@ -111,8 +123,7 @@ def compute_rms_cos_phi(voltage, current, fs=None, mains_hint=50.0):
     Historisch: P = Vrms*Irms*cos(phi). In der Praxis ist cos(phi)=PF (=P/S).
     Q wird korrekt als Q1 (Grundschwingung) berechnet, falls fs vorhanden.
     """
-    v = np.asarray(voltage, dtype=float)
-    i = np.asarray(current, dtype=float)
+    v, i = _validate_waveform_pair(voltage, current)
     P, Vrms, Irms, S = _p_s_from_time(v, i)
     # cos_phi aus P/S (robust und äquivalent)
     cos_phi = float(P / S) if S > 0 else 0.0
@@ -122,8 +133,9 @@ def compute_rms_cos_phi(voltage, current, fs=None, mains_hint=50.0):
     return _pack_result(P, S, Q1, Vrms, Irms, PF_extra=PF1, notes=[], phi1_deg=phi1_deg, f0=f0)
 
 def compute_rms_only(voltage, current):
-    Vrms = float(np.sqrt(np.mean(np.asarray(voltage, dtype=float)**2)))
-    Irms = float(np.sqrt(np.mean(np.asarray(current, dtype=float)**2)))
+    voltage, current = _validate_waveform_pair(voltage, current)
+    Vrms = float(np.sqrt(np.mean(voltage**2)))
+    Irms = float(np.sqrt(np.mean(current**2)))
     S = float(Vrms * Irms)
     return _pack_result(0.0, S, 0.0, Vrms, Irms, notes=["S only"], phi1_deg=None, f0=None)
 
@@ -132,8 +144,7 @@ def compute_fft_phase_power(voltage, current, fs=None, mains_hint=50.0):
     NEU: Fundamentale Phasor-Methode (statt „Summen-FFT-Winkel“).
     Liefert P aus Zeitbereich; Q als Q1 (signiert); zusätzlich PF1, phi1, f0.
     """
-    v = np.asarray(voltage, dtype=float)
-    i = np.asarray(current, dtype=float)
+    v, i = _validate_waveform_pair(voltage, current)
     P, Vrms, Irms, S = _p_s_from_time(v, i)
     Q1, P1, phi1_deg, f0 = _q1_from_fundamental(v, i, fs, mains_hint=mains_hint)
     PF1 = float(P1 / math.hypot(P1, Q1)) if not (np.isnan(Q1) or (P1 == 0 and Q1 == 0)) else None
