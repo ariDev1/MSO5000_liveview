@@ -30,6 +30,28 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from matplotlib.ticker import EngFormatter
 
+# Tooltips (stdlib). Falls back to a tiny local class if idlelib is missing.
+try:
+    from idlelib.tooltip import Hovertip as _Hovertip  # Python stdlib
+except Exception:
+    import tkinter as tk
+    class _Hovertip:
+        def __init__(self, widget, text, hover_delay=350):
+            self.widget, self.text, self.delay = widget, text, hover_delay
+            self._id = self._tip = None
+            widget.bind("<Enter>", self._schedule); widget.bind("<Leave>", self._hide)
+        def _schedule(self, _=None):
+            self._cancel(); self._id = self.widget.after(self.delay, self._show)
+        def _cancel(self):
+            if self._id: self.widget.after_cancel(self._id); self._id = None
+        def _show(self):
+            x = self.widget.winfo_rootx() + 12; y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+            self._tip = tk.Toplevel(self.widget); self._tip.wm_overrideredirect(True); self._tip.wm_geometry(f"+{x}+{y}")
+            tk.Label(self._tip, text=self.text, bg="#fff", fg="#222", bd=1, relief="solid", padx=8, pady=6).pack()
+        def _hide(self, _=None):
+            self._cancel()
+            if self._tip: self._tip.destroy(); self._tip = None
+
 
 # -------------------- SCPI waveform fetch (exclusive, NORM) --------------------
 def _fetch_waveform_local_exclusive(scope, chan_name: str, raw: bool = False):
@@ -322,40 +344,58 @@ class NoiseInspectorTab:
         self.db_floor  = tk.DoubleVar(value=-40.0)    # dB floor for image display
 
         row1 = ttk.Frame(self.adv); row1.pack(side="top", fill="x", padx=6, pady=2)
-        for label, var, w in [("NFFT", self.nfft, 8),
-                              ("SegLen", self.seglen, 8),
-                              ("Overlap", self.overlap, 8),
-                              ("Pfa", self.pfa, 10),
-                              ("SmoothBins", self.smooth_bins, 10),
-                              ("TopK", self.topk, 6)]:
+        for label, var, w, tip in [
+            ("NFFT",       self.nfft,        8,  "FFT length. Higher = finer Δf, more CPU. Prefer powers of two."),
+            ("SegLen",     self.seglen,      8,  "Welch segment length (samples). Often same as NFFT."),
+            ("Overlap",    self.overlap,     8,  "Segment overlap 0..1. Typical 0.5–0.75."),
+            ("Pfa",        self.pfa,        10,  "CFAR false-alarm probability. Lower = stricter (e.g. 1e-3)."),
+            ("SmoothBins", self.smooth_bins,10,  "Pre-CFAR bin smoothing for PSD/Spectrogram."),
+            ("TopK",       self.topk,        6,  "Max number of peaks/detections to report."),
+        ]:
             ttk.Label(row1, text=label).pack(side="left", padx=(0,4))
-            ttk.Entry(row1, textvariable=var, width=w).pack(side="left", padx=(0,8))
+            e = ttk.Entry(row1, textvariable=var, width=w); e.pack(side="left", padx=(0,8))
+            _Hovertip(e, tip)
+
 
         row2 = ttk.Frame(self.adv); row2.pack(side="top", fill="x", padx=6, pady=2)
         ttk.Label(row2, text="MSC_thr").pack(side="left", padx=(0,4))
-        ttk.Entry(row2, textvariable=self.msc_thr, width=8).pack(side="left", padx=(0,8))
+        e = ttk.Entry(row2, textvariable=self.msc_thr, width=8); e.pack(side="left", padx=(0,8))
+        _Hovertip(e, "Magnitude-squared coherence threshold (0..1). Higher = stricter.")
+
         ttk.Label(row2, text="Hop (Spectrogram)").pack(side="left", padx=(0,4))
-        ttk.Entry(row2, textvariable=self.hop, width=10).pack(side="left", padx=(0,8))
+        e = ttk.Entry(row2, textvariable=self.hop, width=10); e.pack(side="left", padx=(0,8))
+        _Hovertip(e, "STFT hop size in samples. Smaller hop → denser spectrogram.")
+
 
         row3 = ttk.Frame(self.adv); row3.pack(side="top", fill="x", padx=6, pady=2)
-        for label, var, w in [("K_tapers", self.k_tapers, 8), ("SK_thr", self.sk_thr, 8),
-                              ("qmin_ms", self.qmin_ms, 8), ("qmax_ms", self.qmax_ms, 8),
-                              ("AR_order", self.ar_order, 8)]:
+        for label, var, w, tip in [
+            ("K_tapers", self.k_tapers, 8, "Number of DPSS tapers (multitaper PSD)."),
+            ("SK_thr",   self.sk_thr,   8, "Spectral kurtosis threshold; higher emphasizes rare bursts."),
+            ("qmin_ms",  self.qmin_ms,  8, "Cepstrum lower quefrency limit (ms)."),
+            ("qmax_ms",  self.qmax_ms,  8, "Cepstrum upper quefrency limit (ms)."),
+            ("AR_order", self.ar_order, 8, "AR spectrum model order. Higher sharpens lines, risk overfit."),
+        ]:
             ttk.Label(row3, text=label).pack(side="left", padx=(0,4))
-            ttk.Entry(row3, textvariable=var, width=w).pack(side="left", padx=(0,8))
+            e = ttk.Entry(row3, textvariable=var, width=w); e.pack(side="left", padx=(0,8))
+            _Hovertip(e, tip)
 
         ttk.Label(row3, text="α_max (Hz)").pack(side="left", padx=(0,4))
-        ttk.Entry(row3, textvariable=self.alpha_max, width=10).pack(side="left", padx=(0,8))
-        ttk.Label(row3, text="dB_floor").pack(side="left", padx=(0,4))
-        ttk.Entry(row3, textvariable=self.db_floor, width=8).pack(side="left", padx=(0,8))
+        e = ttk.Entry(row3, textvariable=self.alpha_max, width=10); e.pack(side="left", padx=(0,8))
+        _Hovertip(e, "Cyclostationary analysis: maximum cyclic frequency α to evaluate (Hz).")
 
-        # --- Bicoherence controls (appear in Advanced panel) ---
+        ttk.Label(row3, text="dB_floor").pack(side="left", padx=(0,4))
+        e = ttk.Entry(row3, textvariable=self.db_floor, width=8); e.pack(side="left", padx=(0,8))
+        _Hovertip(e, "Image floor (dB) for plots; clip values below this to improve contrast.")
+
+
         row_bico = ttk.Frame(self.adv); row_bico.pack(side="top", fill="x", padx=6, pady=2)
         ttk.Checkbutton(row_bico, text="Bico: accumulate across runs",
                         variable=self.bico_accum, style="Dark.TCheckbutton").pack(side="left", padx=(0,10))
         ttk.Label(row_bico, text="Bico vmax").pack(side="left", padx=(0,4))
-        ttk.Entry(row_bico, textvariable=self.bico_vmax, width=6).pack(side="left", padx=(0,10))
+        e = ttk.Entry(row_bico, textvariable=self.bico_vmax, width=6); e.pack(side="left", padx=(0,10))
+        _Hovertip(e, "Bicoherence colorbar upper limit (0..1).")
         ttk.Button(row_bico, text="Clear Bico", command=self._clear_bico).pack(side="left", padx=(0,10))
+
 
         # Matplotlib figure with GridSpec
         fig = Figure(figsize=(5, 4.8), dpi=100)
@@ -385,6 +425,21 @@ class NoiseInspectorTab:
             "Cyclostationary": ("Type","f0_Hz","α_Hz","SCD_dB","BW_Hz","Notes"),
             "Bicoherence": ("Type","f1_Hz","f2_Hz","b2","Notes"),
         }
+
+        # One-line operator hints for the headline above the plot
+        self.method_hint = {
+            "PSD+CFAR":        "Adaptive detector that flags narrowband lines buried in noise.",
+            "Spectrogram":     "Time–frequency view; reveals transients, chirps, and drifting tones.",
+            "MSC":             "Coherence vs. frequency between two channels; needs a channel pair.",
+            "Multitaper":      "Lower-variance PSD using DPSS tapers; stabilizes weak peaks in noise.",
+            "Spectral Kurtosis":"Measures non-Gaussian bursts; ideal for impulsive/transient detection.",
+            "Cepstrum":        "Finds periodic spacing of harmonics; useful for modulated/mechanical tones.",
+            "Matched Filter":  "Maximizes SNR for a known template; use when the waveform is known.",
+            "AR Spectrum":     "Model-based spectrum with sharp peaks; use when resolution matters most.",
+            "Cyclostationary": "Exposes periodic modulations (α-components); good for hidden carriers/comms.",
+            "Bicoherence":     "Detects quadratic phase coupling; reveals nonlinear mixing among tones.",
+        }
+
         init_cols = self.headers.get(self.method.get(), self.headers["PSD+CFAR"])
         self.table = ttk.Treeview(self.frame, columns=init_cols, show="headings", height=5)
 
@@ -430,6 +485,10 @@ class NoiseInspectorTab:
         presets = ["Default"] + [p for p in presets if p != "Default"]
         self.preset_box["values"] = presets
         self.preset.set("Default")
+
+    def _headline(self, method: str, fallback_title: str) -> str:
+        hint = getattr(self, "method_hint", {}).get(method, "")
+        return f"{fallback_title} — {hint}" if hint else fallback_title
 
     def _apply_preset(self, method: str, name: str):
         params = self._presets.get(method, {}).get(name, {})
@@ -966,7 +1025,9 @@ class NoiseInspectorTab:
             ax.yaxis.set_major_formatter(self._eng)
             ax.set_ylabel(r.get("ylabel", "Frequency (Hz)"))
             ax.set_xlabel(r.get("xlabel", "Time (s)"))
-            ax.set_title(r.get("title", method if method else "Spectrogram"), pad=6)
+            base = r.get("title", method if method else "Spectrogram")
+            ax.set_title(self._headline(method, base), pad=6)
+
 
             # Optional visual cue for triangular domains (e.g., bicoherence)
             if r.get("draw_diag") and extent is not None:
@@ -996,7 +1057,7 @@ class NoiseInspectorTab:
                     self.ax_main.plot(xi, yi, linewidth=1.0, alpha=alpha, color=self._col_curve, zorder=1)
 
             ax.plot(x, y, linewidth=0.9, color=self._col_curve, zorder=3)
-            ax.set_title(method, pad=6)
+            ax.set_title(self._headline(method, method), pad=6)
             ax.set_xlabel("Frequency (Hz)")
             ax.set_ylabel("Value (dB)" if method!="MSC" else "MSC")
             for d in r.get("detections", []):
