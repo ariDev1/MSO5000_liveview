@@ -98,11 +98,19 @@ pip install pillow numpy pyvisa pyvisa-py requests vncdotool psutil zeroconf
 
 You can run this app in a **Docker container with GUI**.
 
+On Omarchy or Arch Linux, install the host X11 authorization tool first:
+
+```bash
+sudo pacman -S xorg-xhost
+```
+
 ### 🔧 Build the Image
 
 ```bash
-docker build -t mso5000_liveview .
+./build-docker.sh
 ```
+
+The build script stamps the image with the current Git version, commit, and UTC build date.
 
 ### 🚀 Run It
 
@@ -111,6 +119,7 @@ docker build -t mso5000_liveview .
 ```
 
 The script auto-detects X11 or Wayland and sets up display bridging.
+It stops with a prerequisite message if `xhost` is not installed.
 
 ### 📁 Where Are My CSV Files?
 

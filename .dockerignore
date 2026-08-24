@@ -1,4 +1,6 @@
 venv/
+.venv/
+.git/
 __pycache__/
 *.log
 oszi_csv/

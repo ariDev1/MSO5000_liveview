@@ -1,5 +1,6 @@
 # build_version.py
 import subprocess
+import os
 from datetime import datetime
 
 # Compatibility fix for Python <3.11
@@ -9,9 +10,15 @@ except ImportError:
     from datetime import timezone
     UTC = timezone.utc
 
-commit = subprocess.getoutput("git rev-parse --short HEAD")
-version = subprocess.getoutput("git describe --tags --abbrev=0")
-now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+commit = os.environ.get("MSO5000_BUILD_COMMIT") or subprocess.getoutput(
+    "git rev-parse --short HEAD"
+)
+version = os.environ.get("MSO5000_BUILD_VERSION") or subprocess.getoutput(
+    "git describe --tags --abbrev=0"
+)
+now = os.environ.get("MSO5000_BUILD_DATE") or datetime.now(UTC).strftime(
+    "%Y-%m-%d %H:%M UTC"
+)
 
 print("commit:", commit)
 print("version:", version)

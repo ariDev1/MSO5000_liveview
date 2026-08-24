@@ -19,8 +19,16 @@ RUN apt update && apt install -y \
 # Set working directory and copy files
 WORKDIR /app
 COPY . .
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+
+ARG MSO5000_VERSION
+ARG MSO5000_COMMIT
+ARG MSO5000_BUILD_DATE
+
+RUN MSO5000_BUILD_VERSION="$MSO5000_VERSION" \
+    MSO5000_BUILD_COMMIT="$MSO5000_COMMIT" \
+    MSO5000_BUILD_DATE="$MSO5000_BUILD_DATE" \
+    python3 build_version.py \
+    && chmod +x /app/entrypoint.sh
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
