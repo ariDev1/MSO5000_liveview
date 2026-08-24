@@ -9,6 +9,7 @@ from matplotlib import pyplot as plt  # noqa: F401
 import os
 import sys
 import argparse
+import ipaddress
 import threading
 import tkinter as tk
 from tkinter import ttk
@@ -38,6 +39,19 @@ def parse_args(argv=None):
     parser.add_argument("--samples", type=int, help="Override number of waveform points (default: project config)")
     parser.add_argument("--noMarquee", action="store_true", help="Disable the marquee text at the top")
     return parser.parse_args(argv)
+
+
+def normalize_scope_ipv4(value: str) -> str:
+    """Return one normalized IPv4 address or raise ValueError."""
+    try:
+        address = ipaddress.ip_address(value.strip())
+    except (AttributeError, ValueError):
+        raise ValueError("Scope address must be a valid IPv4 address.") from None
+
+    if not isinstance(address, ipaddress.IPv4Address):
+        raise ValueError("Scope address must be a valid IPv4 address.")
+
+    return str(address)
 
 
 # ----------------------------------------------------------------------------
@@ -494,6 +508,12 @@ def main(argv=None):
         ip = input("Enter RIGOL MSO5000 IP address: ").strip()
     if not ip:
         print("🔌 No IP provided")
+        return
+
+    try:
+        ip = normalize_scope_ipv4(ip)
+    except ValueError as error:
+        print(f"🔌 {error}")
         return
 
     # Connect & stash

@@ -1,6 +1,7 @@
 # gui/image_display.py
 
 import os
+import subprocess
 import time
 import threading
 from PIL import Image, ImageTk
@@ -27,11 +28,19 @@ def attach_image_label(label_widget):
     global img_label
     img_label = label_widget
 
+
+def capture_screenshot(ip, output_path):
+    """Capture one screenshot without invoking a command shell."""
+    subprocess.run(
+        ["vncdo", "-s", ip, "capture", str(output_path)],
+        check=True,
+    )
+
 def screenshot_loop():
     tmpfile = BILDPFAD + ".tmp.png"
     while True:
         try:
-            os.system(f"vncdo -s {OSZI_IP} capture {tmpfile}")
+            capture_screenshot(OSZI_IP, tmpfile)
             if os.path.exists(tmpfile):
                 os.replace(tmpfile, BILDPFAD)
         except Exception as e:
