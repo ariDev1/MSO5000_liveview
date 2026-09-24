@@ -356,6 +356,18 @@ class HarmonicsTab(QWidget):
 
 
 class BHCurveTab(QWidget):
+    # GAP (Tk parity, recorded): the Tk tab drives its own NORM/RAW sampler
+    # (point count, Stop/Fetch) through an exclusive SCPI reader. Qt reuses
+    # the shared fetch path (RAW checkbox only) — point counts stay under
+    # scope configuration, no shared code touched.
+    # GAP (Tk parity, recorded): the Tk tab appends every run to a session
+    # bhcurve_log CSV and offers a detailed V/I/H/B export plus an auto-path
+    # PNG with an IDN footer. Qt keeps its established per-save H/B CSV and
+    # dialog-based PNG instead (CSV schema frozen).
+    # GAP (Tk parity, recorded): the Tk data panel reports THD(I)/THD(V)
+    # from the raw acquisition waves, which the shared-fetch adapter does
+    # not surface. Qt shows f₀, fs/f₀ warnings and H/B samples from the
+    # computed loop instead.
     def __init__(self, submit, backend, notify):
         super().__init__()
         self.submit, self.backend, self.notify = submit, backend, notify
@@ -368,7 +380,7 @@ class BHCurveTab(QWidget):
         self.current = QComboBox()
         for selector in (self.voltage, self.current):
             selector.addItems([f"CHAN{i}" for i in range(1, 5)] + [f"MATH{i}" for i in range(1, 5)])
-        self.current.setCurrentIndex(1)
+        self.current.setCurrentIndex(2)
         self.turns = QSpinBox()
         self.turns.setRange(1, 100000)
         self.turns.setValue(20)
@@ -386,17 +398,29 @@ class BHCurveTab(QWidget):
         self.probe_value.setValue(0.1)
         self.deskew = QDoubleSpinBox()
         self.deskew.setRange(-1e6, 1e6)
+        self.deskew.setToolTip("Deskew Δt (V−I) in µs, same convention as Power Analysis.")
         self.cycle_ref = QComboBox()
-        self.cycle_ref.addItems(["I", "V"])
+        self.cycle_ref.addItems(["I", "V", "Auto"])
         self.avg_cycles = QSpinBox()
-        self.avg_cycles.setRange(1, 50)
+        self.avg_cycles.setRange(1, 10)
         self.raw = QCheckBox("RAW")
+        self.raw.setToolTip("Full-memory fetch via the shared scope path.")
         self.dc = QCheckBox("Remove DC")
         self.dc.setChecked(True)
         self.detrend = QCheckBox("Detrend")
         self.cycle = QCheckBox("Average cycles")
-        self.cycle.setChecked(True)
+        self.equal_aspect = QCheckBox("Equal aspect")
+        self.tight = QCheckBox("Tight fit")
+        self.tight.setChecked(True)
+        self.data = QCheckBox("Data")
+        self.data.setChecked(True)
+        self.data.toggled.connect(self._toggle_data)
         self.auto = QCheckBox("Auto")
+        self.interval = QSpinBox()
+        self.interval.setRange(1, 60)
+        self.interval.setValue(5)
+        self.interval.setSuffix(" s")
+        self.interval.valueChanged.connect(self._retime)
         self.overlay = QCheckBox("Trail")
         controls = (("Voltage", self.voltage), ("Current", self.current), ("Turns", self.turns),
                     ("Ae (mm²)", self.area), ("le (mm)", self.length), ("Probe", self.probe_type),
@@ -407,7 +431,7 @@ class BHCurveTab(QWidget):
             grid.addWidget(widget, idx // 5, idx % 5 * 2 + 1)
         layout.addLayout(grid)
         row = QHBoxLayout()
-        button = QPushButton("Acquire B–H")
+        button = QPushButton("▶ Acquire & Plot")
         button.clicked.connect(self.run)
         png = QPushButton("Save PNG")
         png.clicked.connect(lambda: self.plot.save_png(self))
@@ -418,7 +442,8 @@ class BHCurveTab(QWidget):
         clear = QPushButton("Reset trail")
         clear.clicked.connect(self.clear_trail)
         for widget in (self.raw, self.dc, self.detrend, self.cycle, self.auto,
-                       self.overlay, button, clear, png, csv, help_button):
+                       QLabel("Interval"), self.interval, self.equal_aspect, self.tight,
+                       self.data, self.overlay, button, clear, png, csv, help_button):
             row.addWidget(widget)
         layout.addLayout(row)
         self.plot = Plot()
@@ -428,7 +453,14 @@ class BHCurveTab(QWidget):
         layout.addWidget(self.details)
         self.timer = QTimer(self)
         self.timer.timeout.connect(lambda: self.run() if self.auto.isChecked() else None)
-        self.timer.start(4000)
+        self._retime()
+        self._toggle_data(True)
+
+    def _retime(self):
+        self.timer.setInterval(max(1, self.interval.value()) * 1000)
+
+    def _toggle_data(self, visible):
+        self.details.setVisible(bool(visible))
 
     def run(self):
         if self.pending or app_state.is_logging_active:
@@ -456,6 +488,29 @@ class BHCurveTab(QWidget):
             for idx, (old_h, old_b) in enumerate(self.history):
                 self.plot.axes.plot(old_h, old_b, color="#54d5ae", linewidth=1.5,
                                     alpha=0.25 + 0.75 * (idx + 1) / len(self.history))
+            try:
+                if self.tight.isChecked():
+                    hmin, hmax = float(np.min(h)), float(np.max(h))
+                    bmin, bmax = float(np.min(b)), float(np.max(b))
+                    if hmax == hmin:
+                        hmin -= 1.0
+                        hmax += 1.0
+                    if bmax == bmin:
+                        bmin -= 1e-3
+                        bmax += 1e-3
+                    self.plot.axes.set_xlim(hmin - 0.08 * (hmax - hmin),
+                                            hmax + 0.08 * (hmax - hmin))
+                    self.plot.axes.set_ylim(bmin - 0.08 * (bmax - bmin),
+                                            bmax + 0.08 * (bmax - bmin))
+                else:
+                    hx, bx = float(np.max(np.abs(h))), float(np.max(np.abs(b)))
+                    if hx > 0 and bx > 0:
+                        self.plot.axes.set_xlim(-1.1 * hx, 1.1 * hx)
+                        self.plot.axes.set_ylim(-1.1 * bx, 1.1 * bx)
+                self.plot.axes.set_aspect("equal" if self.equal_aspect.isChecked() else "auto",
+                                           adjustable="datalim")
+            except (TypeError, ValueError):
+                pass
             self.plot.style_axes("Hysteresis loop", "H (A/m)", "B (T)")
             def crossing(x, y):
                 indices = np.flatnonzero(np.diff(np.signbit(y)))
@@ -472,11 +527,24 @@ class BHCurveTab(QWidget):
             with np.errstate(divide="ignore", invalid="ignore"):
                 permeability = np.abs(b[np.abs(h) > 1e-4] / h[np.abs(h) > 1e-4]) / (4 * np.pi * 1e-7)
             mu_max = float(np.max(permeability)) if len(permeability) else float("nan")
-            self.details.setPlainText(f"Points: {len(h)}  dt: {dt:.3g} s\n"
-                                      f"fs: {1/dt:.4g} Hz  f₀: {f0:.4g} Hz\n"
-                                      f"Peak |H|: {max(abs(h)):.4g} A/m   Peak |B|: {max(abs(b)):.4g} T\n"
-                                      f"Hc: {hc:.4g} A/m  Br: {br:.4g} T  Max μr: {mu_max:.4g}\n"
-                                      f"Loop area: {abs(np.trapezoid(b, h)):.4g} J/m³")
+            fs, ratio = 1 / dt, (1 / dt) / f0 if f0 > 0 else 0
+            peak_h, peak_b = float(max(abs(h))), float(max(abs(b)))
+            warnings = []
+            if peak_h < 1.0 or peak_b < 1e-4:
+                warnings.append("⚠️ Low signal — results may be noisy")
+            if f0 > 0 and ratio < 20:
+                warnings.append(f"⚠️ fs/f₀={ratio:.1f} < 20 — increase sample rate")
+            samples = (f"H (A/m): {np.array2string(h[:8], precision=3, separator=', ')}"
+                       f"{' ... ' + np.array2string(h[-8:], precision=3, separator=', ') if len(h) > 16 else ''}\n"
+                       f"B (T):   {np.array2string(b[:8], precision=5, separator=', ')}"
+                       f"{' ... ' + np.array2string(b[-8:], precision=5, separator=', ') if len(b) > 16 else ''}")
+            self.details.setPlainText(
+                f"Points: {len(h)}  dt: {dt:.3g} s\n"
+                f"fs: {fs:.4g} Hz  f₀: {f0:.4g} Hz  fs/f₀: {ratio:.1f}\n"
+                f"Peak |H|: {peak_h:.4g} A/m   Peak |B|: {peak_b:.4g} T\n"
+                f"Hc: {hc:.4g} A/m  Br: {br:.4g} T  Max μr: {mu_max:.4g}\n"
+                f"Loop area: {abs(np.trapezoid(b, h)):.4g} J/m³"
+                + ("".join(f"\n{warning}" for warning in warnings)) + f"\n{samples}")
 
         self.submit(lambda: bh_curve(self.backend._connected(), *values), done)
 

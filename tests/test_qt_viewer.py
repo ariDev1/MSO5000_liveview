@@ -169,7 +169,8 @@ def test_qt_advanced_tabs_render_existing_analysis_results(monkeypatch):
     fs = 5000
     t = np.arange(fs) / fs
     waves = {"CHAN1": np.sqrt(2) * np.sin(2 * np.pi * 50 * t),
-             "CHAN2": np.sqrt(2) * np.cos(2 * np.pi * 50 * t)}
+             "CHAN2": np.sqrt(2) * np.cos(2 * np.pi * 50 * t),
+             "CHAN3": np.sqrt(2) * np.cos(2 * np.pi * 50 * t)}
     monkeypatch.setattr(analysis, "acquire",
                         lambda scope, channel, raw=False: (t, waves[channel], fs))
     monkeypatch.setattr(advanced, "acquire", analysis.acquire)

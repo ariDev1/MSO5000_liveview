@@ -56,9 +56,29 @@ def bh_curve(scope, voltage, current, turns, area_mm2, length_mm, probe_type,
         i, v = remove_trend(i), remove_trend(v)
     if cycle:
         # Same-slope crossings from the reference waveform, as in the Tk tab.
-        reference = v if cycle_ref == "V" else i
-        crossing = np.flatnonzero((reference[:-1] < 0) & (reference[1:] >= 0))
-        windows = list(zip(crossing[:-1], crossing[1:]))[-avg_cycles:]
+        def windows_for(reference):
+            crossing = np.flatnonzero((reference[:-1] < 0) & (reference[1:] >= 0))
+            return list(zip(crossing[:-1], crossing[1:]))[-avg_cycles:]
+
+        candidates = {"V": (v,), "I": (i,), "Auto": (i, v)}.get(cycle_ref, (i,))
+        windows = []
+        for reference in candidates:
+            windows = windows_for(reference)
+            if windows and not (len(windows) == 1
+                                and windows[0][1] - windows[0][0] >= len(reference) - 1):
+                break
+        else:
+            windows = []
+        if not windows and cycle_ref == "Auto":
+            # FFT single-cycle fallback on the stronger wave, as in the Tk tab.
+            src = i if np.std(i) >= np.std(v) else v
+            spectrum = np.abs(np.fft.rfft((src - np.mean(src)) * np.hanning(len(src))))
+            f0 = (1 + int(np.argmax(spectrum[1:]))) / (len(src) * dt) if len(spectrum) > 1 else 0
+            period = int(max(4, round(1.0 / f0 / dt))) if f0 > 0 else 0
+            if 0 < period < len(src):
+                mid = len(src) // 2
+                start = max(0, mid - period // 2)
+                windows = [(start, min(len(src), start + period))]
         if windows:
             points = max(64, int(np.median([b - a for a, b in windows])))
             grid = np.linspace(0, 1, points)
