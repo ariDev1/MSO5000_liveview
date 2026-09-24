@@ -80,7 +80,13 @@ def show_help(parent, filename):
 
 
 class SurfaceHistory:
-    """Detachable frequency / time / level view for successive spectra."""
+    """Detachable frequency / time / level view for successive spectra.
+
+    Control bar mirrors the Tk 3D-surface window (Last N, Log Z, render
+    mode, stride, points per line, Apply, Clear). One deliberate difference:
+    Log Z stays opt-in here because Qt feeds both linear (harmonics) and
+    already-logged (noise dB) spectra into the same view.
+    """
 
     def __init__(self, parent):
         self.dialog = QDialog(parent)
@@ -88,25 +94,89 @@ class SurfaceHistory:
         self.dialog.resize(900, 670)
         self.plot = Plot(three_d=True)
         layout = QVBoxLayout(self.dialog)
+        bar = QHBoxLayout()
+        self.last_n = QSpinBox()
+        self.last_n.setRange(10, 500)
+        self.last_n.setValue(40)
+        self.log_z = QCheckBox("Log Z")
+        self.mode = QComboBox()
+        self.mode.addItems(["lines", "wire", "surface"])
+        self.stride = QSpinBox()
+        self.stride.setRange(1, 10)
+        self.stride.setValue(1)
+        self.pts = QSpinBox()
+        self.pts.setRange(50, 2000)
+        self.pts.setValue(250)
+        apply = QPushButton("Apply")
+        apply.clicked.connect(self.apply_opts)
+        clear = QPushButton("Clear")
+        clear.clicked.connect(self.clear)
+        for widget in (QLabel("Last N"), self.last_n, self.log_z,
+                       QLabel("Mode"), self.mode, QLabel("Stride"), self.stride,
+                       QLabel("Pts/line"), self.pts, apply, clear):
+            bar.addWidget(widget)
+        bar.addStretch()
+        layout.addLayout(bar)
         layout.addWidget(self.plot)
         self.history = []
+        self._seen = 0
+        self.apply_opts()
 
     def show(self):
         self.dialog.show()
         self.dialog.raise_()
 
+    def apply_opts(self):
+        # Cache plain values so background pushes never touch live widgets.
+        self.max_lines = max(10, self.last_n.value())
+        self.use_log = self.log_z.isChecked()
+        self.render_mode = self.mode.currentText()
+        self.stride_n = max(1, self.stride.value())
+        self.pts_n = max(50, self.pts.value())
+        self.history = self.history[-self.max_lines:]
+        self._redraw()
+
+    def clear(self):
+        self.history.clear()
+        self._seen = 0
+        self._redraw()
+
     def push(self, x, y):
         x, y = np.asarray(x, float), np.asarray(y, float)
         if len(x) < 2 or len(x) != len(y):
             return
-        axis = np.linspace(x.min(), x.max(), 250)
+        self._seen += 1
+        if (self._seen - 1) % self.stride_n != 0:
+            return
+        axis = np.linspace(x.min(), x.max(), self.pts_n)
         self.history.append((axis, np.interp(axis, x, y)))
-        self.history = self.history[-40:]
+        self.history = self.history[-self.max_lines:]
+        if self.dialog.isVisible():
+            self._redraw()
+
+    def _redraw(self):
+        if not self.history:
+            self.plot.axes.clear()
+            self.plot.canvas.draw_idle()
+            return
         ax = self.plot.axes
         ax.clear()
-        for idx, (xx, yy) in enumerate(self.history):
-            ax.plot(xx, np.full(len(xx), idx), yy, color="#54d5ae", alpha=0.7)
-        ax.set_zlabel("Level", color="#e5edf6")
+        values = [yy if not self.use_log
+                  else np.log10(np.clip(yy, 1e-12, None)) for _, yy in self.history]
+        if self.render_mode == "lines":
+            for idx, ((xx, _), zz) in enumerate(zip(self.history, values)):
+                ax.plot(xx, np.full(len(xx), idx), zz, color="#54d5ae", alpha=0.7)
+        else:
+            xx = self.history[0][0]
+            rows = len(self.history)
+            grid_x, grid_y = np.meshgrid(xx, np.arange(rows))
+            grid_z = np.vstack(values)
+            if self.render_mode == "wire":
+                ax.plot_wireframe(grid_x, grid_y, grid_z, color="#54d5ae", alpha=0.7)
+            else:
+                ax.plot_surface(grid_x, grid_y, grid_z, cmap="magma", alpha=0.9)
+        ax.set_zlabel("log₁₀(Level)" if self.use_log else "Level",
+                      color="#e5edf6")
         self.plot.style_axes("Spectrum history", "Frequency (Hz)", "Acquisition")
 
 
