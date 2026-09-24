@@ -125,6 +125,10 @@ class SurfaceHistory:
     def show(self):
         self.dialog.show()
         self.dialog.raise_()
+        try:
+            self._redraw()
+        except RuntimeError:
+            pass
 
     def apply_opts(self):
         # Cache plain values so background pushes never touch live widgets.
@@ -151,10 +155,15 @@ class SurfaceHistory:
         axis = np.linspace(x.min(), x.max(), self.pts_n)
         self.history.append((axis, np.interp(axis, x, y)))
         self.history = self.history[-self.max_lines:]
-        if self.dialog.isVisible():
+        try:
+            visible = self.dialog.isVisible()
+        except RuntimeError:
+            return  # parent torn down; data stays cached in history
+        if visible:
             self._redraw()
 
     def _redraw(self):
+        from matplotlib import colormaps
         if not self.history:
             self.plot.axes.clear()
             self.plot.canvas.draw_idle()
@@ -164,17 +173,28 @@ class SurfaceHistory:
         values = [yy if not self.use_log
                   else np.log10(np.clip(yy, 1e-12, None)) for _, yy in self.history]
         if self.render_mode == "lines":
+            # Plasma age-gradient with a highlighted newest line, as in Tk.
+            cmap = colormaps["plasma"]
+            count = len(self.history)
             for idx, ((xx, _), zz) in enumerate(zip(self.history, values)):
-                ax.plot(xx, np.full(len(xx), idx), zz, color="#54d5ae", alpha=0.7)
+                if idx == count - 1:
+                    ax.plot(xx, np.full(len(xx), idx), zz, color="yellow",
+                            linewidth=1.5, alpha=0.95)
+                else:
+                    ax.plot(xx, np.full(len(xx), idx), zz,
+                            color=cmap(idx / max(1, count - 1)),
+                            linewidth=1.3, alpha=0.7)
         else:
             xx = self.history[0][0]
             rows = len(self.history)
             grid_x, grid_y = np.meshgrid(xx, np.arange(rows))
             grid_z = np.vstack(values)
             if self.render_mode == "wire":
-                ax.plot_wireframe(grid_x, grid_y, grid_z, color="#54d5ae", alpha=0.7)
+                ax.plot_wireframe(grid_x, grid_y, grid_z, color="#7aa5ff",
+                                  linewidth=0.4, alpha=0.65)
             else:
-                ax.plot_surface(grid_x, grid_y, grid_z, cmap="magma", alpha=0.9)
+                ax.plot_surface(grid_x, grid_y, grid_z, cmap="viridis",
+                                alpha=0.9, shade=True)
         ax.set_zlabel("log₁₀(Level)" if self.use_log else "Level",
                       color="#e5edf6")
         self.plot.style_axes("Spectrum history", "Frequency (Hz)", "Acquisition")
