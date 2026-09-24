@@ -7,7 +7,7 @@ import time
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QSettings, QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QGridLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem,
@@ -47,6 +47,22 @@ class Plot(QWidget):
         path, _ = QFileDialog.getSaveFileName(parent, "Save plot", "oszi_csv/plot.png", "PNG (*.png)")
         if path:
             self.figure.savefig(path, dpi=150, facecolor=self.figure.get_facecolor())
+
+
+def fold_setup(tab, key, expanded):
+    """Fold/unfold a tab's setup container (same pattern as Power's Setup ▾)."""
+    tab.setup_box.setVisible(expanded)
+    tab.setup_toggle.setText("Setup ▾" if expanded else "Setup ▸")
+    QSettings("ariDev1", "MSO5000-Qt").setValue(key, bool(expanded))
+
+
+def wire_setup_fold(tab, key):
+    """Hook a tab's setup_toggle/setup_box pair with a persisted fold state."""
+    value = QSettings("ariDev1", "MSO5000-Qt").value(key, True)
+    expanded = str(value).lower() not in ("false", "0", "no")
+    tab.setup_toggle.toggled.connect(lambda on, k=key: fold_setup(tab, k, on))
+    tab.setup_toggle.setChecked(expanded)
+    fold_setup(tab, key, expanded)
 
 
 def show_help(parent, filename):
@@ -118,8 +134,18 @@ class HarmonicsTab(QWidget):
         self._selected_k = None
         self._selected_freq = None
         layout = QVBoxLayout(self)
-        layout.addWidget(heading("Harmonics / THD"))
-        row = QHBoxLayout()
+        header = QHBoxLayout()
+        header.addWidget(heading("Harmonics / THD"))
+        header.addStretch()
+        self.setup_toggle = QPushButton("Setup ▾")
+        self.setup_toggle.setCheckable(True)
+        self.setup_toggle.setToolTip("Fold/unfold the setup row to give the plot more room.")
+        header.addWidget(self.setup_toggle)
+        layout.addLayout(header)
+        self.setup_box = QWidget()
+        self.setup_box.setContentsMargins(0, 0, 0, 0)
+        row = QHBoxLayout(self.setup_box)
+        row.setContentsMargins(0, 0, 0, 0)
         self.channel = QComboBox()
         self.channel.addItems([f"CHAN{i}" for i in range(1, 5)] + [f"MATH{i}" for i in range(1, 5)])
         self.window = QComboBox()
@@ -148,7 +174,8 @@ class HarmonicsTab(QWidget):
                        self.auto, button, csv_button, png_button, md_button,
                        surface_button):
             row.addWidget(widget)
-        layout.addLayout(row)
+        layout.addWidget(self.setup_box)
+        wire_setup_fold(self, "harmonicsSetupExpanded")
         self.summary = QLabel("Select an enabled channel to analyze")
         layout.addWidget(self.summary)
         self.interharmonics = readout()
@@ -376,8 +403,18 @@ class BHCurveTab(QWidget):
         self.pending, self.last = False, None
         self.history = []
         layout = QVBoxLayout(self)
-        layout.addWidget(heading("B–H curve / hysteresis"))
-        grid = QGridLayout()
+        header = QHBoxLayout()
+        header.addWidget(heading("B–H curve / hysteresis"))
+        header.addStretch()
+        self.setup_toggle = QPushButton("Setup ▾")
+        self.setup_toggle.setCheckable(True)
+        self.setup_toggle.setToolTip("Fold/unfold the parameter grid to give the plot more room.")
+        header.addWidget(self.setup_toggle)
+        layout.addLayout(header)
+        self.setup_box = QWidget()
+        self.setup_box.setContentsMargins(0, 0, 0, 0)
+        grid = QGridLayout(self.setup_box)
+        grid.setContentsMargins(0, 0, 0, 0)
         self.voltage = QComboBox()
         self.current = QComboBox()
         for selector in (self.voltage, self.current):
@@ -431,7 +468,8 @@ class BHCurveTab(QWidget):
         for idx, (name, widget) in enumerate(controls):
             grid.addWidget(QLabel(name), idx // 5, idx % 5 * 2)
             grid.addWidget(widget, idx // 5, idx % 5 * 2 + 1)
-        layout.addLayout(grid)
+        layout.addWidget(self.setup_box)
+        wire_setup_fold(self, "bhSetupExpanded")
         row = QHBoxLayout()
         button = QPushButton("▶ Acquire & Plot")
         button.clicked.connect(self.run)
@@ -636,7 +674,18 @@ class NoiseTab(QWidget):
         self.pending, self.last = False, None
         self.surface = None
         layout = QVBoxLayout(self)
-        layout.addWidget(heading("Noise Inspector"))
+        header = QHBoxLayout()
+        header.addWidget(heading("Noise Inspector"))
+        header.addStretch()
+        self.setup_toggle = QPushButton("Setup ▾")
+        self.setup_toggle.setCheckable(True)
+        self.setup_toggle.setToolTip("Fold/unfold the setup rows to give the plot more room.")
+        header.addWidget(self.setup_toggle)
+        layout.addLayout(header)
+        self.setup_box = QWidget()
+        self.setup_box.setContentsMargins(0, 0, 0, 0)
+        box = QVBoxLayout(self.setup_box)
+        box.setContentsMargins(0, 0, 0, 0)
         row = QHBoxLayout()
         self.channel = QComboBox()
         self.other = QComboBox()
@@ -713,14 +762,16 @@ class NoiseTab(QWidget):
                        self.method, self.preset, QLabel("NFFT"), self.nfft, self.csv_path,
                        browse, self.auto, run):
             row.addWidget(widget)
-        layout.addLayout(row)
+        box.addLayout(row)
         params = QHBoxLayout()
         for widget in (QLabel("Hop"), self.hop, QLabel("SegLen"), self.seglen,
                        QLabel("SmoothBins"), self.smooth_bins, QLabel("Overlap"), self.overlap,
                        QLabel("Pfa"), self.pfa, QLabel("Top K"), self.topk):
             params.addWidget(widget)
         params.addStretch()
-        layout.addLayout(params)
+        box.addLayout(params)
+        layout.addWidget(self.setup_box)
+        wire_setup_fold(self, "noiseSetupExpanded")
         self.advanced = QWidget()
         advanced_layout = QVBoxLayout(self.advanced)
         advanced_layout.setContentsMargins(0, 0, 0, 0)
