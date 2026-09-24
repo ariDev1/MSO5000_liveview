@@ -63,7 +63,7 @@ class Plot(QWidget):
 def fold_setup(tab, key, expanded):
     """Fold/unfold a tab's setup container (same pattern as Power's Setup ▾)."""
     tab.setup_box.setVisible(expanded)
-    tab.setup_toggle.setText("Setup ▾" if expanded else "Setup ▸")
+    tab.setup_toggle.setText("SETUP ▾" if expanded else "SETUP ▸")
     QSettings("ariDev1", "MSO5000-Qt").setValue(key, bool(expanded))
 
 
@@ -120,9 +120,9 @@ class SurfaceHistory:
         self.pts = QSpinBox()
         self.pts.setRange(50, 2000)
         self.pts.setValue(250)
-        apply = QPushButton("Apply")
+        apply = QPushButton("APPLY")
         apply.clicked.connect(self.apply_opts)
-        clear = QPushButton("Clear")
+        clear = QPushButton("CLEAR")
         clear.clicked.connect(self.clear)
         for widget in (QLabel("Last N"), self.last_n, self.log_z,
                        QLabel("Mode"), self.mode, QLabel("Stride"), self.stride,
@@ -279,7 +279,7 @@ class HarmonicsTab(QWidget):
         header = QHBoxLayout()
         header.addWidget(heading("Harmonics / THD"))
         header.addStretch()
-        self.setup_toggle = QPushButton("Setup ▾")
+        self.setup_toggle = QPushButton("SETUP ▾")
         self.setup_toggle.setCheckable(True)
         self.setup_toggle.setToolTip("Fold/unfold the setup row to give the plot more room.")
         header.addWidget(self.setup_toggle)
@@ -301,15 +301,15 @@ class HarmonicsTab(QWidget):
         self.raw.setChecked(True)
         self.include_dc = QCheckBox("Include DC")
         self.auto = QCheckBox("Auto")
-        button = QPushButton("Measure")
+        button = QPushButton("MEASURE")
         button.clicked.connect(self.run)
-        csv_button = QPushButton("Export table")
+        csv_button = QPushButton("EXPORT TABLE")
         csv_button.clicked.connect(self.save_table)
-        png_button = QPushButton("Save PNG")
+        png_button = QPushButton("SAVE PNG")
         png_button.clicked.connect(lambda: self.plot.save_png(self))
-        md_button = QPushButton("Copy Markdown")
+        md_button = QPushButton("COPY MARKDOWN")
         md_button.clicked.connect(self.copy_markdown)
-        surface_button = QPushButton("3D history")
+        surface_button = QPushButton("3D HISTORY")
         surface_button.clicked.connect(self.show_surface)
         for widget in (QLabel("Channel"), self.channel, QLabel("Window"), self.window,
                        QLabel("Harmonics"), self.count, self.raw, self.include_dc,
@@ -548,7 +548,7 @@ class BHCurveTab(QWidget):
         header = QHBoxLayout()
         header.addWidget(heading("B–H curve / hysteresis"))
         header.addStretch()
-        self.setup_toggle = QPushButton("Setup ▾")
+        self.setup_toggle = QPushButton("SETUP ▾")
         self.setup_toggle.setCheckable(True)
         self.setup_toggle.setToolTip("Fold/unfold the parameter grid to give the plot more room.")
         header.addWidget(self.setup_toggle)
@@ -613,15 +613,15 @@ class BHCurveTab(QWidget):
         layout.addWidget(self.setup_box)
         wire_setup_fold(self, "bhSetupExpanded")
         row = QHBoxLayout()
-        button = QPushButton("▶ Acquire & Plot")
+        button = QPushButton("ACQUIRE & PLOT")
         button.clicked.connect(self.run)
-        png = QPushButton("Save PNG")
+        png = QPushButton("SAVE PNG")
         png.clicked.connect(lambda: self.plot.save_png(self))
-        csv = QPushButton("Save CSV")
+        csv = QPushButton("SAVE CSV")
         csv.clicked.connect(self.save_csv)
-        help_button = QPushButton("Guide")
+        help_button = QPushButton("GUIDE")
         help_button.clicked.connect(lambda: show_help(self, "bh-curve_help.md"))
-        clear = QPushButton("Reset trail")
+        clear = QPushButton("RESET TRAIL")
         clear.clicked.connect(self.clear_trail)
         for widget in (self.raw, self.dc, self.detrend, self.cycle, self.auto,
                        QLabel("Interval"), self.interval, self.equal_aspect, self.tight,
@@ -668,8 +668,12 @@ class BHCurveTab(QWidget):
             self.history = self.history[-30:]
             self.plot.axes.clear()
             for idx, (old_h, old_b) in enumerate(self.history):
-                self.plot.axes.plot(old_h, old_b, color="#54d5ae", linewidth=1.5,
-                                    alpha=0.25 + 0.75 * (idx + 1) / len(self.history))
+                if idx == len(self.history) - 1:
+                    self.plot.axes.plot(old_h, old_b, color="yellow",
+                                        linewidth=1.8, alpha=0.95)
+                else:
+                    self.plot.axes.plot(old_h, old_b, color="#00eaff", linewidth=1.5,
+                                        alpha=0.25 + 0.75 * (idx + 1) / len(self.history))
             try:
                 if self.tight.isChecked():
                     hmin, hmax = float(np.min(h)), float(np.max(h))
@@ -822,7 +826,7 @@ class NoiseTab(QWidget):
         header = QHBoxLayout()
         header.addWidget(heading("Noise Inspector"))
         header.addStretch()
-        self.setup_toggle = QPushButton("Setup ▾")
+        self.setup_toggle = QPushButton("SETUP ▾")
         self.setup_toggle.setCheckable(True)
         self.setup_toggle.setToolTip("Fold/unfold the setup rows to give the plot more room.")
         header.addWidget(self.setup_toggle)
@@ -898,10 +902,10 @@ class NoiseTab(QWidget):
         self.ar_order.setToolTip("AR spectrum model order. Higher sharpens lines, risks overfit.")
         self.csv_path = QLineEdit()
         self.csv_path.setPlaceholderText("Optional waveform CSV / matched template")
-        browse = QPushButton("Browse")
+        browse = QPushButton("BROWSE")
         browse.clicked.connect(self.browse)
         self.auto = QCheckBox("Auto")
-        run = QPushButton("Analyze noise")
+        run = QPushButton("ANALYZE")
         run.clicked.connect(self.run)
         for widget in (QLabel("Channel"), self.channel, QLabel("Other"), self.other,
                        self.method, self.preset, QLabel("NFFT"), self.nfft, self.csv_path,
@@ -944,16 +948,16 @@ class NoiseTab(QWidget):
         self.auto_log.setChecked(True)
         layout.addWidget(self.auto_log)
         exports = QHBoxLayout()
-        save_png = QPushButton("Save PNG")
+        save_png = QPushButton("SAVE PNG")
         save_png.clicked.connect(lambda: self.plot.save_png(self))
-        save_csv = QPushButton("Save detections CSV")
+        save_csv = QPushButton("SAVE DETECTIONS")
         save_csv.clicked.connect(self.save_csv)
-        surface = QPushButton("3D history")
+        surface = QPushButton("3D HISTORY")
         surface.clicked.connect(self.show_surface)
-        advanced_toggle = QPushButton("Advanced ▾")
+        advanced_toggle = QPushButton("ADVANCED ▾")
         advanced_toggle.setCheckable(True)
         advanced_toggle.toggled.connect(self._toggle_advanced)
-        help_button = QPushButton("Guide")
+        help_button = QPushButton("GUIDE")
         help_button.clicked.connect(lambda: show_help(self, "Noise_Inspector_Operator_Guide.md"))
         exports.addWidget(save_png)
         exports.addWidget(save_csv)
@@ -972,7 +976,7 @@ class NoiseTab(QWidget):
 
     def _toggle_advanced(self, open):
         self.advanced.setVisible(open)
-        self.advanced_toggle.setText("Advanced ▴" if open else "Advanced ▾")
+        self.advanced_toggle.setText("ADVANCED ▴" if open else "ADVANCED ▾")
 
     def refresh_presets(self):
         self.preset.blockSignals(True)

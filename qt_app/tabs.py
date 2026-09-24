@@ -62,7 +62,7 @@ class SystemTab(QWidget):
         for document in sorted((Path(__file__).resolve().parents[1] / "docs").glob("*.md")):
             self.docs.addItem(document.stem, document)
         self.docs.currentIndexChanged.connect(self.show_document)
-        copy = QPushButton("Copy system info")
+        copy = QPushButton("COPY SYSTEM INFO")
         copy.clicked.connect(lambda: QApplication.clipboard().setText(self.text.toPlainText()))
         row.addWidget(self.docs, 1)
         row.addWidget(copy)
@@ -139,7 +139,7 @@ class LicensesTab(QWidget):
         layout.addWidget(heading("Licensed options"))
         self.text = readout()
         layout.addWidget(self.text)
-        button = QPushButton("Refresh licenses")
+        button = QPushButton("REFRESH")
         button.clicked.connect(self.refresh)
         layout.addWidget(button)
         self.timer = QTimer(self)
@@ -180,11 +180,11 @@ class ChannelsTab(QWidget):
         self.text = readout()
         layout.addWidget(self.text)
         row = QHBoxLayout()
-        copy = QPushButton("Copy settings")
+        copy = QPushButton("COPY SETTINGS")
         copy.clicked.connect(lambda: self.copy_settings())
-        export = QPushButton("Export displayed channels to CSV")
+        export = QPushButton("EXPORT CHANNELS CSV")
         export.clicked.connect(self.export)
-        copy_csv = QPushButton("Copy waveform CSV")
+        copy_csv = QPushButton("COPY WAVEFORM CSV")
         copy_csv.clicked.connect(self.copy_csv)
         row.addWidget(copy)
         row.addWidget(export)
@@ -260,9 +260,9 @@ class LoggingTab(QWidget):
         form.addRow(self.vavg, self.vrms)
         layout.addWidget(group)
         row = QHBoxLayout()
-        self.start_button = QPushButton("Start logging")
-        self.pause_button = QPushButton("Pause")
-        self.stop_button = QPushButton("Stop")
+        self.start_button = QPushButton("START")
+        self.pause_button = QPushButton("PAUSE")
+        self.stop_button = QPushButton("STOP")
         self.start_button.clicked.connect(self.start)
         self.pause_button.clicked.connect(self.pause)
         self.stop_button.clicked.connect(self.stop)
@@ -309,7 +309,7 @@ class LoggingTab(QWidget):
 
     def pause(self):
         paused = pause_resume()
-        self.pause_button.setText("Resume" if paused else "Pause")
+        self.pause_button.setText("RESUME" if paused else "PAUSE")
         self.status.appendPlainText("Paused" if paused else "Resumed")
 
     def stop(self):
@@ -325,7 +325,7 @@ class LoggingTab(QWidget):
         self.pause_button.setEnabled(active)
         self.stop_button.setEnabled(active)
         if not active:
-            self.pause_button.setText("Pause")
+            self.pause_button.setText("PAUSE")
 
 
 class PQPlot(QWidget):
@@ -432,7 +432,7 @@ class PowerTab(QWidget):
         header = QHBoxLayout()
         header.addWidget(heading("Power analysis"))
         header.addStretch()
-        self.setup_toggle = QPushButton("Setup ▾")
+        self.setup_toggle = QPushButton("SETUP ▾")
         self.setup_toggle.setCheckable(True)
         self.setup_toggle.setToolTip("Fold/unfold the measurement setup to give the plot more room.")
         header.addWidget(self.setup_toggle)
@@ -488,7 +488,7 @@ class PowerTab(QWidget):
         expected_label.setToolTip("Optional reference power for calibration")
         grid.addWidget(expected_label, 1, 6)
         grid.addWidget(self.expected_power, 1, 7)
-        calibration = QPushButton("⚙ Calibrate")
+        calibration = QPushButton("CALIBRATE")
         calibration.setToolTip("Calibrate the correction factor from the expected power")
         calibration.clicked.connect(self.calibrate)
         grid.addWidget(calibration, 1, 8, 1, 2)
@@ -516,7 +516,7 @@ class PowerTab(QWidget):
         self.setup_toggle.setChecked(expanded)
         self._toggle_setup(expanded)
         controls = QHBoxLayout()
-        self.measure_button = QPushButton("⚡ Measure")
+        self.measure_button = QPushButton("MEASURE")
         self.measure_button.setObjectName("primaryButton")
         self.measure_button.setToolTip("Single power measurement with the current setup.")
         self.measure_button.clicked.connect(self.measure)
@@ -532,9 +532,9 @@ class PowerTab(QWidget):
         # checkbox that owns the pop-out window lifecycle; Qt uses a button
         # opening the same PQ3DView backend in a dialog. Same backend module,
         # no shared-code change.
-        view3d = QPushButton("3D PQ view")
+        view3d = QPushButton("3D PQ VIEW")
         view3d.clicked.connect(self.show_3d)
-        plot_last = QPushButton("Plot last log")
+        plot_last = QPushButton("PLOT LAST LOG")
         plot_last.clicked.connect(self.plot_last)
         controls.addWidget(self.measure_button)
         controls.addWidget(self.auto)
@@ -562,7 +562,7 @@ class PowerTab(QWidget):
     def _toggle_setup(self, expanded):
         self.setup_group.setVisible(expanded)
         self.setup_tip.setVisible(expanded)
-        self.setup_toggle.setText("Setup ▾" if expanded else "Setup ▸")
+        self.setup_toggle.setText("SETUP ▾" if expanded else "SETUP ▸")
         self.setup_settings.setValue("powerSetupExpanded", bool(expanded))
 
     def update_scale(self):
@@ -821,9 +821,9 @@ class SCPITab(QWidget):
         self.input = QLineEdit()
         self.input.setPlaceholderText("Enter a SCPI command, e.g. *IDN?")
         self.input.returnPressed.connect(self.send)
-        button = QPushButton("Send")
+        button = QPushButton("SEND")
         button.clicked.connect(self.send)
-        selftest = QPushButton("Run self-test")
+        selftest = QPushButton("SELF-TEST")
         selftest.clicked.connect(self.self_test)
         row.addWidget(self.input)
         row.addWidget(button)

@@ -24,35 +24,46 @@ from utils.debug import debug_log, set_debug_level
 
 
 STYLE = """
-QMainWindow, QWidget { background: #101722; color: #e5edf6; font-size: 13px; }
-QLabel#appTitle { font-size: 21px; font-weight: bold; color: #f5f9ff; }
-QLabel#sectionTitle { font-size: 17px; font-weight: bold; margin: 4px 0 8px 0; }
-QLabel#connection { color: #54d5ae; font-weight: bold; }
-QGroupBox { border: 1px solid #35455c; border-radius: 9px; margin-top: 14px;
-            padding: 14px 9px 9px; font-weight: bold; }
-QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; }
-QPushButton { background: #25354a; border: 1px solid #3b526d; border-radius: 7px;
-              padding: 8px 13px; }
-QPushButton:hover { background: #354d67; }
-QPushButton:disabled { color: #748398; background: #192433; }
-QPushButton#primaryButton { background: #147d79; border-color: #28a19a; }
-QPushButton#primaryButton:hover { background: #18988f; }
+QMainWindow, QWidget { background: #0d1117; color: #dfe7ef; font-size: 12px; }
+QLabel#appTitle { font-size: 18px; font-weight: bold; color: #f2f6fa; }
+QLabel#sectionTitle { font-size: 14px; font-weight: bold; margin: 2px 0 4px 0; }
+QLabel#connection { color: #4f6; font-weight: bold; font-family: monospace; }
+QGroupBox { border: 1px solid #2c3947; border-radius: 2px; margin-top: 10px;
+            padding: 8px 6px 6px; font-weight: bold; }
+QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }
+QPushButton { background: #1b2634; border: 1px solid #3a4a5e; border-radius: 2px;
+              padding: 4px 8px; }
+QPushButton:hover { background: #24344a; border-color: #4a5d75; }
+QPushButton:pressed { background: #0f1720; }
+QPushButton:disabled { color: #5c6b7d; background: #131b25; }
+QPushButton:checked { background: #3d2f14; border-color: #a97b1f; }
+QPushButton#primaryButton { background: #0e4f4a; border-color: #1f8a80; }
+QPushButton#primaryButton:hover { background: #12665f; }
+QPushButton#primaryButton:pressed { background: #0a3a36; }
 QLineEdit, QPlainTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {
-    background: #192434; color: #f1f6fc; border: 1px solid #35455c;
-    border-radius: 6px; padding: 5px; selection-background-color: #187d85;
+    background: #0a0f16; color: #e8f0f7; border: 1px solid #2c3947;
+    border-radius: 2px; padding: 3px; selection-background-color: #1f8a80;
+    font-family: monospace;
 }
-QTabWidget::pane { border: 1px solid #35455c; border-radius: 7px; }
-QTabBar::tab { background: #192434; padding: 10px 16px; margin-right: 3px;
-               border-top-left-radius: 7px; border-top-right-radius: 7px; }
-QTabBar::tab:selected { background: #253c4b; color: #66e5c2; }
-QSplitter::handle { background: #35455c; height: 3px; }
+QPlainTextEdit, QTableWidget { font-family: monospace; }
+QTableWidget { background: #0a0f16; color: #e8f0f7; gridline-color: #2c3947;
+               selection-background-color: #1f4a44; }
+QHeaderView::section { background: #1b2634; color: #dfe7ef; border: none; padding: 3px; }
+QTabWidget::pane { border: 1px solid #2c3947; border-radius: 2px; }
+QTabBar::tab { background: #131c27; padding: 6px 10px; margin-right: 2px;
+               border-top-left-radius: 2px; border-top-right-radius: 2px; }
+QTabBar::tab:selected { background: #1b2634; color: #ffd75e; }
+QSplitter::handle { background: #2c3947; height: 3px; }
+QCheckBox, QRadioButton { spacing: 4px; }
+QScrollBar:vertical { background: #0d1117; width: 10px; }
+QScrollBar::handle:vertical { background: #2c3947; min-height: 20px; }
 """
 
 
 def style_sheet(scale=1.0):
     """Stylesheet with all px font sizes scaled (terminal-like UI zoom)."""
     sheet = STYLE
-    for base in (13, 17, 21):
+    for base in (12, 14, 18):
         sheet = sheet.replace(f"font-size: {base}px",
                               f"font-size: {max(8, round(base * scale))}px")
     return sheet
@@ -123,13 +134,13 @@ class MainWindow(QMainWindow):
         # title instead.
         title = QLabel("MSO5000  /  LIVE VIEW")
         title.setObjectName("appTitle")
-        self.connection = QLabel("Connecting…")
+        self.connection = QLabel("… CONNECTING")
         self.connection.setObjectName("connection")
-        self.retry = QPushButton("Reconnect")
+        self.retry = QPushButton("RECONNECT")
         self.retry.clicked.connect(self.connect_scope)
-        self.hide_image = QPushButton("Hide display")
+        self.hide_image = QPushButton("HIDE")
         self.hide_image.clicked.connect(self.toggle_image)
-        enlarge = QPushButton("Enlarge display")
+        enlarge = QPushButton("ENLARGE")
         enlarge.clicked.connect(self.enlarge_image)
         bar.addWidget(title)
         bar.addStretch()
@@ -157,7 +168,7 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QRadioButton
         level_row = QHBoxLayout()
         level_row.addWidget(QLabel("Debug Output Level:"))
-        for level, label in (("FULL", "🛠 Full"), ("MINIMAL", "⚠️ Minimal")):
+        for level, label in (("FULL", "FULL"), ("MINIMAL", "MINIMAL")):
             option = QRadioButton(label)
             option.setChecked(level == "FULL")
             option.toggled.connect(
@@ -187,7 +198,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, lambda: self.splitter.setSizes([self.height() * 65 // 100,
                                                               self.height() * 35 // 100]))
         self.statusBar().showMessage("Qt viewer • shared SCPI measurement backend")
-        self.activity = QLabel("○ idle")
+        self.activity = QLabel("□ IDLE")
         self.statusBar().addPermanentWidget(self.activity)
 
         self.poll_timer = QTimer(self)
@@ -262,22 +273,27 @@ class MainWindow(QMainWindow):
         except Exception as error:
             self.notify(f"UI update failed: {error}")
 
+    def _set_connection(self, text, color):
+        self.connection.setText(text)
+        self.connection.setStyleSheet(f"color: {color}; font-weight: bold; font-family: monospace;")
+
     def connect_scope(self):
         if self.closing or self.polling or app_state.is_logging_active:
             return
         self.polling = True
-        self.connection.setText("Connecting…")
+        self._set_connection("… CONNECTING", "#fd0")
         self.retry.setEnabled(False)
 
         def done(response):
             self.polling = False
             self.retry.setEnabled(True)
             if isinstance(response, Exception):
-                self.connection.setText("Disconnected")
+                self._set_connection("□ NO LINK", "#e44")
                 self.notify(f"Connection failed: {response}")
                 return
             self.idn = response
-            self.connection.setText("Connected")
+            self._set_connection("■ LINK", "#4f6")
+            self.connection.setToolTip(response)
             self.notify(f"Connected: {response}")
             self.poll()
             self.capture_image()
@@ -292,11 +308,11 @@ class MainWindow(QMainWindow):
         def done(response):
             self.polling = False
             if isinstance(response, Exception):
-                self.connection.setText("Scope unavailable")
+                self._set_connection("□ NO LINK", "#e44")
                 self.notify(f"Status read failed: {response}")
                 return
             system, channels = response
-            self.connection.setText("Connected")
+            self._set_connection("■ LINK", "#4f6")
             self.system.update_data(system, self.idn)
             self.channels.update_data(channels)
             self.power.update_context(system, channels)
@@ -325,7 +341,7 @@ class MainWindow(QMainWindow):
     def toggle_image(self):
         hidden = self.display.isHidden()
         self.display.setVisible(hidden)
-        self.hide_image.setText("Hide display" if hidden else "Show display")
+        self.hide_image.setText("HIDE" if hidden else "SHOW")
         if hidden:
             self.capture_image()
 
@@ -342,13 +358,13 @@ class MainWindow(QMainWindow):
         self.debug_text.setPlainText("\n".join(list(debug_log)[-500:]))
         # Activity indicator mirroring the Tk LED meter's inputs.
         if app_state.is_logging_active:
-            state, color = "● LOG", "#e44"
+            state, color = "■ LOG", "#e44"
         elif app_state.is_power_analysis_active:
-            state, color = "● PWR", "#fd0"
+            state, color = "■ PWR", "#fd0"
         elif app_state.is_scpi_busy:
-            state, color = "● SCPI", "#4f6"
+            state, color = "■ SCPI", "#4f6"
         else:
-            state, color = "○ idle", "#748398"
+            state, color = "□ IDLE", "#5c6b7d"
         self.activity.setText(state)
         self.activity.setStyleSheet(f"color: {color}; font-weight: bold;")
 
