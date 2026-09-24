@@ -27,6 +27,8 @@ STYLE = """
 QMainWindow, QWidget { background: #0d1117; color: #dfe7ef; font-size: 12px; }
 QLabel#appTitle { font-size: 18px; font-weight: bold; color: #f2f6fa; }
 QLabel#sectionTitle { font-size: 14px; font-weight: bold; margin: 2px 0 4px 0; }
+QLabel#headline { font-size: 26px; font-weight: bold; font-family: monospace;
+                 color: #ffd75e; margin: 2px 0; }
 QLabel#connection { color: #4f6; font-weight: bold; font-family: monospace; }
 QGroupBox { border: 1px solid #2c3947; border-radius: 2px; margin-top: 10px;
             padding: 8px 6px 6px; font-weight: bold; }
@@ -63,7 +65,7 @@ QScrollBar::handle:vertical { background: #2c3947; min-height: 20px; }
 def style_sheet(scale=1.0):
     """Stylesheet with all px font sizes scaled (terminal-like UI zoom)."""
     sheet = STYLE
-    for base in (12, 14, 18):
+    for base in (12, 14, 18, 26):
         sheet = sheet.replace(f"font-size: {base}px",
                               f"font-size: {max(8, round(base * scale))}px")
     return sheet
@@ -195,11 +197,38 @@ class MainWindow(QMainWindow):
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 1)
         layout.addWidget(self.splitter)
-        QTimer.singleShot(0, lambda: self.splitter.setSizes([self.height() * 65 // 100,
-                                                              self.height() * 35 // 100]))
+        QTimer.singleShot(0, self._default_splitter_sizes)
         self.statusBar().showMessage("Qt viewer • shared SCPI measurement backend")
         self.activity = QLabel("□ IDLE")
         self.statusBar().addPermanentWidget(self.activity)
+        self.scope_info = QLabel("SR — · TRIG —")
+        self.scope_info.setStyleSheet("font-family: monospace;")
+        self.scope_info.setToolTip("Instrument identity (see System Info tab)")
+        self.statusBar().addPermanentWidget(self.scope_info)
+        # Workspace restore (same per-user store as zoom and fold states).
+        self.workspace = QSettings("ariDev1", "MSO5000-Qt")
+        geometry = self.workspace.value("mainGeometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        try:
+            tab_index = int(self.workspace.value("tabIndex", 0))
+        except (TypeError, ValueError):
+            tab_index = 0
+        if 0 <= tab_index < self.tabs.count():
+            self.tabs.setCurrentIndex(tab_index)
+        splitter = self.workspace.value("splitterSizes")
+        if splitter is not None:
+            self.splitter.restoreState(splitter)
+        # Keyboard operation: F5 measures on the visible analysis tab,
+        # Ctrl+1..9 jumps between tabs.
+        go = QShortcut(QKeySequence("F5"), self)
+        go.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        go.activated.connect(self._measure_current)
+        for number in range(1, min(10, self.tabs.count() + 1)):
+            jump = QShortcut(QKeySequence(f"Ctrl+{number}"), self)
+            jump.setContext(Qt.ShortcutContext.ApplicationShortcut)
+            jump.activated.connect(
+                lambda checked=False, idx=number - 1: self.tabs.setCurrentIndex(idx))
 
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self.poll)
@@ -242,6 +271,21 @@ class MainWindow(QMainWindow):
     def _zoom_reset(self):
         self.zoom = 1.0
         self._apply_zoom()
+
+    def _default_splitter_sizes(self):
+        # Only for a fresh workspace; a restored splitter state wins.
+        if self.workspace.value("splitterSizes") is None and not self.closing:
+            self.splitter.setSizes([self.height() * 65 // 100,
+                                    self.height() * 35 // 100])
+
+    def _measure_current(self):
+        # F5: measure on the visible analysis tab (tabs guard when busy).
+        scroll = self.tabs.currentWidget()
+        inner = scroll.widget() if hasattr(scroll, "widget") else None
+        for action in ("measure", "run"):
+            if hasattr(inner, action):
+                getattr(inner, action)()
+                return
 
     def notify(self, message):
         # Called both from Qt and from the established logger's background thread.
@@ -313,6 +357,10 @@ class MainWindow(QMainWindow):
                 return
             system, channels = response
             self._set_connection("■ LINK", "#4f6")
+            self.scope_info.setText(
+                f"SR {system.get('Sample rate', '—')} · "
+                f"TRIG {system.get('Trigger', '—')}")
+            self.scope_info.setToolTip(self.idn)
             self.system.update_data(system, self.idn)
             self.channels.update_data(channels)
             self.power.update_context(system, channels)
@@ -371,6 +419,12 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self.closing = True
         app_state.is_shutting_down = True
+        try:
+            self.workspace.setValue("mainGeometry", self.saveGeometry())
+            self.workspace.setValue("splitterSizes", self.splitter.saveState())
+            self.workspace.setValue("tabIndex", self.tabs.currentIndex())
+        except (AttributeError, RuntimeError):
+            pass
         stop_logging()
         self.poll_timer.stop()
         self.image_timer.stop()

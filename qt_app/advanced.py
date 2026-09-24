@@ -8,7 +8,7 @@ import time
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
-from PySide6.QtCore import QSettings, QTimer
+from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QGridLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem,
@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 import app.app_state as app_state
 from qt_app.analysis import acquire, bh_curve, harmonics, noise, read_wave_csv, save_xy_csv
 from qt_app.backend import channel_name
-from qt_app.tabs import heading, readout
+from qt_app.tabs import channel_color, heading, readout, tint_channel_combo
 
 
 class Plot(QWidget):
@@ -290,6 +290,7 @@ class HarmonicsTab(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         self.channel = QComboBox()
         self.channel.addItems([f"CHAN{i}" for i in range(1, 5)] + [f"MATH{i}" for i in range(1, 5)])
+        tint_channel_combo(self.channel)
         self.window = QComboBox()
         self.window.addItem("Hann", "hann")
         self.window.addItem("Rect", "rect")
@@ -320,6 +321,9 @@ class HarmonicsTab(QWidget):
         wire_setup_fold(self, "harmonicsSetupExpanded")
         self.summary = QLabel("Select an enabled channel to analyze")
         layout.addWidget(self.summary)
+        self.headline = QLabel("THD —")
+        self.headline.setObjectName("headline")
+        layout.addWidget(self.headline)
         self.interharmonics = readout()
         self.interharmonics.setMaximumHeight(60)
         layout.addWidget(self.interharmonics)
@@ -359,8 +363,10 @@ class HarmonicsTab(QWidget):
             if result.warnings:
                 base += "   ·   " + "; ".join(result.warnings)
             self.summary.setText(base)
+            self.headline.setText(
+                f"THD {result.thd * 100:.2f}%   f₁ {result.f1_hz:.2f} Hz")
             self._render_table(result)
-            self._render_plot(result, freq, amplitude, count)
+            self._render_plot(result, freq, amplitude, count, channel_color(channel))
             if self.surface is not None:
                 self.surface.push(freq, amplitude)
 
@@ -411,14 +417,17 @@ class HarmonicsTab(QWidget):
         self.table.setRowCount(len(rows))
         for idx, values in enumerate(rows):
             for col, val in enumerate(values):
-                self.table.setItem(idx, col, QTableWidgetItem(str(val)))
+                item = QTableWidgetItem(str(val))
+                item.setTextAlignment(Qt.AlignmentFlag.AlignRight |
+                                      Qt.AlignmentFlag.AlignVCenter)
+                self.table.setItem(idx, col, item)
 
-    def _render_plot(self, result, freq, amplitude, count):
+    def _render_plot(self, result, freq, amplitude, count, trace="#d0ff00"):
         import matplotlib.lines as mlines
         import matplotlib.patches as mpatches
         from scipy.signal import find_peaks
         self.plot.axes.clear()
-        self.plot.axes.plot(freq, amplitude, color="#d0ff00", linewidth=1.4, label="Spectrum")
+        self.plot.axes.plot(freq, amplitude, color=trace, linewidth=1.4, label="Spectrum")
         for item in result.rows:
             self.plot.axes.axvline(item.f_hz, linestyle="--", alpha=0.25)
         if result.f1_hz > 0:
@@ -469,7 +478,7 @@ class HarmonicsTab(QWidget):
                                 f"k={self._selected_k}", color="#00eaff", fontsize=9,
                                 ha="center", va="bottom")
         self.plot.axes.legend(
-            handles=[mlines.Line2D([], [], linewidth=1.4, label="Spectrum", color="#d0ff00"),
+            handles=[mlines.Line2D([], [], linewidth=1.4, label="Spectrum", color=trace),
                      mlines.Line2D([], [], linestyle=":", linewidth=1.2,
                                    label="Interharmonic", color="#eead68"),
                      mpatches.Patch(alpha=0.10, label="Harmonic window (±tol)")],
@@ -561,6 +570,7 @@ class BHCurveTab(QWidget):
         self.current = QComboBox()
         for selector in (self.voltage, self.current):
             selector.addItems([f"CHAN{i}" for i in range(1, 5)] + [f"MATH{i}" for i in range(1, 5)])
+            tint_channel_combo(selector)
         self.current.setCurrentIndex(2)
         self.turns = QSpinBox()
         self.turns.setRange(1, 100000)
@@ -628,6 +638,9 @@ class BHCurveTab(QWidget):
                        self.data, self.overlay, button, clear, png, csv, help_button):
             row.addWidget(widget)
         layout.addLayout(row)
+        self.headline = QLabel("LOOP —")
+        self.headline.setObjectName("headline")
+        layout.addWidget(self.headline)
         self.plot = Plot()
         layout.addWidget(self.plot, 3)
         self.details = readout()
@@ -715,6 +728,8 @@ class BHCurveTab(QWidget):
             mu_max = float(np.max(permeability)) if len(permeability) else float("nan")
             fs, ratio = 1 / dt, (1 / dt) / f0 if f0 > 0 else 0
             peak_h, peak_b = float(max(abs(h))), float(max(abs(b)))
+            loop_area = abs(np.trapezoid(b, h))
+            self.headline.setText(f"∮ {loop_area:.4g} J/m³   Hc {hc:.4g} A/m")
             warnings = []
             if peak_h < 1.0 or peak_b < 1e-4:
                 warnings.append("⚠️ Low signal — results may be noisy")
@@ -729,7 +744,7 @@ class BHCurveTab(QWidget):
                 f"fs: {fs:.4g} Hz  f₀: {f0:.4g} Hz  fs/f₀: {ratio:.1f}\n"
                 f"Peak |H|: {peak_h:.4g} A/m   Peak |B|: {peak_b:.4g} T\n"
                 f"Hc: {hc:.4g} A/m  Br: {br:.4g} T  Max μr: {mu_max:.4g}\n"
-                f"Loop area: {abs(np.trapezoid(b, h)):.4g} J/m³"
+                f"Loop area: {loop_area:.4g} J/m³"
                 + ("".join(f"\n{warning}" for warning in warnings)) + f"\n{samples}")
 
         self.submit(lambda: bh_curve(self.backend._connected(), *values), done)
@@ -840,6 +855,7 @@ class NoiseTab(QWidget):
         self.other = QComboBox()
         for combo in (self.channel, self.other):
             combo.addItems([f"CHAN{i}" for i in range(1, 5)] + [f"MATH{i}" for i in range(1, 5)])
+            tint_channel_combo(combo)
         self.other.setCurrentIndex(1)
         self.method = QComboBox()
         self.method.addItems(self.METHODS)
@@ -938,6 +954,9 @@ class NoiseTab(QWidget):
         box.addWidget(self.advanced)
         self.plot = Plot()
         layout.addWidget(self.plot, 3)
+        self.headline = QLabel("0 HITS")
+        self.headline.setObjectName("headline")
+        layout.addWidget(self.headline)
         self.detections = readout()
         self.detections.setMaximumHeight(65)
         layout.addWidget(self.detections)
@@ -1049,6 +1068,7 @@ class NoiseTab(QWidget):
                           extent=result.get("extent") or None, cmap="magma")
             elif result.get("plot_x") is not None:
                 x, y = np.asarray(result["plot_x"], float), np.asarray(result["plot_y"], float)
+                trace = channel_color(channel)
                 # Persistence trail, as in the Tk tab: reset on method/channel
                 # change, accumulate only in Auto mode to keep single runs clean.
                 key = f"{method}|{channel}"
@@ -1060,8 +1080,8 @@ class NoiseTab(QWidget):
                 for idx, (old_x, old_y) in enumerate(self._trail):
                     alpha = 0.12 + 0.35 * ((idx + 1) / len(self._trail)) ** 1.5
                     ax.plot(old_x, old_y, linewidth=1.0, alpha=alpha,
-                            color="#54d5ae", zorder=1)
-                ax.plot(x, y, linewidth=0.9, color="#54d5ae", zorder=3)
+                            color=trace, zorder=1)
+                ax.plot(x, y, linewidth=0.9, color=trace, zorder=3)
                 for row in result.get("detections", []):
                     freq = row.get("f0_Hz", row.get("f_Hz"))
                     if freq is not None:
@@ -1082,6 +1102,16 @@ class NoiseTab(QWidget):
                                  result.get("ylabel", "Level"))
             rows = result.get("detections", [])
             elapsed = getattr(self, "_last_elapsed", None)
+            top = ""
+            if rows:
+                first = rows[0]
+                freq = first.get("f0_Hz", first.get("f_Hz", first.get("f1_Hz")))
+                if freq is not None:
+                    try:
+                        top = f"   TOP {float(freq):.3g} Hz"
+                    except (TypeError, ValueError):
+                        pass
+            self.headline.setText(f"{len(rows)} HITS{top}")
             self.detections.setPlainText(
                 f"{method}   Resolution: {result.get('df_Hz', 'N/A')} Hz   "
                 f"Detections: {len(rows)}" +
@@ -1092,7 +1122,15 @@ class NoiseTab(QWidget):
             self.table.setRowCount(len(rows))
             for row_idx, row in enumerate(rows):
                 for col_idx, key in enumerate(columns):
-                    self.table.setItem(row_idx, col_idx, QTableWidgetItem(str(row.get(key, ""))))
+                    text = str(row.get(key, ""))
+                    item = QTableWidgetItem(text)
+                    try:
+                        float(text)
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignRight |
+                                              Qt.AlignmentFlag.AlignVCenter)
+                    except (TypeError, ValueError):
+                        pass
+                    self.table.setItem(row_idx, col_idx, item)
             if self.auto.isChecked() and self.auto_log.isChecked() and result.get("detections"):
                 self.save_csv()
 

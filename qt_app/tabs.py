@@ -32,6 +32,32 @@ def readout():
     return widget
 
 
+# Rigol-style channel palette, shared by all Qt tabs for traceability.
+CHANNEL_COLORS = {"CHAN1": "#ffd200", "CHAN2": "#00eaff",
+                  "CHAN3": "#d946ff", "CHAN4": "#4f6"}
+
+
+def channel_color(name, default="#e8f0f7"):
+    """Hex color for a channel name (accepts 1, CH1, CHAN1, MATH1, …)."""
+    text = str(name).strip().upper()
+    if text.startswith("MATH"):
+        return "#9aa7b4"
+    if text.startswith("CH") and not text.startswith("CHAN"):
+        text = "CHAN" + text[2:]
+    return CHANNEL_COLORS.get(text, default)
+
+
+def tint_channel_combo(combo):
+    """Paint each CHANx dropdown entry in its channel color (display-only)."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor
+    model = combo.model()
+    for row in range(combo.count()):
+        color = channel_color(combo.itemText(row), None)
+        if color is not None:
+            model.setData(model.index(row, 0), QColor(color), Qt.ItemDataRole.ForegroundRole)
+
+
 def format_si(value, unit):
     """Engineer-style SI formatting mirroring the Tk power tab (UI-only)."""
     try:
@@ -447,6 +473,10 @@ class PowerTab(QWidget):
         # "MATH1" (5 chars) must still fit.
         for field in (self.voltage, self.current):
             field.setFixedWidth(60)
+        for field in (self.voltage, self.current):
+            field.textChanged.connect(self._tint_fields)
+            field.returnPressed.connect(self.measure)
+        self._tint_fields()
         self.probe_type = QComboBox()
         self.probe_type.addItems(["shunt", "clamp"])
         self.probe_type.setFixedWidth(95)
@@ -546,6 +576,9 @@ class PowerTab(QWidget):
         controls.addWidget(plot_last)
         controls.addStretch()
         layout.addLayout(controls)
+        self.headline = QLabel("P —")
+        self.headline.setObjectName("headline")
+        layout.addWidget(self.headline)
         self.plot = PQPlot()
         self.results = readout()
         self.results.setMinimumHeight(180)
@@ -564,6 +597,15 @@ class PowerTab(QWidget):
         self.setup_tip.setVisible(expanded)
         self.setup_toggle.setText("SETUP ▾" if expanded else "SETUP ▸")
         self.setup_settings.setValue("powerSetupExpanded", bool(expanded))
+
+    def _tint_fields(self):
+        # Channel-colored input text for traceability (display-only).
+        for field in (self.voltage, self.current):
+            try:
+                channel_name(field.text())
+            except ValueError:
+                continue
+            field.setStyleSheet(f"color: {channel_color(field.text())};")
 
     def update_scale(self):
         try:
@@ -806,6 +848,9 @@ class PowerTab(QWidget):
                 f"{'Reactive Energy':<22}: {format_si(energy[2], 'VARh'):<12}\n"
                 f"\nIterations: {self.log.count}    Elapsed: {elapsed_hms}\n"
                 f"CSV: {self.log.path}")
+            self.headline.setText(
+                f"P {format_si(result['Real Power (P)'], 'W')}   "
+                f"AVG {format_si(average['P'], 'W')}")
 
         self.submit(lambda: self.backend.measure(voltage, current, scale, dc, method, raw_v, raw_i),
                     finished)
