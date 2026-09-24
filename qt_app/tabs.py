@@ -369,10 +369,9 @@ class LoggingTab(QWidget):
 class PQPlot(QWidget):
     """2D PQ operating-point plot mirroring the Tk tab's power triangle.
 
-    GAP (Tk parity, recorded): the Tk tab draws this with Matplotlib and
-    saves a ``*_summary.png`` on auto-refresh stop; the Qt viewer keeps a
-    lightweight QPainter rendering and does not write a summary PNG, so the
-    CSV log remains the lab record in both viewers.
+    The widget stays a lightweight QPainter rendering (plus a density heat
+    layer and Tk-style annotations), while auto-stop summary PNGs are saved
+    from the widget grab next to the CSV log, as in the Tk tab.
     """
 
     def __init__(self):
@@ -648,6 +647,7 @@ class PowerTab(QWidget):
         self.measure_button.setToolTip("Single power measurement with the current setup.")
         self.measure_button.clicked.connect(self.measure)
         self.auto = QCheckBox("Auto-measure")
+        self.auto.toggled.connect(self._on_auto_toggled)
         self.period = QSpinBox()
         self.period.setRange(2, 60)
         self.period.setValue(5)
@@ -881,6 +881,22 @@ class PowerTab(QWidget):
                     return
             if time.monotonic() - self.last_measurement >= self.period.value():
                 self.measure()
+
+    def _on_auto_toggled(self, active):
+        # Tk saves the summary plot when auto-measure stops; Qt matches it.
+        if not active:
+            self._save_summary_png()
+
+    def _save_summary_png(self):
+        """Snapshot the PQ triangle next to the CSV log (mirrors Tk)."""
+        if self.log.path is None or self.log.count < 1:
+            return
+        try:
+            path = self.log.path.replace(".csv", "_summary.png")
+            if self.plot.grab().save(path):
+                self.notify(f"Saved PQ summary: {path}")
+        except (AttributeError, RuntimeError, OSError) as error:
+            self.notify(f"Could not save PQ summary: {error}")
 
     def calibrate(self):
         # Mirrors the Tk auto-calibration: one uncorrected ("standard") probe
