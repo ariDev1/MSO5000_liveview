@@ -83,9 +83,12 @@ class SurfaceHistory:
     """Detachable frequency / time / level view for successive spectra.
 
     Control bar mirrors the Tk 3D-surface window (Last N, Log Z, render
-    mode, stride, points per line, Apply, Clear). One deliberate difference:
-    Log Z stays opt-in here because Qt feeds both linear (harmonics) and
-    already-logged (noise dB) spectra into the same view.
+    mode, stride, points per line, Apply, Clear). Colors always encode the
+    spectrum level (shared viridis scale + color bar), never the age of a
+    trace; the newest trace is only drawn slightly bolder. Panes stay
+    transparent with faint edges, as in the Tk window. One deliberate
+    difference: Log Z stays opt-in here because Qt feeds both linear
+    (harmonics) and already-logged (noise dB) spectra into the same view.
     """
 
     def __init__(self, parent):
@@ -164,26 +167,58 @@ class SurfaceHistory:
 
     def _redraw(self):
         from matplotlib import colormaps
+        from matplotlib.colors import Normalize
+        from mpl_toolkits.mplot3d.art3d import Line3DCollection
         if not self.history:
             self.plot.axes.clear()
             self.plot.canvas.draw_idle()
             return
+        if getattr(self, "_colorbar", None) is not None:
+            try:
+                self._colorbar.remove()
+            except (AttributeError, ValueError):
+                pass
+            self._colorbar = None
         ax = self.plot.axes
         ax.clear()
+        # Transparent cube walls with faint edges, subtle grid (as in Tk).
+        for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+            try:
+                axis.pane.fill = False
+                axis.pane.set_edgecolor((1, 1, 1, 0.15))
+                axis._axinfo["grid"]["color"] = (1, 1, 1, 0.12)
+                axis._axinfo["grid"]["linewidth"] = 0.8
+            except (AttributeError, KeyError, TypeError):
+                pass
+        try:
+            ax.set_proj_type("persp")
+        except (AttributeError, ValueError):
+            pass
         values = [yy if not self.use_log
                   else np.log10(np.clip(yy, 1e-12, None)) for _, yy in self.history]
+        stacked = np.concatenate(values) if values else np.array([0.0, 1.0])
+        vmin, vmax = float(np.min(stacked)), float(np.max(stacked))
+        if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin >= vmax:
+            vmin, vmax = vmin - 0.5, vmax + 0.5
+        norm = Normalize(vmin=vmin, vmax=vmax)
+        cmap = colormaps["viridis"]
         if self.render_mode == "lines":
-            # Plasma age-gradient with a highlighted newest line, as in Tk.
-            cmap = colormaps["plasma"]
-            count = len(self.history)
+            # One collection: every segment colored by its level value.
+            segments, colors, widths = [], [], []
             for idx, ((xx, _), zz) in enumerate(zip(self.history, values)):
-                if idx == count - 1:
-                    ax.plot(xx, np.full(len(xx), idx), zz, color="yellow",
-                            linewidth=1.5, alpha=0.95)
-                else:
-                    ax.plot(xx, np.full(len(xx), idx), zz,
-                            color=cmap(idx / max(1, count - 1)),
-                            linewidth=1.3, alpha=0.7)
+                points = np.column_stack([xx, np.full(len(xx), idx), zz])
+                segments.extend(zip(points[:-1], points[1:]))
+                mid = 0.5 * (zz[:-1] + zz[1:])
+                colors.extend(cmap(norm(mid)).tolist())
+                widths.extend([1.8 if idx == len(self.history) - 1 else 1.1]
+                              * max(0, len(xx) - 1))
+            collection = Line3DCollection(segments, colors=colors,
+                                          linewidths=widths, alpha=0.95)
+            ax.add_collection3d(collection)
+            ax.set_xlim(float(np.min([x.min() for x, _ in self.history])),
+                        float(np.max([x.max() for x, _ in self.history])))
+            ax.set_ylim(-0.5, len(self.history) - 0.5)
+            ax.set_zlim(vmin, vmax)
         else:
             xx = self.history[0][0]
             rows = len(self.history)
@@ -194,7 +229,13 @@ class SurfaceHistory:
                                   linewidth=0.4, alpha=0.65)
             else:
                 ax.plot_surface(grid_x, grid_y, grid_z, cmap="viridis",
-                                alpha=0.9, shade=True)
+                                norm=norm, alpha=0.9, shade=True)
+        from matplotlib.cm import ScalarMappable
+        self._colorbar = self.plot.figure.colorbar(
+            ScalarMappable(norm=norm, cmap=cmap), ax=ax, shrink=0.7, pad=0.08)
+        self._colorbar.set_label("log₁₀(Level)" if self.use_log else "Level",
+                                 color="#e5edf6")
+        self._colorbar.ax.yaxis.set_tick_params(color="#e5edf6", labelcolor="#e5edf6")
         ax.set_zlabel("log₁₀(Level)" if self.use_log else "Level",
                       color="#e5edf6")
         self.plot.style_axes("Spectrum history", "Frequency (Hz)", "Acquisition")
