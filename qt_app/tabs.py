@@ -429,7 +429,14 @@ class PowerTab(QWidget):
         self.context = ({}, {})
         self.pq3d = None
         layout = QVBoxLayout(self)
-        layout.addWidget(heading("Power analysis"))
+        header = QHBoxLayout()
+        header.addWidget(heading("Power analysis"))
+        header.addStretch()
+        self.setup_toggle = QPushButton("Setup ▾")
+        self.setup_toggle.setCheckable(True)
+        self.setup_toggle.setToolTip("Fold/unfold the measurement setup to give the plot more room.")
+        header.addWidget(self.setup_toggle)
+        layout.addLayout(header)
         group = QGroupBox("Measurement setup")
         grid = QGridLayout(group)
         self.voltage = QLineEdit("1")
@@ -476,8 +483,18 @@ class PowerTab(QWidget):
                      "UNIT:A → set Value = 1.0. For better power accuracy, enable the "
                      "20 MHz BW limit on the scope channels. Avoid >20 MHz unless needed.")
         tip.setWordWrap(True)
+        self.setup_group = group
+        self.setup_tip = tip
         layout.addWidget(group)
         layout.addWidget(tip)
+        # Fold state persists per user (same QSettings as the UI zoom).
+        from PySide6.QtCore import QSettings
+        self.setup_settings = QSettings("ariDev1", "MSO5000-Qt")
+        expanded = self.setup_settings.value("powerSetupExpanded", True)
+        expanded = str(expanded).lower() not in ("false", "0", "no")
+        self.setup_toggle.toggled.connect(self._toggle_setup)
+        self.setup_toggle.setChecked(expanded)
+        self._toggle_setup(expanded)
         controls = QHBoxLayout()
         self.measure_button = QPushButton("⚡ Measure")
         self.measure_button.setObjectName("primaryButton")
@@ -521,6 +538,12 @@ class PowerTab(QWidget):
         self.timer.timeout.connect(self._auto_tick)
         self.timer.start(500)
         self.last_measurement = 0.0
+
+    def _toggle_setup(self, expanded):
+        self.setup_group.setVisible(expanded)
+        self.setup_tip.setVisible(expanded)
+        self.setup_toggle.setText("Setup ▾" if expanded else "Setup ▸")
+        self.setup_settings.setValue("powerSetupExpanded", bool(expanded))
 
     def update_scale(self):
         try:
