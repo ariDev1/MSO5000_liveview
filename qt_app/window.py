@@ -1,0 +1,271 @@
+"""Qt shell and background I/O scheduler for the established scope backend."""
+
+import os
+import subprocess
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
+
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import (
+    QLabel, QMainWindow, QPushButton, QSplitter, QTabWidget, QVBoxLayout, QWidget,
+)
+
+import app.app_state as app_state
+import config
+import version
+from logger.longtime import stop_logging
+from qt_app.backend import ScopeBackend
+from qt_app.tabs import ChannelsTab, LoggingTab, PowerTab, SCPITab, SystemTab
+from utils.debug import debug_log
+
+
+STYLE = """
+QMainWindow, QWidget { background: #101722; color: #e5edf6; font-size: 13px; }
+QLabel#appTitle { font-size: 21px; font-weight: bold; color: #f5f9ff; }
+QLabel#sectionTitle { font-size: 17px; font-weight: bold; margin: 4px 0 8px 0; }
+QLabel#connection { color: #54d5ae; font-weight: bold; }
+QGroupBox { border: 1px solid #35455c; border-radius: 9px; margin-top: 14px;
+            padding: 14px 9px 9px; font-weight: bold; }
+QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; }
+QPushButton { background: #25354a; border: 1px solid #3b526d; border-radius: 7px;
+              padding: 8px 13px; }
+QPushButton:hover { background: #354d67; }
+QPushButton:disabled { color: #748398; background: #192433; }
+QPushButton#primaryButton { background: #147d79; border-color: #28a19a; }
+QPushButton#primaryButton:hover { background: #18988f; }
+QLineEdit, QPlainTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+    background: #192434; color: #f1f6fc; border: 1px solid #35455c;
+    border-radius: 6px; padding: 5px; selection-background-color: #187d85;
+}
+QTabWidget::pane { border: 1px solid #35455c; border-radius: 7px; }
+QTabBar::tab { background: #192434; padding: 10px 16px; margin-right: 3px;
+               border-top-left-radius: 7px; border-top-right-radius: 7px; }
+QTabBar::tab:selected { background: #253c4b; color: #66e5c2; }
+QSplitter::handle { background: #35455c; height: 3px; }
+"""
+
+
+class Events(QObject):
+    completed = Signal(object, object)
+    message = Signal(str)
+
+
+def capture(ip):
+    """Fetch one VNC screenshot without blocking the GUI or sharing a fixed filename."""
+    descriptor, path = tempfile.mkstemp(suffix=".png", prefix="mso5000-qt-")
+    os.close(descriptor)
+    try:
+        subprocess.run(["vncdo", "-s", ip, "capture", path],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                       check=True, timeout=10)
+        with open(path, "rb") as image:
+            return image.read()
+    finally:
+        os.unlink(path)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, ip):
+        super().__init__()
+        self.backend = ScopeBackend(ip)
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="qt-scope")
+        self.images = ThreadPoolExecutor(max_workers=1, thread_name_prefix="qt-vnc")
+        self.events = Events(self)
+        self.events.completed.connect(self._deliver)
+        self.events.message.connect(self._message)
+        self.closing = False
+        self.polling = False
+        self.capturing = False
+        self.pixmap = None
+        self.idn = "N/A"
+        self.setWindowTitle(f"{version.APP_NAME} — Qt {version.VERSION} — {ip}")
+        self.resize(1280, 860)
+        self.setMinimumSize(850, 600)
+        self.setStyleSheet(STYLE)
+
+        content = QWidget()
+        self.setCentralWidget(content)
+        layout = QVBoxLayout(content)
+        top = QVBoxLayout()
+        from PySide6.QtWidgets import QHBoxLayout
+        bar = QHBoxLayout()
+        title = QLabel("MSO5000  /  LIVE VIEW")
+        title.setObjectName("appTitle")
+        self.connection = QLabel("Connecting…")
+        self.connection.setObjectName("connection")
+        self.retry = QPushButton("Reconnect")
+        self.retry.clicked.connect(self.connect_scope)
+        self.hide_image = QPushButton("Hide display")
+        self.hide_image.clicked.connect(self.toggle_image)
+        bar.addWidget(title)
+        bar.addStretch()
+        bar.addWidget(self.connection)
+        bar.addWidget(self.retry)
+        bar.addWidget(self.hide_image)
+        top.addLayout(bar)
+        layout.addLayout(top)
+
+        self.display = QLabel("Waiting for VNC screenshot…")
+        self.display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.display.setMinimumHeight(170)
+        self.display.setStyleSheet("background:#080f18; border:1px solid #35455c; border-radius:9px;")
+        self.tabs = QTabWidget()
+        self.system = SystemTab()
+        self.channels = ChannelsTab(self.submit, self.backend, self.notify)
+        self.logging = LoggingTab(self.backend, self.notify)
+        self.power = PowerTab(self.submit, self.backend, self.notify)
+        self.console = SCPITab(self.submit, self.backend, self.notify)
+        self.debug = QWidget()
+        debug_layout = QVBoxLayout(self.debug)
+        from qt_app.tabs import readout
+        self.debug_text = readout()
+        debug_layout.addWidget(self.debug_text)
+        for title, tab in (("System", self.system), ("Channels", self.channels),
+                           ("Long-time logging", self.logging), ("Power", self.power),
+                           ("SCPI", self.console), ("Debug", self.debug)):
+            self.tabs.addTab(tab, title)
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(self.display)
+        splitter.addWidget(self.tabs)
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 4)
+        layout.addWidget(splitter)
+        self.statusBar().showMessage("Qt viewer • shared SCPI measurement backend")
+
+        self.poll_timer = QTimer(self)
+        self.poll_timer.timeout.connect(self.poll)
+        self.poll_timer.start(max(1, int(config.INTERVALL_SCPI)) * 1000)
+        self.image_timer = QTimer(self)
+        self.image_timer.timeout.connect(self.capture_image)
+        self.image_timer.start(max(1, int(config.INTERVALL_BILD)) * 1000)
+        self.debug_timer = QTimer(self)
+        self.debug_timer.timeout.connect(self.show_debug)
+        self.debug_timer.start(1000)
+        QTimer.singleShot(0, self.connect_scope)
+
+    def notify(self, message):
+        # Called both from Qt and from the established logger's background thread.
+        self.events.message.emit(str(message))
+
+    def _message(self, message):
+        if not self.closing:
+            self.statusBar().showMessage(message, 10000)
+            self.logging.status.appendPlainText(message)
+
+    def submit(self, operation, done, *, image=False):
+        executor = self.images if image else self.executor
+        future = executor.submit(operation)
+
+        def completed(fut):
+            try:
+                result = fut.result()
+            except Exception as error:
+                result = error
+            self.events.completed.emit(done, result)
+
+        future.add_done_callback(completed)
+
+    def _deliver(self, done, result):
+        if self.closing:
+            return
+        try:
+            done(result)
+        except Exception as error:
+            self.notify(f"UI update failed: {error}")
+
+    def connect_scope(self):
+        if self.closing or self.polling or app_state.is_logging_active:
+            return
+        self.polling = True
+        self.connection.setText("Connecting…")
+        self.retry.setEnabled(False)
+
+        def done(response):
+            self.polling = False
+            self.retry.setEnabled(True)
+            if isinstance(response, Exception):
+                self.connection.setText("Disconnected")
+                self.notify(f"Connection failed: {response}")
+                return
+            self.idn = response
+            self.connection.setText("Connected")
+            self.notify(f"Connected: {response}")
+            self.poll()
+            self.capture_image()
+
+        self.submit(self.backend.connect, done)
+
+    def poll(self):
+        if self.closing or self.polling or self.backend.scope is None or app_state.is_logging_active:
+            return
+        self.polling = True
+
+        def done(response):
+            self.polling = False
+            if isinstance(response, Exception):
+                self.connection.setText("Scope unavailable")
+                self.notify(f"Status read failed: {response}")
+                return
+            system, channels = response
+            self.connection.setText("Connected")
+            self.system.update_data(system, self.idn)
+            self.channels.update_data(channels)
+
+        self.submit(self.backend.snapshot, done)
+
+    def capture_image(self):
+        if self.closing or self.capturing or self.display.isHidden():
+            return
+        self.capturing = True
+
+        def done(response):
+            self.capturing = False
+            if isinstance(response, Exception):
+                self.notify(f"VNC screenshot failed: {response}")
+                return
+            image = QPixmap()
+            if image.loadFromData(response):
+                self.pixmap = image
+                self.update_image()
+
+        self.submit(lambda: capture(self.backend.ip), done, image=True)
+
+    def update_image(self):
+        if self.pixmap is None or self.display.isHidden():
+            return
+        width, height = self.display.width() - 12, self.display.height() - 12
+        if not config.SCOPE_IMAGE_ALLOW_UPSCALE:
+            width = min(width, self.pixmap.width())
+            height = min(height, self.pixmap.height())
+        image = self.pixmap.scaled(max(width, 1), max(height, 1),
+                                   Qt.AspectRatioMode.KeepAspectRatio,
+                                   Qt.TransformationMode.SmoothTransformation)
+        self.display.setPixmap(image)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_image()
+
+    def toggle_image(self):
+        hidden = self.display.isHidden()
+        self.display.setVisible(hidden)
+        self.hide_image.setText("Hide display" if hidden else "Show display")
+        if hidden:
+            self.update_image()
+            self.capture_image()
+
+    def show_debug(self):
+        self.debug_text.setPlainText("\n".join(list(debug_log)[-500:]))
+
+    def closeEvent(self, event):
+        self.closing = True
+        app_state.is_shutting_down = True
+        stop_logging()
+        self.poll_timer.stop()
+        self.image_timer.stop()
+        self.debug_timer.stop()
+        self.executor.submit(self.backend.close)
+        self.executor.shutdown(wait=False)
+        self.images.shutdown(wait=False, cancel_futures=True)
+        super().closeEvent(event)

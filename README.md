@@ -55,6 +55,30 @@ We published a technical whitepaper detailing how to achieve scientifically vali
 
 ## 🛠️ Installation (Tested on Ubuntu 24.04 Noble)
 
+### Qt preview (feature/qt-ui)
+
+The Qt viewer is an **alternative application** alongside the tested Tk version.
+It uses the existing SCPI waveform, power and long-time logger modules. To try it
+from this branch, install the additional Qt dependencies into a Python virtual
+environment and run:
+
+```bash
+pip install -r requirements-qt.txt
+python -m qt_app.main --ip 192.168.1.100
+```
+
+Omit `--ip` to enter the address in a dialog. Core workflows available now are
+live VNC screenshots, system and channel status, CSV waveform export, long-time
+logging with pause/resume, power measurement with CSV and PQ plot, and a manual
+SCPI console. Outputs use `oszi_csv/` as before. The B-H, Harmonics, Noise
+Inspector, and advanced 3D views remain available in the Tk application while
+their Qt counterparts are developed. `python main.py` and the current Docker
+image still launch the established Tk application.
+
+Qt communication runs in a background I/O queue; a failed connection can be
+retried with **Reconnect**. A scope and VNC service are needed to check live
+operation; the automated tests use simulated connections.
+
 ### 📦 Native Python Setup
 
 ```bash

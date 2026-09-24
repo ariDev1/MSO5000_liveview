@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +23,7 @@ def test_build_version_accepts_explicit_container_metadata(tmp_path):
     )
 
     subprocess.run(
-        [str(PROJECT_ROOT / ".venv/bin/python"), str(PROJECT_ROOT / "build_version.py")],
+        [sys.executable, str(PROJECT_ROOT / "build_version.py")],
         check=True,
         cwd=tmp_path,
         env=environment,
