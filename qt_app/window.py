@@ -20,7 +20,7 @@ from qt_app.advanced import BHCurveTab, HarmonicsTab, NoiseTab
 from qt_app.backend import ScopeBackend
 from qt_app.display import DetachedDisplay, ScopeDisplay
 from qt_app.tabs import ChannelsTab, LicensesTab, LoggingTab, PowerTab, SCPITab, SystemTab
-from utils.debug import debug_log
+from utils.debug import debug_log, set_debug_level
 
 
 STYLE = """
@@ -91,6 +91,9 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(content)
         layout = QVBoxLayout(content)
         bar = QHBoxLayout()
+        # GAP (Tk parity, recorded): the Tk top bar carries a scrolling
+        # marquee ticker (promo chrome, no lab function). Qt keeps a static
+        # title instead.
         title = QLabel("MSO5000  /  LIVE VIEW")
         title.setObjectName("appTitle")
         self.connection = QLabel("Connecting…")
@@ -124,14 +127,26 @@ class MainWindow(QMainWindow):
         self.debug = QWidget()
         debug_layout = QVBoxLayout(self.debug)
         from qt_app.tabs import readout
+        from PySide6.QtWidgets import QRadioButton
+        level_row = QHBoxLayout()
+        level_row.addWidget(QLabel("Debug Output Level:"))
+        for level, label in (("FULL", "🛠 Full"), ("MINIMAL", "⚠️ Minimal")):
+            option = QRadioButton(label)
+            option.setChecked(level == "FULL")
+            option.toggled.connect(
+                lambda checked, lv=level: set_debug_level(lv) if checked else None)
+            level_row.addWidget(option)
+        level_row.addStretch()
+        debug_layout.addLayout(level_row)
         self.debug_text = readout()
         debug_layout.addWidget(self.debug_text)
-        for title, tab in (("System", self.system), ("Licenses", self.licenses),
-                           ("Channels", self.channels),
-                           ("Long-time logging", self.logging), ("Power", self.power),
-                           ("SCPI", self.console), ("Debug", self.debug)):
+        # Tab order and titles mirror the Tk viewer (Debug Log sits third).
+        for title, tab in (("System Info", self.system), ("Licenses", self.licenses),
+                           ("Debug Log", self.debug), ("Channel Data", self.channels),
+                           ("Long-Time Measurement", self.logging),
+                           ("Power Analysis", self.power), ("SCPI", self.console)):
             self.add_tab(title, tab)
-        for title, tab in (("B–H Curve", self.bh), ("Harmonics / THD", self.harmonics),
+        for title, tab in (("BH Curve", self.bh), ("Harmonics", self.harmonics),
                            ("Noise Inspector", self.noise)):
             if tab is not None:
                 self.add_tab(title, tab)
@@ -145,6 +160,8 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, lambda: self.splitter.setSizes([self.height() * 65 // 100,
                                                               self.height() * 35 // 100]))
         self.statusBar().showMessage("Qt viewer • shared SCPI measurement backend")
+        self.activity = QLabel("○ idle")
+        self.statusBar().addPermanentWidget(self.activity)
 
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self.poll)
@@ -275,6 +292,17 @@ class MainWindow(QMainWindow):
 
     def show_debug(self):
         self.debug_text.setPlainText("\n".join(list(debug_log)[-500:]))
+        # Activity indicator mirroring the Tk LED meter's inputs.
+        if app_state.is_logging_active:
+            state, color = "● LOG", "#e44"
+        elif app_state.is_power_analysis_active:
+            state, color = "● PWR", "#fd0"
+        elif app_state.is_scpi_busy:
+            state, color = "● SCPI", "#4f6"
+        else:
+            state, color = "○ idle", "#748398"
+        self.activity.setText(state)
+        self.activity.setStyleSheet(f"color: {color}; font-weight: bold;")
 
     def closeEvent(self, event):
         self.closing = True

@@ -79,14 +79,43 @@ class SystemTab(QWidget):
         self.show_document()
 
     def show_document(self):
-        from version import VERSION, GIT_COMMIT, BUILD_DATE
+        from version import VERSION, GIT_COMMIT, BUILD_DATE, AUTHOR, PROJECT_URL
         import psutil
+        try:
+            import numpy as _np
+            numpy_v = _np.__version__
+        except Exception:
+            numpy_v = "-"
+        try:
+            import matplotlib as _mpl
+            matplotlib_v = _mpl.__version__
+        except Exception:
+            matplotlib_v = "-"
+        try:
+            import pandas as _pd
+            pandas_v = _pd.__version__
+        except Exception:
+            pandas_v = "-"
+        try:
+            import scipy as _sp
+            scipy_v = _sp.__version__
+        except Exception:
+            scipy_v = "-"
+        try:
+            import pyvisa as _visa
+            visa_v = _visa.__version__
+        except Exception:
+            visa_v = "-"
         free = shutil.disk_usage(Path.cwd()).free / (1024 ** 3)
-        info = (f"MSO5000 Liveview {VERSION}  ·  {GIT_COMMIT}  ·  {BUILD_DATE}\n"
+        info = (f"MSO5000 Liveview {VERSION}  ·  {GIT_COMMIT}  ·  {BUILD_DATE}  ·  {AUTHOR}\n"
+                f"{PROJECT_URL}\n"
                 f"Host: {platform.system()} {platform.release()} ({platform.machine()})\n"
-                f"Python: {sys.version.split()[0]}    CPU: {psutil.cpu_percent()}%    "
+                f"Python: {sys.version.split()[0]}  | NumPy {numpy_v}, Matplotlib {matplotlib_v}, "
+                f"Pandas {pandas_v}, SciPy {scipy_v}\n"
+                f"PyVISA: {visa_v}    CPU: {psutil.cpu_percent()}%    "
                 f"RAM: {psutil.virtual_memory().percent}%    Disk free: {free:.1f} GiB\n"
-                f"Logging: {app_state.is_logging_active}  Power: {app_state.is_power_analysis_active}\n\n"
+                f"Logging: {app_state.is_logging_active}  Power: {app_state.is_power_analysis_active}  "
+                f"SCPI busy: {app_state.is_scpi_busy}  Shutdown: {app_state.is_shutting_down}\n\n"
                 f"Instrument: {self.idn}\n\n" +
                 "\n".join(f"{key:<22}: {value}" for key, value in self.system.items()))
         document = self.docs.currentData()
@@ -123,15 +152,25 @@ class LicensesTab(QWidget):
         def done(options):
             if isinstance(options, Exception):
                 self.text.setPlainText(f"License query failed: {options}")
-            else:
-                self.text.setPlainText("\n".join(
-                    f"{item['code']:<12} {item['status']:<15} {item['desc']}" for item in options)
-                    or "No license data received")
+                return
+            if not options:
+                self.text.setPlainText("No license data received")
+                return
+            lines = ["LICENSED OPTIONS:", "=" * 60]
+            for item in options:
+                status = item["status"]
+                symbol = "✅" if status == "Forever" else "🕑" if "Trial" in status else "❌"
+                lines.append(f"{symbol} {item['code']:10s} | {status:12s} | {item['desc']}")
+            self.text.setPlainText("\n".join(lines))
 
         self.submit(lambda: get_license_options(self.ip), done, image=True)
 
 
 class ChannelsTab(QWidget):
+    # GAP (Tk parity, recorded): the Tk tab renders compact one-line channel
+    # summaries from its own channel cache and opens a fresh connection per
+    # export. Qt shows the full polled snapshot detail and exports through
+    # the shared backend instead — same files, no shared code touched.
     def __init__(self, submit, backend, notify):
         super().__init__()
         self.submit, self.backend, self.notify = submit, backend, notify
@@ -774,6 +813,9 @@ class SCPITab(QWidget):
         self.submit(lambda: self.backend.command(text), finished)
 
     def self_test(self):
+        # GAP (Tk parity, recorded): the Tk self-test stops acquisition,
+        # probes channels and runs a power check (intrusive by design). The
+        # Qt self-test stays read-only and never changes acquisition state.
         if app_state.is_logging_active:
             self.notify("Self-test unavailable during long-time logging")
             return
