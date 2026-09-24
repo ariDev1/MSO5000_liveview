@@ -18,7 +18,8 @@ from PySide6.QtWidgets import (
 import app.app_state as app_state
 from qt_app.analysis import acquire, bh_curve, harmonics, noise, read_wave_csv, save_xy_csv
 from qt_app.backend import channel_name
-from qt_app.tabs import channel_color, heading, readout, tint_channel_combo
+from qt_app.tabs import (as_bool, channel_color, heading, readout,
+                         settings_store, tint_channel_combo)
 
 
 class Plot(QWidget):
@@ -302,6 +303,12 @@ class HarmonicsTab(QWidget):
         self.raw.setChecked(True)
         self.include_dc = QCheckBox("Include DC")
         self.auto = QCheckBox("Auto")
+        self.interval = QSpinBox()
+        self.interval.setRange(1, 60)
+        self.interval.setValue(4)
+        self.interval.setSuffix(" s")
+        self.interval.setToolTip("Auto-measure cadence (Tk re-arms ~2 s).")
+        self.interval.valueChanged.connect(self._retime)
         button = QPushButton("MEASURE")
         button.clicked.connect(self.run)
         csv_button = QPushButton("EXPORT TABLE")
@@ -314,7 +321,8 @@ class HarmonicsTab(QWidget):
         surface_button.clicked.connect(self.show_surface)
         for widget in (QLabel("Channel"), self.channel, QLabel("Window"), self.window,
                        QLabel("Harmonics"), self.count, self.raw, self.include_dc,
-                       self.auto, button, csv_button, png_button, md_button,
+                       self.auto, QLabel("Interval"), self.interval,
+                       button, csv_button, png_button, md_button,
                        surface_button):
             row.addWidget(widget)
         layout.addWidget(self.setup_box)
@@ -333,13 +341,59 @@ class HarmonicsTab(QWidget):
                         "percent", "cumTHD_pct", "phase_deg")
         self.table = QTableWidget(0, len(self.columns))
         self.table.setHorizontalHeaderLabels(list(self.columns))
+        self.table.setAlternatingRowColors(True)
         self.table.cellClicked.connect(self._on_table_select)
         layout.addWidget(self.table, 2)
         self.timer = QTimer(self)
         self.timer.timeout.connect(lambda: self.run() if self.auto.isChecked() else None)
-        # GAP (Tk parity, recorded): the Tk tab re-arms ~2 s after each
-        # acquisition; Qt polls on a fixed 4 s cadence (gentler on the scope).
-        self.timer.start(4000)
+        # Operator-settable cadence (Tk re-arms ~2 s; Qt defaults to a
+        # gentler 4 s but the interval spinbox reaches the same range).
+        self._retime()
+        self._restore_setup()
+        self.channel.currentIndexChanged.connect(lambda _=None: self._save_setup())
+        self.window.currentIndexChanged.connect(lambda _=None: self._save_setup())
+        self.count.valueChanged.connect(lambda _=None: self._save_setup())
+        self.raw.toggled.connect(lambda _=None: self._save_setup())
+        self.include_dc.toggled.connect(lambda _=None: self._save_setup())
+        self.interval.valueChanged.connect(lambda _=None: self._save_setup())
+
+    def _retime(self):
+        self.timer.setInterval(max(1, self.interval.value()) * 1000)
+
+    def _save_setup(self):
+        store = settings_store()
+        store.beginGroup("harmonics")
+        store.setValue("channel", self.channel.currentIndex())
+        store.setValue("window", self.window.currentIndex())
+        store.setValue("count", self.count.value())
+        store.setValue("raw", self.raw.isChecked())
+        store.setValue("includeDC", self.include_dc.isChecked())
+        store.setValue("interval", self.interval.value())
+        store.endGroup()
+
+    def _restore_setup(self):
+        store = settings_store()
+        store.beginGroup("harmonics")
+        for widget in (self.channel, self.window, self.count, self.raw,
+                       self.include_dc, self.interval):
+            widget.blockSignals(True)
+        try:
+            self.channel.setCurrentIndex(
+                min(max(0, int(store.value("channel", 0))), self.channel.count() - 1))
+            self.window.setCurrentIndex(
+                min(max(0, int(store.value("window", 0))), self.window.count() - 1))
+            self.count.setValue(min(max(5, int(store.value("count", 25))), 80))
+            self.raw.setChecked(as_bool(store.value("raw"), True))
+            self.include_dc.setChecked(as_bool(store.value("includeDC"), False))
+            self.interval.setValue(min(max(1, int(store.value("interval", 4))), 60))
+        except (TypeError, ValueError):
+            pass
+        finally:
+            for widget in (self.channel, self.window, self.count, self.raw,
+                           self.include_dc, self.interval):
+                widget.blockSignals(False)
+        store.endGroup()
+        self._retime()
 
     def run(self):
         if self.pending or app_state.is_logging_active:
@@ -421,6 +475,7 @@ class HarmonicsTab(QWidget):
                 item.setTextAlignment(Qt.AlignmentFlag.AlignRight |
                                       Qt.AlignmentFlag.AlignVCenter)
                 self.table.setItem(idx, col, item)
+        self.table.resizeColumnsToContents()
 
     def _render_plot(self, result, freq, amplitude, count, trace="#d0ff00"):
         import matplotlib.lines as mlines
@@ -650,6 +705,79 @@ class BHCurveTab(QWidget):
         self.timer.timeout.connect(lambda: self.run() if self.auto.isChecked() else None)
         self._retime()
         self._toggle_data(True)
+        self._restore_setup()
+        for box in (self.voltage, self.current, self.probe_type, self.cycle_ref):
+            box.currentIndexChanged.connect(lambda _=None: self._save_setup())
+        for spin in (self.turns, self.area, self.length, self.probe_value,
+                     self.deskew, self.avg_cycles, self.interval):
+            spin.valueChanged.connect(lambda _=None: self._save_setup())
+        for check in (self.raw, self.dc, self.detrend, self.cycle,
+                      self.equal_aspect, self.tight, self.overlay):
+            check.toggled.connect(lambda _=None: self._save_setup())
+
+    def _save_setup(self):
+        store = settings_store()
+        store.beginGroup("bh")
+        store.setValue("voltage", self.voltage.currentIndex())
+        store.setValue("current", self.current.currentIndex())
+        store.setValue("turns", self.turns.value())
+        store.setValue("area", self.area.value())
+        store.setValue("length", self.length.value())
+        store.setValue("probeType", self.probe_type.currentIndex())
+        store.setValue("probeValue", self.probe_value.value())
+        store.setValue("deskew", self.deskew.value())
+        store.setValue("cycleRef", self.cycle_ref.currentIndex())
+        store.setValue("avgCycles", self.avg_cycles.value())
+        store.setValue("raw", self.raw.isChecked())
+        store.setValue("dc", self.dc.isChecked())
+        store.setValue("detrend", self.detrend.isChecked())
+        store.setValue("cycle", self.cycle.isChecked())
+        store.setValue("equal", self.equal_aspect.isChecked())
+        store.setValue("tight", self.tight.isChecked())
+        store.setValue("overlay", self.overlay.isChecked())
+        store.setValue("interval", self.interval.value())
+        store.endGroup()
+
+    def _restore_setup(self):
+        store = settings_store()
+        store.beginGroup("bh")
+        tracked = (self.voltage, self.current, self.turns, self.area,
+                   self.length, self.probe_type, self.probe_value, self.deskew,
+                   self.cycle_ref, self.avg_cycles, self.raw, self.dc,
+                   self.detrend, self.cycle, self.equal_aspect, self.tight,
+                   self.overlay, self.interval)
+        for widget in tracked:
+            widget.blockSignals(True)
+        try:
+            self.voltage.setCurrentIndex(
+                min(max(0, int(store.value("voltage", 0))), self.voltage.count() - 1))
+            self.current.setCurrentIndex(
+                min(max(0, int(store.value("current", 2))), self.current.count() - 1))
+            self.turns.setValue(int(store.value("turns", 20)))
+            self.area.setValue(float(store.value("area", 25)))
+            self.length.setValue(float(store.value("length", 50)))
+            self.probe_type.setCurrentIndex(
+                min(max(0, int(store.value("probeType", 0))), self.probe_type.count() - 1))
+            self.probe_value.setValue(float(store.value("probeValue", 0.1)))
+            self.deskew.setValue(float(store.value("deskew", 0.0)))
+            self.cycle_ref.setCurrentIndex(
+                min(max(0, int(store.value("cycleRef", 0))), self.cycle_ref.count() - 1))
+            self.avg_cycles.setValue(min(max(1, int(store.value("avgCycles", 1))), 10))
+            self.raw.setChecked(as_bool(store.value("raw"), False))
+            self.dc.setChecked(as_bool(store.value("dc"), True))
+            self.detrend.setChecked(as_bool(store.value("detrend"), False))
+            self.cycle.setChecked(as_bool(store.value("cycle"), False))
+            self.equal_aspect.setChecked(as_bool(store.value("equal"), False))
+            self.tight.setChecked(as_bool(store.value("tight"), True))
+            self.overlay.setChecked(as_bool(store.value("overlay"), False))
+            self.interval.setValue(min(max(1, int(store.value("interval", 5))), 60))
+        except (TypeError, ValueError):
+            pass
+        finally:
+            for widget in tracked:
+                widget.blockSignals(False)
+        store.endGroup()
+        self._retime()
 
     def _retime(self):
         self.timer.setInterval(max(1, self.interval.value()) * 1000)
@@ -921,11 +1049,17 @@ class NoiseTab(QWidget):
         browse = QPushButton("BROWSE")
         browse.clicked.connect(self.browse)
         self.auto = QCheckBox("Auto")
+        self.interval = QSpinBox()
+        self.interval.setRange(1, 60)
+        self.interval.setValue(4)
+        self.interval.setSuffix(" s")
+        self.interval.setToolTip("Auto-measure cadence (Tk re-arms ~2 s).")
+        self.interval.valueChanged.connect(self._retime)
         run = QPushButton("ANALYZE")
         run.clicked.connect(self.run)
         for widget in (QLabel("Channel"), self.channel, QLabel("Other"), self.other,
                        self.method, self.preset, QLabel("NFFT"), self.nfft, self.csv_path,
-                       browse, self.auto, run):
+                       browse, self.auto, QLabel("Interval"), self.interval, run):
             row.addWidget(widget)
         box.addLayout(row)
         params = QHBoxLayout()
@@ -961,6 +1095,7 @@ class NoiseTab(QWidget):
         self.detections.setMaximumHeight(65)
         layout.addWidget(self.detections)
         self.table = QTableWidget()
+        self.table.setAlternatingRowColors(True)
         self.table.cellClicked.connect(self.on_table_select)
         layout.addWidget(self.table, 2)
         self.auto_log = QCheckBox("Log detections automatically")
@@ -989,9 +1124,96 @@ class NoiseTab(QWidget):
         self.refresh_presets()
         self.timer = QTimer(self)
         self.timer.timeout.connect(lambda: self.run() if self.auto.isChecked() else None)
-        # GAP (Tk parity, recorded): the Tk tab re-arms ~2 s after each run;
-        # Qt polls on a fixed 4 s cadence (gentler on the scope).
-        self.timer.start(4000)
+        # Operator-settable cadence (Tk re-arms ~2 s; Qt defaults to a
+        # gentler 4 s but the interval spinbox reaches the same range).
+        self._retime()
+        self._restore_setup()
+        for box in (self.channel, self.other, self.method, self.preset):
+            box.currentIndexChanged.connect(lambda _=None: self._save_setup())
+        for spin in (self.nfft, self.seglen, self.smooth_bins, self.hop,
+                     self.topk, self.msc_thr, self.k_tapers, self.sk_thr,
+                     self.qmin_ms, self.qmax_ms, self.cep_topk, self.ar_order,
+                     self.interval):
+            spin.valueChanged.connect(lambda _=None: self._save_setup())
+        self.overlap.valueChanged.connect(lambda _=None: self._save_setup())
+        self.pfa.valueChanged.connect(lambda _=None: self._save_setup())
+
+    def _save_setup(self):
+        store = settings_store()
+        store.beginGroup("noise")
+        store.setValue("channel", self.channel.currentIndex())
+        store.setValue("other", self.other.currentIndex())
+        store.setValue("method", self.method.currentText())
+        store.setValue("nfft", self.nfft.value())
+        store.setValue("seglen", self.seglen.value())
+        store.setValue("smooth", self.smooth_bins.value())
+        store.setValue("hop", self.hop.value())
+        store.setValue("overlap", self.overlap.value())
+        store.setValue("pfa", self.pfa.value())
+        store.setValue("topk", self.topk.value())
+        store.setValue("mscThr", self.msc_thr.value())
+        store.setValue("kTapers", self.k_tapers.value())
+        store.setValue("skThr", self.sk_thr.value())
+        store.setValue("qmin", self.qmin_ms.value())
+        store.setValue("qmax", self.qmax_ms.value())
+        store.setValue("cepTopk", self.cep_topk.value())
+        store.setValue("arOrder", self.ar_order.value())
+        store.setValue("interval", self.interval.value())
+        store.endGroup()
+
+    def _restore_setup(self):
+        store = settings_store()
+        store.beginGroup("noise")
+        tracked = (self.channel, self.other, self.method, self.nfft,
+                   self.seglen, self.smooth_bins, self.hop, self.overlap,
+                   self.pfa, self.topk, self.msc_thr, self.k_tapers,
+                   self.sk_thr, self.qmin_ms, self.qmax_ms, self.cep_topk,
+                   self.ar_order, self.interval)
+        for widget in tracked:
+            widget.blockSignals(True)
+        try:
+            self.channel.setCurrentIndex(
+                min(max(0, int(store.value("channel", 0))), self.channel.count() - 1))
+            self.other.setCurrentIndex(
+                min(max(0, int(store.value("other", 1))), self.other.count() - 1))
+            saved_method = str(store.value("method", self.METHODS[0]))
+            if saved_method in self.METHODS:
+                self.method.setCurrentText(saved_method)
+        except (TypeError, ValueError):
+            pass
+        finally:
+            for widget in (self.channel, self.other, self.method):
+                widget.blockSignals(False)
+        # Presets first (they reset spins to method defaults), saved spins after.
+        self.refresh_presets()
+        for widget in tracked[3:]:
+            widget.blockSignals(True)
+        try:
+            self.nfft.setValue(int(store.value("nfft", 4096)))
+            self.seglen.setValue(int(store.value("seglen", 4096)))
+            self.smooth_bins.setValue(int(store.value("smooth", 31)))
+            self.hop.setValue(int(store.value("hop", 2048)))
+            self.overlap.setValue(float(store.value("overlap", 0.5)))
+            self.pfa.setValue(float(store.value("pfa", 0.001)))
+            self.topk.setValue(int(store.value("topk", 8)))
+            self.msc_thr.setValue(float(store.value("mscThr", 0.5)))
+            self.k_tapers.setValue(int(store.value("kTapers", 6)))
+            self.sk_thr.setValue(float(store.value("skThr", 2.5)))
+            self.qmin_ms.setValue(float(store.value("qmin", 0.02)))
+            self.qmax_ms.setValue(float(store.value("qmax", 5.0)))
+            self.cep_topk.setValue(int(store.value("cepTopk", 3)))
+            self.ar_order.setValue(int(store.value("arOrder", 32)))
+            self.interval.setValue(min(max(1, int(store.value("interval", 4))), 60))
+        except (TypeError, ValueError):
+            pass
+        finally:
+            for widget in tracked[3:]:
+                widget.blockSignals(False)
+        store.endGroup()
+        self._retime()
+
+    def _retime(self):
+        self.timer.setInterval(max(1, self.interval.value()) * 1000)
 
     def _toggle_advanced(self, open):
         self.advanced.setVisible(open)
@@ -1131,6 +1353,7 @@ class NoiseTab(QWidget):
                     except (TypeError, ValueError):
                         pass
                     self.table.setItem(row_idx, col_idx, item)
+            self.table.resizeColumnsToContents()
             if self.auto.isChecked() and self.auto_log.isChecked() and result.get("detections"):
                 self.save_csv()
 

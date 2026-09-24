@@ -6,6 +6,14 @@ import pytest
 from qt_app.backend import PowerLog, ScopeBackend, channel_name, current_scale, logging_channels
 
 
+@pytest.fixture(autouse=True)
+def _isolated_user_config(tmp_path, monkeypatch):
+    # Tabs persist operator setup via QSettings; keep test runs off the
+    # developer's real ~/.config so results never depend on machine state.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+
 @pytest.mark.parametrize("input_name, expected", [
     ("1", "CHAN1"), ("CH1", "CHAN1"), ("chan2", "CHAN2"),
     ("MATH4", "MATH4"),

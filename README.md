@@ -76,14 +76,18 @@ resizable live VNC screenshots (with an enlarge button), detailed system and
 channel status, licensed options, documentation, CSV waveform export and copy,
 long-time logging with pause/resume, power measurement with CSV, PQ and 3D
 views, SCPI console with command list, B-H Curve, Harmonics/THD, and Noise
-Inspector. Analysis views share the existing calculation functions; their
-control layouts and some specialized Tk-only options still differ. Outputs use
+Inspector. Analysis views share the existing calculation functions and mirror
+the Tk tab layouts, tables, and plots; deliberate Qt-side differences (embedded
+plot dialogs instead of external scripts, read-only self-test, per-run export
+filenames) are noted inline in `qt_app/` as `GAP` comments. Outputs use
 `oszi_csv/` as before. `python main.py` and the current Docker image still
 launch the established Tk application.
 
 Qt communication runs in a background I/O queue; a failed connection can be
 retried with **Reconnect**. Press **Ctrl +** / **Ctrl -** to scale the UI and
-**Ctrl 0** to reset (the choice is remembered per user). A scope and VNC service
+**Ctrl 0** to reset, **F5** to measure on the visible analysis tab, and
+**Ctrl+1…9** to switch tabs (the UI scale, fold states, workspace, and each
+tab's operator setup are remembered per user). A scope and VNC service
 are needed to check live operation; the automated tests use simulated connections.
 
 ### 📦 Native Python Setup

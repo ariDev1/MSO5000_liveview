@@ -49,7 +49,7 @@ QLineEdit, QPlainTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {
 }
 QPlainTextEdit, QTableWidget { font-family: monospace; }
 QTableWidget { background: #0a0f16; color: #e8f0f7; gridline-color: #2c3947;
-               selection-background-color: #1f4a44; }
+               selection-background-color: #1f4a44; alternate-background-color: #0e141d; }
 QHeaderView::section { background: #1b2634; color: #dfe7ef; border: none; padding: 3px; }
 QTabWidget::pane { border: 1px solid #2c3947; border-radius: 2px; }
 QTabBar::tab { background: #131c27; padding: 6px 10px; margin-right: 2px;

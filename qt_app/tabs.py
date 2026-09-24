@@ -58,6 +58,18 @@ def tint_channel_combo(combo):
             model.setData(model.index(row, 0), QColor(color), Qt.ItemDataRole.ForegroundRole)
 
 
+def settings_store():
+    """Per-user Qt settings (UI state only; never scope or lab data)."""
+    from PySide6.QtCore import QSettings
+    return QSettings("ariDev1", "MSO5000-Qt")
+
+
+def as_bool(value, default=False):
+    if isinstance(value, str):
+        return value.lower() not in ("false", "0", "no", "")
+    return bool(value) if value is not None else default
+
+
 def format_si(value, unit):
     """Engineer-style SI formatting mirroring the Tk power tab (UI-only)."""
     try:
@@ -591,6 +603,68 @@ class PowerTab(QWidget):
         self.timer.timeout.connect(self._auto_tick)
         self.timer.start(500)
         self.last_measurement = 0.0
+        self._restore_setup()
+        for control in (self.voltage, self.current, self.probe_value,
+                        self.correction, self.expected_power):
+            control.textChanged.connect(lambda _=None: self._save_setup())
+        for box in (self.probe_type, self.method):
+            box.currentIndexChanged.connect(lambda _=None: self._save_setup())
+        for check in (self.remove_dc, self.raw_v, self.raw_i):
+            check.toggled.connect(lambda _=None: self._save_setup())
+        for spin in (self.period, self.duration):
+            spin.valueChanged.connect(lambda _=None: self._save_setup())
+
+    def _save_setup(self):
+        store = settings_store()
+        store.beginGroup("power")
+        store.setValue("voltage", self.voltage.text())
+        store.setValue("current", self.current.text())
+        store.setValue("probeType", self.probe_type.currentIndex())
+        store.setValue("probeValue", self.probe_value.text())
+        store.setValue("correction", self.correction.text())
+        store.setValue("method", self.method.currentIndex())
+        store.setValue("expected", self.expected_power.text())
+        store.setValue("removeDC", self.remove_dc.isChecked())
+        store.setValue("rawV", self.raw_v.isChecked())
+        store.setValue("rawI", self.raw_i.isChecked())
+        store.setValue("period", self.period.value())
+        store.setValue("duration", self.duration.value())
+        store.endGroup()
+
+    def _restore_setup(self):
+        store = settings_store()
+        store.beginGroup("power")
+        for widget in (self, self.voltage, self.current, self.probe_type,
+                       self.probe_value, self.correction, self.method,
+                       self.expected_power, self.remove_dc, self.raw_v,
+                       self.raw_i, self.period, self.duration):
+            widget.blockSignals(True)
+        try:
+            self.voltage.setText(store.value("voltage", "1"))
+            self.current.setText(store.value("current", "2"))
+            self.probe_type.setCurrentIndex(
+                min(max(0, int(store.value("probeType", 0))), self.probe_type.count() - 1))
+            self.probe_value.setText(store.value("probeValue", "1.0"))
+            self.correction.setText(store.value("correction", "1.0"))
+            self.method.setCurrentIndex(
+                min(max(0, int(store.value("method", 0))), self.method.count() - 1))
+            self.expected_power.setText(store.value("expected", ""))
+            self.remove_dc.setChecked(as_bool(store.value("removeDC"), False))
+            self.raw_v.setChecked(as_bool(store.value("rawV"), False))
+            self.raw_i.setChecked(as_bool(store.value("rawI"), False))
+            self.period.setValue(int(store.value("period", 5)))
+            self.duration.setValue(int(store.value("duration", 0)))
+        except (TypeError, ValueError):
+            pass
+        finally:
+            for widget in (self, self.voltage, self.current, self.probe_type,
+                           self.probe_value, self.correction, self.method,
+                           self.expected_power, self.remove_dc, self.raw_v,
+                           self.raw_i, self.period, self.duration):
+                widget.blockSignals(False)
+        store.endGroup()
+        self.update_scale()
+        self._tint_fields()
 
     def _toggle_setup(self, expanded):
         self.setup_group.setVisible(expanded)
