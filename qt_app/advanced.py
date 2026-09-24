@@ -496,6 +496,63 @@ class NoiseTab(QWidget):
     METHODS = ("PSD+CFAR", "Spectrogram", "MSC", "Multitaper", "Spectral Kurtosis",
                "Cepstrum", "Matched Filter", "AR Spectrum", "Cyclostationary", "Bicoherence")
 
+    HINTS = {
+        "PSD+CFAR": "Adaptive detector that flags narrowband lines buried in noise.",
+        "Spectrogram": "Time–frequency view; reveals transients, chirps, and drifting tones.",
+        "MSC": "Coherence vs. frequency between two channels; needs a channel pair.",
+        "Multitaper": "Lower-variance PSD using DPSS tapers; stabilizes weak peaks in noise.",
+        "Spectral Kurtosis": "Measures non-Gaussian bursts; ideal for impulsive/transient detection.",
+        "Cepstrum": "Finds periodic spacing of harmonics; useful for modulated/mechanical tones.",
+        "Matched Filter": "Maximizes SNR for a known template; use when the waveform is known.",
+        "AR Spectrum": "Model-based spectrum with sharp peaks; use when resolution matters most.",
+        "Cyclostationary": "Exposes periodic modulations (α-components); good for hidden carriers/comms.",
+        "Bicoherence": "Detects quadratic phase coupling; reveals nonlinear mixing among tones.",
+    }
+
+    # Per-method operator presets mirroring the Tk tab (keys applied only to
+    # fields this viewer exposes; shared-code defaults fill the rest).
+    PRESETS = {
+        "PSD+CFAR": {"Default": {"nfft": 4096, "seglen": 4096, "overlap": 0.5,
+                                 "smooth_bins": 31},
+                     "Fast scan": {"nfft": 2048, "seglen": 2048, "overlap": 0.25,
+                                   "smooth_bins": 31},
+                     "High resolution": {"nfft": 16384, "seglen": 16384, "overlap": 0.75,
+                                         "smooth_bins": 41}},
+        "Spectrogram": {"Default": {"nfft": 4096, "hop": 2048, "smooth_bins": 31, "topk": 8},
+                        "Fast scan": {"nfft": 2048, "hop": 1024, "smooth_bins": 21, "topk": 6},
+                        "High resolution": {"nfft": 8192, "hop": 2048, "smooth_bins": 41,
+                                            "topk": 10}},
+        "MSC": {"Default": {"nfft": 4096, "seglen": 512, "overlap": 0.5, "msc_thr": 0.5},
+                "Deep": {"nfft": 8192, "seglen": 1024, "overlap": 0.75, "msc_thr": 0.6},
+                "Fast scan": {"nfft": 2048, "seglen": 256, "overlap": 0.25, "msc_thr": 0.5}},
+        "Multitaper": {"Default": {"k_tapers": 6, "nfft": 4096, "seglen": 4096,
+                                   "overlap": 0.5, "smooth_bins": 31},
+                       "High resolution": {"k_tapers": 8, "nfft": 8192, "seglen": 8192,
+                                           "overlap": 0.75, "smooth_bins": 41},
+                       "Fast scan": {"k_tapers": 4, "nfft": 2048, "seglen": 2048,
+                                     "overlap": 0.25, "smooth_bins": 31}},
+        "Spectral Kurtosis": {"Default": {"nfft": 4096, "hop": 2048, "sk_thr": 2.5},
+                              "Transient hunt": {"nfft": 4096, "hop": 1024, "sk_thr": 2.0},
+                              "Strict": {"nfft": 4096, "hop": 2048, "sk_thr": 3.5}},
+        "Cepstrum": {"Default": {"nfft": 4096, "qmin_ms": 0.02, "qmax_ms": 5.0, "cep_topk": 3},
+                     "Low rate": {"nfft": 4096, "qmin_ms": 1.0, "qmax_ms": 50.0, "cep_topk": 3},
+                     "Wide search": {"nfft": 8192, "qmin_ms": 0.02, "qmax_ms": 50.0,
+                                     "cep_topk": 5}},
+        "AR Spectrum": {"Default": {"ar_order": 32, "nfft": 4096},
+                        "Sharp peaks": {"ar_order": 64, "nfft": 8192},
+                        "Fast scan": {"ar_order": 24, "nfft": 2048}},
+    }
+    # GAP (Tk parity, recorded): the Tk tab also offers capture-Length
+    # trimming (0.5–5 s), a daily auto-log CSV, Bicoherence accumulation
+    # across runs with a vmax control, and cyclostationary α_max/dB-floor
+    # controls. Qt analyzes the full shared-fetch capture, reuses its
+    # established per-run detections CSV, keeps a one-shot Bicoherence view,
+    # and leaves cyclo extras at shared defaults — no shared code is touched
+    # to close these.
+    # GAP (Tk parity, recorded): MSC in the Tk tab fetches both channels
+    # under one exclusive SCPI window; Qt acquires via two shared fetches
+    # and only checks that the sample rates agree.
+
     def __init__(self, submit, backend, notify):
         super().__init__()
         self.submit, self.backend, self.notify = submit, backend, notify
@@ -511,12 +568,20 @@ class NoiseTab(QWidget):
         self.other.setCurrentIndex(1)
         self.method = QComboBox()
         self.method.addItems(self.METHODS)
+        self.method.currentIndexChanged.connect(self.refresh_presets)
         self.preset = QComboBox()
-        self.preset.addItems(["Default", "Fast scan", "High resolution"])
         self.preset.currentIndexChanged.connect(self.apply_preset)
         self.nfft = QSpinBox()
         self.nfft.setRange(128, 65536)
         self.nfft.setValue(4096)
+        self.seglen = QSpinBox()
+        self.seglen.setRange(128, 65536)
+        self.seglen.setValue(4096)
+        self.seglen.setToolTip("Welch segment length (samples). Often same as NFFT.")
+        self.smooth_bins = QSpinBox()
+        self.smooth_bins.setRange(1, 501)
+        self.smooth_bins.setValue(31)
+        self.smooth_bins.setToolTip("Pre-CFAR bin smoothing for PSD/Spectrogram.")
         self.hop = QSpinBox()
         self.hop.setRange(64, 65536)
         self.hop.setValue(2048)
@@ -531,6 +596,35 @@ class NoiseTab(QWidget):
         self.topk = QSpinBox()
         self.topk.setRange(1, 100)
         self.topk.setValue(8)
+        self.msc_thr = QDoubleSpinBox()
+        self.msc_thr.setRange(0.01, 1.0)
+        self.msc_thr.setSingleStep(0.05)
+        self.msc_thr.setValue(0.5)
+        self.msc_thr.setToolTip("Magnitude-squared coherence threshold (0..1). Higher = stricter.")
+        self.k_tapers = QSpinBox()
+        self.k_tapers.setRange(1, 24)
+        self.k_tapers.setValue(6)
+        self.k_tapers.setToolTip("Number of DPSS tapers (multitaper PSD).")
+        self.sk_thr = QDoubleSpinBox()
+        self.sk_thr.setRange(0.5, 10.0)
+        self.sk_thr.setSingleStep(0.1)
+        self.sk_thr.setValue(2.5)
+        self.sk_thr.setToolTip("Spectral kurtosis threshold; higher emphasizes rare bursts.")
+        self.qmin_ms = QDoubleSpinBox()
+        self.qmin_ms.setDecimals(3)
+        self.qmin_ms.setRange(0.001, 1000.0)
+        self.qmin_ms.setValue(0.02)
+        self.qmax_ms = QDoubleSpinBox()
+        self.qmax_ms.setDecimals(3)
+        self.qmax_ms.setRange(0.001, 1000.0)
+        self.qmax_ms.setValue(5.0)
+        self.cep_topk = QSpinBox()
+        self.cep_topk.setRange(1, 20)
+        self.cep_topk.setValue(3)
+        self.ar_order = QSpinBox()
+        self.ar_order.setRange(1, 256)
+        self.ar_order.setValue(32)
+        self.ar_order.setToolTip("AR spectrum model order. Higher sharpens lines, risks overfit.")
         self.csv_path = QLineEdit()
         self.csv_path.setPlaceholderText("Optional waveform CSV / matched template")
         browse = QPushButton("Browse")
@@ -544,17 +638,32 @@ class NoiseTab(QWidget):
             row.addWidget(widget)
         layout.addLayout(row)
         params = QHBoxLayout()
-        for widget in (QLabel("Hop"), self.hop, QLabel("Overlap"), self.overlap,
+        for widget in (QLabel("Hop"), self.hop, QLabel("SegLen"), self.seglen,
+                       QLabel("SmoothBins"), self.smooth_bins, QLabel("Overlap"), self.overlap,
                        QLabel("Pfa"), self.pfa, QLabel("Top K"), self.topk):
             params.addWidget(widget)
         params.addStretch()
         layout.addLayout(params)
+        self.advanced = QWidget()
+        advanced_layout = QVBoxLayout(self.advanced)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        adv_row = QHBoxLayout()
+        for widget in (QLabel("MSC_thr"), self.msc_thr, QLabel("K_tapers"), self.k_tapers,
+                       QLabel("SK_thr"), self.sk_thr, QLabel("qmin_ms"), self.qmin_ms,
+                       QLabel("qmax_ms"), self.qmax_ms, QLabel("Cepstrum TopK"), self.cep_topk,
+                       QLabel("AR_order"), self.ar_order):
+            adv_row.addWidget(widget)
+        adv_row.addStretch()
+        advanced_layout.addLayout(adv_row)
+        self.advanced.setVisible(False)
+        layout.addWidget(self.advanced)
         self.plot = Plot()
         layout.addWidget(self.plot, 3)
         self.detections = readout()
         self.detections.setMaximumHeight(65)
         layout.addWidget(self.detections)
         self.table = QTableWidget()
+        self.table.cellClicked.connect(self.on_table_select)
         layout.addWidget(self.table, 2)
         self.auto_log = QCheckBox("Log detections automatically")
         self.auto_log.setChecked(True)
@@ -566,25 +675,47 @@ class NoiseTab(QWidget):
         save_csv.clicked.connect(self.save_csv)
         surface = QPushButton("3D history")
         surface.clicked.connect(self.show_surface)
+        advanced_toggle = QPushButton("Advanced ▾")
+        advanced_toggle.setCheckable(True)
+        advanced_toggle.toggled.connect(self._toggle_advanced)
         help_button = QPushButton("Guide")
         help_button.clicked.connect(lambda: show_help(self, "Noise_Inspector_Operator_Guide.md"))
         exports.addWidget(save_png)
         exports.addWidget(save_csv)
         exports.addWidget(surface)
+        exports.addWidget(advanced_toggle)
         exports.addWidget(help_button)
         exports.addStretch()
         layout.addLayout(exports)
+        self.advanced_toggle = advanced_toggle
+        self.refresh_presets()
         self.timer = QTimer(self)
         self.timer.timeout.connect(lambda: self.run() if self.auto.isChecked() else None)
         self.timer.start(4000)
 
+    def _toggle_advanced(self, open):
+        self.advanced.setVisible(open)
+        self.advanced_toggle.setText("Advanced ▴" if open else "Advanced ▾")
+
+    def refresh_presets(self):
+        self.preset.blockSignals(True)
+        self.preset.clear()
+        self.preset.addItems(list(self.PRESETS.get(self.method.currentText(), {"Default": {}})))
+        self.preset.blockSignals(False)
+        self.apply_preset()
+
     def apply_preset(self):
-        values = {"Default": (4096, 2048, 0.5), "Fast scan": (2048, 1024, 0.25),
-                  "High resolution": (8192, 2048, 0.75)}
-        nfft, hop, overlap = values[self.preset.currentText()]
-        self.nfft.setValue(nfft)
-        self.hop.setValue(hop)
-        self.overlap.setValue(overlap)
+        values = self.PRESETS.get(self.method.currentText(), {}).get(self.preset.currentText(), {})
+        if not values:
+            return
+        targets = {"nfft": self.nfft, "seglen": self.seglen, "hop": self.hop,
+                   "overlap": self.overlap, "smooth_bins": self.smooth_bins,
+                   "topk": self.topk, "msc_thr": self.msc_thr, "k_tapers": self.k_tapers,
+                   "sk_thr": self.sk_thr, "qmin_ms": self.qmin_ms, "qmax_ms": self.qmax_ms,
+                   "cep_topk": self.cep_topk, "ar_order": self.ar_order}
+        for key, value in values.items():
+            if key in targets:
+                targets[key].setValue(value)
 
     def browse(self):
         path, _ = QFileDialog.getOpenFileName(self, "Waveform CSV", "oszi_csv", "CSV (*.csv)")
@@ -597,23 +728,31 @@ class NoiseTab(QWidget):
         self.pending = True
         channel, second = self.channel.currentText(), self.other.currentText()
         method, path, nfft = self.method.currentText(), self.csv_path.text().strip(), self.nfft.value()
-        params = {"nfft": nfft, "seglen": nfft, "hop": self.hop.value(),
+        params = {"nfft": nfft, "seglen": self.seglen.value(), "hop": self.hop.value(),
                   "overlap": self.overlap.value(), "pfa": self.pfa.value(),
-                  "topk": self.topk.value()}
+                  "topk": self.topk.value(), "smooth_bins": self.smooth_bins.value(),
+                  "msc_thr": self.msc_thr.value(), "k_tapers": self.k_tapers.value(),
+                  "sk_thr": self.sk_thr.value(), "qmin_ms": self.qmin_ms.value(),
+                  "qmax_ms": self.qmax_ms.value(), "cep_topk": self.cep_topk.value(),
+                  "ar_order": self.ar_order.value()}
 
         def operation():
-            if path and method != "Matched Filter":
-                y, fs = read_wave_csv(path)
-            else:
-                _, y, fs = acquire(self.backend._connected(), channel)
-            other = None
-            if method == "MSC":
-                t2, other, fs2 = acquire(self.backend._connected(), second)
-                if abs(fs2 - fs) / fs > 1e-6:
-                    raise ValueError("Channels have different sample rates")
-                count = min(len(other), len(y))
-                y, other = y[:count], other[:count]
-            return noise(y, fs, method, params, other, path)
+            started = time.monotonic()
+            try:
+                if path and method != "Matched Filter":
+                    y, fs = read_wave_csv(path)
+                else:
+                    _, y, fs = acquire(self.backend._connected(), channel)
+                other = None
+                if method == "MSC":
+                    t2, other, fs2 = acquire(self.backend._connected(), second)
+                    if abs(fs2 - fs) / fs > 1e-6:
+                        raise ValueError("Channels have different sample rates")
+                    count = min(len(other), len(y))
+                    y, other = y[:count], other[:count]
+                return noise(y, fs, method, params, other, path)
+            finally:
+                self._last_elapsed = time.monotonic() - started
 
         def done(result):
             self.pending = False
@@ -621,6 +760,7 @@ class NoiseTab(QWidget):
                 self.notify(f"Noise Inspector: {result}")
                 return
             self.last = result
+            from matplotlib.ticker import EngFormatter
             ax = self.plot.axes
             ax.clear()
             if result.get("image") is not None:
@@ -628,14 +768,27 @@ class NoiseTab(QWidget):
                           extent=result.get("extent") or None, cmap="magma")
             elif result.get("plot_x") is not None:
                 ax.plot(result["plot_x"], result["plot_y"], color="#54d5ae")
+                for row in result.get("detections", []):
+                    freq = row.get("f0_Hz", row.get("f_Hz"))
+                    if freq is not None:
+                        try:
+                            ax.axvline(float(freq), linestyle="--", linewidth=0.8,
+                                       color="#ffcc33")
+                        except (TypeError, ValueError):
+                            pass
                 if self.surface is not None:
                     self.surface.push(result["plot_x"], result["plot_y"])
-            self.plot.style_axes(method, result.get("xlabel", "Frequency (Hz)"),
+            ax.xaxis.set_major_formatter(EngFormatter(unit="Hz"))
+            hint = self.HINTS.get(method, "")
+            title = f"{method} — {hint}" if hint else method
+            self.plot.style_axes(title, result.get("xlabel", "Frequency (Hz)"),
                                  result.get("ylabel", "Level"))
             rows = result.get("detections", [])
+            elapsed = getattr(self, "_last_elapsed", None)
             self.detections.setPlainText(
                 f"{method}   Resolution: {result.get('df_Hz', 'N/A')} Hz   "
-                f"Detections: {len(rows)}")
+                f"Detections: {len(rows)}" +
+                (f"   Elapsed: {elapsed:.2f} s" if elapsed is not None else ""))
             columns = list(dict.fromkeys(key for row in rows for key in row))
             self.table.setColumnCount(len(columns))
             self.table.setHorizontalHeaderLabels(columns)
@@ -652,6 +805,28 @@ class NoiseTab(QWidget):
         if self.surface is None:
             self.surface = SurfaceHistory(self)
         self.surface.show()
+
+    def on_table_select(self, row, _col):
+        """Mirror the Tk tab: mark the selected detection on the plot."""
+        if self.last is None or self.last.get("image") is not None:
+            return
+        try:
+            item = self.table.item(row, 0)
+            columns = [self.table.horizontalHeaderItem(c).text()
+                       for c in range(self.table.columnCount())]
+            values = {key: self.table.item(row, idx).text()
+                      for idx, key in enumerate(columns) if self.table.item(row, idx)}
+        except (AttributeError, ValueError):
+            return
+        freq = values.get("f0_Hz", values.get("f_Hz"))
+        if freq is None:
+            return
+        try:
+            self.plot.axes.axvline(float(freq), linestyle="-", linewidth=1.2,
+                                   color="#ff6666")
+        except (TypeError, ValueError):
+            return
+        self.plot.canvas.draw_idle()
 
     def save_csv(self):
         if not self.last:

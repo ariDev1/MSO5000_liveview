@@ -74,37 +74,48 @@ def bh_curve(scope, voltage, current, turns, area_mm2, length_mm, probe_type,
 
 
 def noise(y, fs, method, params, other=None, template_path=""):
+    # Qt-owned adapter: forwards operator params through the shared run_*
+    # functions' existing keyword arguments only. Each default below equals
+    # the shared default, so untouched Qt controls reproduce prior results.
     nfft = params.get("nfft", 4096)
     seglen = params.get("seglen", 4096)
     overlap = params.get("overlap", 0.5)
+    smooth = params.get("smooth_bins", 31)
     if method == "PSD+CFAR":
         from gui.noise.psd_cfar import run_psd_cfar
         return run_psd_cfar(y, fs, nfft=nfft, seglen=seglen, overlap=overlap,
-                            pfa=params.get("pfa", 1e-3))
+                            pfa=params.get("pfa", 1e-3), smooth_bins=smooth)
     if method == "Spectrogram":
         from gui.noise.spectrogram import run_spectro
         return run_spectro(y, fs, nfft=nfft, hop=params.get("hop", 2048),
-                           pfa=params.get("pfa", 1e-3), topk=params.get("topk", 8))
+                           pfa=params.get("pfa", 1e-3), smooth_bins=smooth,
+                           topk=params.get("topk", 8))
     if method == "MSC":
         if other is None:
             raise ValueError("Select a second channel for coherence")
         from gui.noise.coherence import run_msc
-        return run_msc(y, other, fs, nfft=nfft, seglen=seglen, overlap=overlap)
+        return run_msc(y, other, fs, nfft=nfft, seglen=seglen, overlap=overlap,
+                       thr=params.get("msc_thr", 0.5))
     if method == "Multitaper":
         from gui.noise.multitaper import run_multitaper
-        return run_multitaper(y, fs, nfft=nfft, seglen=seglen, overlap=overlap)
+        return run_multitaper(y, fs, K=params.get("k_tapers", 6), nfft=nfft,
+                              seglen=seglen, overlap=overlap,
+                              pfa=params.get("pfa", 1e-3), smooth_bins=smooth)
     if method == "Spectral Kurtosis":
         from gui.noise.kurtosis import run_spectral_kurtosis
-        return run_spectral_kurtosis(y, fs, nfft=nfft, hop=params.get("hop", 2048))
+        return run_spectral_kurtosis(y, fs, nfft=nfft, hop=params.get("hop", 2048),
+                                     sk_thr=params.get("sk_thr", 2.5))
     if method == "Cepstrum":
         from gui.noise.cepstrum import run_cepstrum
-        return run_cepstrum(y, fs, nfft=nfft)
+        return run_cepstrum(y, fs, nfft=nfft, qmin_ms=params.get("qmin_ms", 0.02),
+                            qmax_ms=params.get("qmax_ms", 5.0),
+                            topk=params.get("cep_topk", 3))
     if method == "Matched Filter":
         from gui.noise.matched import run_matched_filter
         return run_matched_filter(y, fs, template_path=template_path)
     if method == "AR Spectrum":
         from gui.noise.ar_spectrum import run_ar_spectrum
-        return run_ar_spectrum(y, fs, nfft=nfft)
+        return run_ar_spectrum(y, fs, order=params.get("ar_order", 32), nfft=nfft)
     if method == "Cyclostationary":
         from gui.noise.cyclo import run_cyclo
         return run_cyclo(y, fs, nfft=nfft, hop=params.get("hop", 2048))
