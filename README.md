@@ -82,8 +82,9 @@ control layouts and some specialized Tk-only options still differ. Outputs use
 launch the established Tk application.
 
 Qt communication runs in a background I/O queue; a failed connection can be
-retried with **Reconnect**. A scope and VNC service are needed to check live
-operation; the automated tests use simulated connections.
+retried with **Reconnect**. Press **Ctrl +** / **Ctrl -** to scale the UI and
+**Ctrl 0** to reset (the choice is remembered per user). A scope and VNC service
+are needed to check live operation; the automated tests use simulated connections.
 
 ### 📦 Native Python Setup
 

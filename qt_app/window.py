@@ -5,8 +5,8 @@ import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal
+from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QLabel, QHBoxLayout, QMainWindow, QPushButton, QScrollArea, QSplitter,
     QTabWidget, QVBoxLayout, QWidget,
@@ -49,6 +49,18 @@ QSplitter::handle { background: #35455c; height: 3px; }
 """
 
 
+def style_sheet(scale=1.0):
+    """Stylesheet with all px font sizes scaled (terminal-like UI zoom)."""
+    sheet = STYLE
+    for base in (13, 17, 21):
+        sheet = sheet.replace(f"font-size: {base}px",
+                              f"font-size: {max(8, round(base * scale))}px")
+    return sheet
+
+
+ZOOM_MIN, ZOOM_MAX, ZOOM_STEP = 0.7, 1.6, 0.1
+
+
 class Events(QObject):
     completed = Signal(object, object)
     message = Signal(str)
@@ -85,7 +97,22 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{version.APP_NAME} — Qt {version.VERSION} — {ip}")
         self.resize(1280, 860)
         self.setMinimumSize(850, 600)
-        self.setStyleSheet(STYLE)
+        # Terminal-like UI zoom (Ctrl + / Ctrl - / Ctrl 0), persisted per user.
+        # QSettings lives outside the repo, so no shared config file is touched.
+        self.zoom_settings = QSettings("ariDev1", "MSO5000-Qt")
+        try:
+            self.zoom = float(self.zoom_settings.value("uiZoom", 1.0))
+        except (TypeError, ValueError):
+            self.zoom = 1.0
+        self.zoom = min(ZOOM_MAX, max(ZOOM_MIN, self.zoom))
+        self.setStyleSheet(style_sheet(self.zoom))
+        for keys, slot in ((("Ctrl++", "Ctrl+="), self._zoom_in),
+                           (("Ctrl+-",), self._zoom_out),
+                           (("Ctrl+0",), self._zoom_reset)):
+            for key in keys:
+                shortcut = QShortcut(QKeySequence(key), self)
+                shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+                shortcut.activated.connect(slot)
 
         content = QWidget()
         self.setCentralWidget(content)
@@ -183,6 +210,27 @@ class MainWindow(QMainWindow):
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setWidget(tab)
         self.tabs.addTab(scroll, title)
+
+    def _apply_zoom(self):
+        self.setStyleSheet(style_sheet(self.zoom))
+        self.zoom_settings.setValue("uiZoom", self.zoom)
+        self.statusBar().showMessage(
+            f"UI scale {round(self.zoom * 100)}% — Ctrl + / Ctrl - adjust, Ctrl 0 resets",
+            5000)
+
+    def _zoom_in(self):
+        if self.zoom < ZOOM_MAX:
+            self.zoom = min(ZOOM_MAX, round(self.zoom + ZOOM_STEP, 2))
+            self._apply_zoom()
+
+    def _zoom_out(self):
+        if self.zoom > ZOOM_MIN:
+            self.zoom = max(ZOOM_MIN, round(self.zoom - ZOOM_STEP, 2))
+            self._apply_zoom()
+
+    def _zoom_reset(self):
+        self.zoom = 1.0
+        self._apply_zoom()
 
     def notify(self, message):
         # Called both from Qt and from the established logger's background thread.
