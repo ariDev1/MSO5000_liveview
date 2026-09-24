@@ -27,8 +27,10 @@ def channel_name(value):
 def current_scale(probe_type, probe_value, correction):
     value = float(probe_value)
     factor = float(correction)
-    if not math.isfinite(value) or not math.isfinite(factor) or value <= 0 or factor <= 0:
-        raise ValueError("Probe value and correction must be positive.")
+    if not math.isfinite(value) or not math.isfinite(factor) or value <= 0 or factor == 0:
+        raise ValueError("Probe value must be positive and correction non-zero.")
+    # A negative factor is an explicit operator choice (direction flip);
+    # calibration is the only path that can produce one.
     return (1 / value if probe_type == "shunt" else 1000 / value) * factor
 
 

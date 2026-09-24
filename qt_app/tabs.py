@@ -581,6 +581,8 @@ class PowerTab(QWidget):
         self.expected_power = QLineEdit()
         self.expected_power.setPlaceholderText("Ref W")
         self.expected_power.setFixedWidth(70)
+        self.expected_power.setToolTip(
+            "Reference for the CALIBRATE button — type a value, then press CALIBRATE")
         self.method = QComboBox()
         self.method.addItem("Instantaneous (v·i mean)", "standard")
         self.method.addItem("Vrms × Irms × cos(φ)", "rms_cos_phi")
@@ -609,6 +611,7 @@ class PowerTab(QWidget):
         grid.addWidget(self.raw_v, 1, 2, 1, 2)
         grid.addWidget(self.raw_i, 1, 4, 1, 2)
         expected_label = QLabel("Expected P (W)")
+        expected_label.setToolTip("Reference for the CALIBRATE button — type a value, then press CALIBRATE")
         expected_label.setToolTip("Optional reference power for calibration")
         grid.addWidget(expected_label, 1, 6)
         grid.addWidget(self.expected_power, 1, 7)
@@ -882,7 +885,12 @@ class PowerTab(QWidget):
     def calibrate(self):
         # Mirrors the Tk auto-calibration: one uncorrected ("standard") probe
         # shot establishes the correction factor, then a full measurement with
-        # the selected formula follows. Shared measurement code is untouched.
+        # the selected formula follows. Deliberate Qt deviation: the Tk tab
+        # only accepts positive measured power, but bench practice sometimes
+        # needs a cross-sign correction (e.g. measured +50 W, expected −70 W
+        # after re-referencing direction). Qt therefore accepts any nonzero
+        # pair — a negative factor is the operator's explicit responsibility.
+        # Shared measurement code is untouched.
         if self.pending or app_state.is_logging_active:
             self.notify("Wait for the active measurement to finish")
             return
@@ -909,8 +917,8 @@ class PowerTab(QWidget):
                 self.notify(f"Calibration failed: {result}")
                 return
             measured = result["Real Power (P)"]
-            if measured <= 0:
-                self.notify("Calibration requires positive measured power")
+            if not math.isfinite(measured) or measured == 0:
+                self.notify("Calibration requires non-zero measured power")
                 return
             self.correction.setText(f"{reference / measured:.4f}")
             self.measure()
@@ -981,8 +989,20 @@ class PowerTab(QWidget):
             elapsed_hms = time.strftime("%H:%M:%S", time.gmtime(elapsed_sec))
             freq_ref = self.context[0].get("Frequency reference", "N/A")
             correction = (self.correction.text().strip() or "1.0")
+            # Display-only sanity check against the calibration reference:
+            # the field feeds CALIBRATE, but every shot also shows its
+            # deviation so an entered reference visibly does something.
+            try:
+                reference = float(self.expected_power.text())
+                show_delta = math.isfinite(reference) and reference != 0
+            except (TypeError, ValueError):
+                show_delta = False
+            instant_p = result["Real Power (P)"]
+            delta_line = (f"Expected: {format_si(reference, 'W')}  →  "
+                          f"Δ {(instant_p - reference) / reference * 100:+.2f}%\n"
+                          if show_delta else "")
             self.results.setPlainText(
-                f"Correction Factor: ×{correction}\n\n"
+                f"Correction Factor: ×{correction}\n{delta_line}\n"
                 f"{'Metric':<22} {'Instant':>12}    {'Average':>12}\n"
                 f"{'-' * 50}\n"
                 f"{'Real power (P)':<22}: {format_si(result['Real Power (P)'], 'W'):<12} | "
