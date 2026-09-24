@@ -1,5 +1,6 @@
 """Qt presentation for the established harmonic, B-H and noise calculations."""
 
+import math
 from pathlib import Path
 import time
 
@@ -93,34 +94,59 @@ class SurfaceHistory:
 
 
 class HarmonicsTab(QWidget):
+    # GAP (Tk parity, recorded): the Tk tab shades a 15-spectra persistence
+    # heat-map trail and streams into the shared gui/surface3d window. The Qt
+    # viewer keeps its own "3D history" dialog (40 spectra) instead, so no
+    # Tk widget code or shared acquisition path is touched.
+    # GAP (Tk parity, recorded): the Tk "THD+N" checkbox is never read — the
+    # shared calculation always runs with compute_thdn=True. Qt therefore
+    # omits the toggle and shows THD+N whenever the result carries it.
+    # GAP (Tk parity, recorded): the Tk status line reports the fetch mode,
+    # point count and capture span from its own exclusive RAW/NORM reader.
+    # Qt reuses the shared _fetch_wave path, so its summary shows result
+    # metrics only (f₁, V₁, THD, THD+N, cycles, warnings).
+    # Known lab lines, duplicated here (not imported) because importing the
+    # Tk tab module would pull in tkinter.
+    KNOWN_LINES_HZ = [50.0, 100.0, 150.0, 200.0, 16.67]
+
     def __init__(self, submit, backend, notify):
         super().__init__()
         self.submit, self.backend, self.notify = submit, backend, notify
         self.pending = False
         self.last = None
         self.surface = None
+        self._selected_k = None
+        self._selected_freq = None
         layout = QVBoxLayout(self)
         layout.addWidget(heading("Harmonics / THD"))
         row = QHBoxLayout()
         self.channel = QComboBox()
         self.channel.addItems([f"CHAN{i}" for i in range(1, 5)] + [f"MATH{i}" for i in range(1, 5)])
         self.window = QComboBox()
-        self.window.addItems(["hann", "rect", "flattop"])
+        self.window.addItem("Hann", "hann")
+        self.window.addItem("Rect", "rect")
+        self.window.addItem("Flat-top", "flattop")
         self.count = QSpinBox()
-        self.count.setRange(2, 100)
+        self.count.setRange(5, 80)
         self.count.setValue(25)
-        self.raw = QCheckBox("RAW")
+        self.raw = QCheckBox("RAW if possible")
+        self.raw.setChecked(True)
         self.include_dc = QCheckBox("Include DC")
         self.auto = QCheckBox("Auto")
-        button = QPushButton("Analyze")
+        button = QPushButton("Measure")
         button.clicked.connect(self.run)
         csv_button = QPushButton("Export table")
         csv_button.clicked.connect(self.save_table)
+        png_button = QPushButton("Save PNG")
+        png_button.clicked.connect(lambda: self.plot.save_png(self))
+        md_button = QPushButton("Copy Markdown")
+        md_button.clicked.connect(self.copy_markdown)
         surface_button = QPushButton("3D history")
         surface_button.clicked.connect(self.show_surface)
         for widget in (QLabel("Channel"), self.channel, QLabel("Window"), self.window,
                        QLabel("Harmonics"), self.count, self.raw, self.include_dc,
-                       self.auto, button, csv_button, surface_button):
+                       self.auto, button, csv_button, png_button, md_button,
+                       surface_button):
             row.addWidget(widget)
         layout.addLayout(row)
         self.summary = QLabel("Select an enabled channel to analyze")
@@ -130,8 +156,11 @@ class HarmonicsTab(QWidget):
         layout.addWidget(self.interharmonics)
         self.plot = Plot()
         layout.addWidget(self.plot, 3)
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Order", "Frequency Hz", "RMS", "% of fundamental", "Phase °"])
+        self.columns = ("k", "f_hz", "f_pred", "df_hz", "mag_rms", "dBr1",
+                        "percent", "cumTHD_pct", "phase_deg")
+        self.table = QTableWidget(0, len(self.columns))
+        self.table.setHorizontalHeaderLabels(list(self.columns))
+        self.table.cellClicked.connect(self._on_table_select)
         layout.addWidget(self.table, 2)
         self.timer = QTimer(self)
         self.timer.timeout.connect(lambda: self.run() if self.auto.isChecked() else None)
@@ -142,7 +171,7 @@ class HarmonicsTab(QWidget):
             return
         self.pending = True
         channel, raw, count = self.channel.currentText(), self.raw.isChecked(), self.count.value()
-        window, include_dc = self.window.currentText(), self.include_dc.isChecked()
+        window, include_dc = self.window.currentData(), self.include_dc.isChecked()
 
         def done(payload):
             self.pending = False
@@ -151,38 +180,137 @@ class HarmonicsTab(QWidget):
                 return
             result, freq, amplitude = payload
             self.last = result
-            self.summary.setText(
-                f"f₁ {result.f1_hz:.3f} Hz   Fundamental {result.v1_rms:.4g} RMS   "
-                f"THD {result.thd * 100:.2f}%   THD+N {result.thdn * 100:.2f}%"
-                if result.thdn is not None else f"f₁ {result.f1_hz:.3f} Hz   THD {result.thd * 100:.2f}%")
+            base = (f"f₁ {result.f1_hz:.3f} Hz   Fundamental {result.v1_rms:.4g} RMS   "
+                    f"THD {result.thd * 100:.2f}%")
+            if result.thdn is not None:
+                base += f"   THD+N {result.thdn * 100:.2f}%"
+            base += f"   cycles={result.coherence_cycles:.2f}"
             if result.warnings:
-                self.summary.setText(self.summary.text() + "   ·   " + "; ".join(result.warnings))
-            self.table.setRowCount(len(result.rows))
-            for idx, item in enumerate(result.rows):
-                for col, val in enumerate((item.k, item.f_hz, item.mag_rms, item.percent, item.phase_deg)):
-                    self.table.setItem(idx, col, QTableWidgetItem(f"{val:.5g}"))
-            self.plot.axes.clear()
-            self.plot.axes.plot(freq, amplitude, color="#54d5ae", linewidth=1)
-            from scipy.signal import find_peaks
-            df = freq[1] - freq[0] if len(freq) > 1 else 0
-            peaks, _ = find_peaks(amplitude, height=max(result.v1_rms * 0.02, 1e-12))
-            tol = max(0.015 * result.f1_hz, 2 * df)
-            extra = [(freq[idx], amplitude[idx]) for idx in peaks
-                     if freq[idx] > result.f1_hz and
-                     all(abs(freq[idx] - k * result.f1_hz) > tol for k in range(1, count + 1))]
-            extra = sorted(extra, key=lambda pair: pair[1], reverse=True)[:8]
-            self.interharmonics.setPlainText(
-                "Interharmonic lines: " + (", ".join(f"{f:.3g} Hz ({a:.3g} RMS)" for f, a in extra)
-                                           if extra else "none above 2% of fundamental"))
-            for line, _ in extra:
-                self.plot.axes.axvline(line, color="#eead68", linestyle=":", alpha=0.7)
-            self.plot.style_axes("Harmonic spectrum", "Frequency (Hz)", "Amplitude (RMS)")
+                base += "   ·   " + "; ".join(result.warnings)
+            self.summary.setText(base)
+            self._render_table(result)
+            self._render_plot(result, freq, amplitude, count)
             if self.surface is not None:
                 self.surface.push(freq, amplitude)
 
         self.submit(lambda: harmonics(self.backend._connected(), channel, raw, count, window, include_dc), done)
 
+    def _on_table_select(self, row, _col):
+        """Mirror the Tk tab: remember the selected harmonic for the plot marker."""
+        try:
+            self._selected_k = int(float(self.table.item(row, 0).text()))
+            self._selected_freq = float(self.table.item(row, 1).text())
+        except (TypeError, ValueError, AttributeError):
+            self._selected_k = None
+            self._selected_freq = None
+
+    @staticmethod
+    def _cell(value):
+        return "—" if value is None or (isinstance(value, float)
+                                        and not math.isfinite(value)) else f"{value}"
+
+    def _derived_rows(self, result):
+        """Harmonic table rows with the Tk tab's derived columns (display-only)."""
+        f1, v1 = float(result.f1_hz), float(result.v1_rms)
+        rows, running = [], 0.0
+        for item in result.rows:
+            k = int(item.k)
+            f_meas, v_k = float(item.f_hz), float(item.mag_rms)
+            f_pred = k * f1 if f1 > 0 else float("nan")
+            df_hz = f_meas - f_pred if f1 > 0 else float("nan")
+            if v1 > 0 and v_k > 0:
+                dbr1 = 20.0 * math.log10(v_k / v1)
+            else:
+                dbr1 = float("nan")
+            if k >= 2:
+                running += v_k * v_k
+            cum = (100.0 * math.sqrt(running) / v1) if (v1 > 0 and running > 0) \
+                else (0.0 if k < 2 else float("nan"))
+            rows.append((k, f"{f_meas:.3f}",
+                         f"{f_pred:.3f}" if math.isfinite(f_pred) else "—",
+                         f"{df_hz:.3f}" if math.isfinite(df_hz) else "—",
+                         f"{v_k:.6g}", f"{dbr1:.1f}" if math.isfinite(dbr1) else "—",
+                         f"{item.percent:.3f}" if math.isfinite(item.percent) else "—",
+                         f"{cum:.3f}" if math.isfinite(cum) else "—",
+                         f"{item.phase_deg:.2f}" if math.isfinite(item.phase_deg) else "—"))
+        return rows
+
+    def _render_table(self, result):
+        rows = self._derived_rows(result)
+        self.table.setRowCount(len(rows))
+        for idx, values in enumerate(rows):
+            for col, val in enumerate(values):
+                self.table.setItem(idx, col, QTableWidgetItem(str(val)))
+
+    def _render_plot(self, result, freq, amplitude, count):
+        import matplotlib.lines as mlines
+        import matplotlib.patches as mpatches
+        from scipy.signal import find_peaks
+        self.plot.axes.clear()
+        self.plot.axes.plot(freq, amplitude, color="#d0ff00", linewidth=1.4, label="Spectrum")
+        for item in result.rows:
+            self.plot.axes.axvline(item.f_hz, linestyle="--", alpha=0.25)
+        if result.f1_hz > 0:
+            self.plot.axes.axvline(result.f1_hz, color="#bbbbbb", alpha=0.6)
+        df = freq[1] - freq[0] if len(freq) > 1 else 0
+        tol = max(0.015 * result.f1_hz, 2 * df)
+        if result.f1_hz > 0 and len(freq) > 1:
+            f_min, f_max = float(freq[0]), float(freq[-1])
+            for k in range(1, count + 1):
+                center = k * result.f1_hz
+                if center + tol < f_min or center - tol > f_max:
+                    continue
+                self.plot.axes.axvspan(max(center - tol, f_min), min(center + tol, f_max),
+                                       alpha=0.06, label="Harmonic window (±tol)" if k == 1 else None)
+        peaks, _ = find_peaks(amplitude, height=max(result.v1_rms * 0.02, 1e-12))
+        extra = [(freq[idx], amplitude[idx]) for idx in peaks
+                 if freq[idx] > result.f1_hz and
+                 all(abs(freq[idx] - k * result.f1_hz) > tol for k in range(1, count + 1))]
+        extra = sorted(extra, key=lambda pair: pair[1], reverse=True)[:8]
+        fund = max(float(amplitude[int(np.clip(round(result.f1_hz / df), 0, len(freq) - 1))])
+                   if df > 0 else 1.0, 1e-20) if len(freq) else 1.0
+        lines = []
+        for line, level in extra:
+            self.plot.axes.axvline(line, color="#eead68", linestyle=":", alpha=0.7)
+            self.plot.axes.plot([line], [level], marker="v", markersize=5,
+                                color="#eead68", alpha=0.9)
+            lines.append(f"{line / 1000:.1f} kHz ({20.0 * math.log10(max(level, 1e-20) / fund):.1f} dBr₁)"
+                         if line >= 1000 else
+                         f"{line:.1f} Hz ({20.0 * math.log10(max(level, 1e-20) / fund):.1f} dBr₁)")
+        known = []
+        if df > 0:
+            for target in self.KNOWN_LINES_HZ:
+                idx = int(np.argmin(np.abs(freq - target)))
+                if abs(freq[idx] - target) <= 2 * df:
+                    level = 20.0 * math.log10(max(float(amplitude[idx]), 1e-20) / fund)
+                    if level > -80.0:
+                        known.append((float(target), level))
+                        self.plot.axes.plot([freq[idx]], [max(float(amplitude[idx]),
+                                                                float(amplitude.min()) if len(amplitude) else 0.0)],
+                                            marker="s", markersize=5, color="#eead68", alpha=0.9)
+        self.interharmonics.setPlainText(
+            "Non-harmonic lines (dBr₁): " + (", ".join(lines) if lines else "(none ≥ threshold)") +
+            ("   ·   Known/house lines: " +
+             ", ".join(f"{fk:.2f} Hz ({db:.1f} dBr₁)" for fk, db in known) if known else ""))
+        if self._selected_freq is not None:
+            self.plot.axes.axvline(self._selected_freq, color="#00eaff", linewidth=1.5, alpha=0.9)
+            self.plot.axes.text(self._selected_freq, max(amplitude) if len(amplitude) else 0,
+                                f"k={self._selected_k}", color="#00eaff", fontsize=9,
+                                ha="center", va="bottom")
+        self.plot.axes.legend(
+            handles=[mlines.Line2D([], [], linewidth=1.4, label="Spectrum", color="#d0ff00"),
+                     mlines.Line2D([], [], linestyle=":", linewidth=1.2,
+                                   label="Interharmonic", color="#eead68"),
+                     mpatches.Patch(alpha=0.10, label="Harmonic window (±tol)")],
+            loc="upper right", fontsize="small", framealpha=0.45,
+            facecolor="#222222", edgecolor="#444444", labelcolor="#DDDDDD")
+        self.plot.style_axes("Harmonic spectrum", "Frequency (Hz)", "Amplitude (RMS)")
+
     def save_table(self):
+        # GAP (Tk parity, recorded): the Tk tab writes oszi_csv/harmonics/
+        # with channel/timestamp filenames, metadata comment rows and a
+        # spectrum PNG next to it. The Qt export path and columns below are
+        # the established Qt output and stay frozen (CSV schema constraint).
         if self.last is None:
             self.notify("Run harmonic analysis before exporting")
             return
@@ -197,6 +325,29 @@ class HarmonicsTab(QWidget):
             writer.writerows((item.k, item.f_hz, item.mag_rms, item.percent, item.phase_deg)
                              for item in self.last.rows)
         self.notify(f"Harmonic spectrum saved: {path}")
+
+    def copy_markdown(self):
+        """Copy a Markdown summary of the last analysis (mirrors the Tk tab)."""
+        from PySide6.QtWidgets import QApplication
+        if self.last is None:
+            self.notify("Run harmonic analysis before copying")
+            return
+        result = self.last
+        lines = ["**Harmonics summary**  ",
+                 f"Channel: `{self.channel.currentText()}` | "
+                 f"Window: `{self.window.currentText()}` | "
+                 f"f₁ = {result.f1_hz:.6g} Hz | V₁,rms = {result.v1_rms:.6g} | "
+                 f"THD = {result.thd * 100:.3f}%", "",
+                 "| " + " | ".join(self.columns) + " |",
+                 "|" + "|".join(["---:"] * len(self.columns)) + "|"]
+        for row in range(self.table.rowCount()):
+            lines.append("| " + " | ".join(
+                self.table.item(row, col).text() if self.table.item(row, col) else "—"
+                for col in range(len(self.columns))) + " |")
+        if self.interharmonics.toPlainText().strip():
+            lines += ["", self.interharmonics.toPlainText().strip()]
+        QApplication.clipboard().setText("\n".join(lines))
+        self.notify("Harmonics Markdown summary copied to clipboard")
 
     def show_surface(self):
         if self.surface is None:
