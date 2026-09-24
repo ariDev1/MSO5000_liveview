@@ -30,6 +30,15 @@ class Plot(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.canvas)
+        # 3D views with a color bar must not use tight_layout(): every
+        # redraw would shrink the axes a little more. Constrained layout
+        # stays stable across redraws and resizes.
+        self.use_tight = not three_d
+        if three_d:
+            try:
+                self.figure.set_layout_engine("constrained")
+            except (AttributeError, ValueError):
+                self.use_tight = True
 
     def style_axes(self, title, xlabel, ylabel):
         axes = self.axes
@@ -41,7 +50,8 @@ class Plot(QWidget):
         axes.set_xlabel(xlabel, color="#e5edf6")
         axes.set_ylabel(ylabel, color="#e5edf6")
         axes.grid(True, color="#445469", alpha=0.5)
-        self.figure.tight_layout()
+        if self.use_tight:
+            self.figure.tight_layout()
         self.canvas.draw_idle()
 
     def save_png(self, parent):
