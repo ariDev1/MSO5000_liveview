@@ -468,23 +468,33 @@ class PowerTab(QWidget):
         self.raw_v.setToolTip("Fetch full 25 Mpts memory depth for the voltage channel.")
         self.raw_i = QCheckBox("25M[i]")
         self.raw_i.setToolTip("Fetch full 25 Mpts memory depth for the current channel.")
-        for row, (label, widget) in enumerate((
-            ("Voltage channel", self.voltage), ("Current channel", self.current),
-            ("Probe type", self.probe_type), ("Value (Ω or mV/A)", self.probe_value),
-            ("Correction", self.correction), ("Formula", self.method),
-        )):
-            grid.addWidget(QLabel(label), row // 3, (row % 3) * 2)
-            grid.addWidget(widget, row // 3, (row % 3) * 2 + 1)
-        grid.addWidget(self.remove_dc, 2, 0)
-        grid.addWidget(self.raw_v, 2, 2)
-        grid.addWidget(self.raw_i, 2, 4)
-        grid.addWidget(QLabel("Expected P (W)"), 3, 0)
-        grid.addWidget(self.expected_power, 3, 1)
-        calibration = QPushButton("Calibrate correction")
+        labels = (("Voltage Ch", "Channel for the voltage probe (e.g. 1, MATH1)"),
+                  ("Current Ch", "Channel for the current probe (e.g. 2, MATH1)"),
+                  ("Probe", "Current probe type"),
+                  ("Value", "Shunt Ω (e.g. 0.01 for 10 mΩ) or clamp value"),
+                  ("Corr ×", "Multiplicative correction factor"),
+                  ("Formula", "Power formula"))
+        for col, ((text, tip), widget) in enumerate(zip(labels, (
+                self.voltage, self.current, self.probe_type, self.probe_value,
+                self.correction, self.method))):
+            label = QLabel(text)
+            label.setToolTip(tip)
+            grid.addWidget(label, 0, col * 2)
+            grid.addWidget(widget, 0, col * 2 + 1)
+        grid.addWidget(self.remove_dc, 1, 0, 1, 2)
+        grid.addWidget(self.raw_v, 1, 2, 1, 2)
+        grid.addWidget(self.raw_i, 1, 4, 1, 2)
+        expected_label = QLabel("Expected P (W)")
+        expected_label.setToolTip("Optional reference power for calibration")
+        grid.addWidget(expected_label, 1, 6)
+        grid.addWidget(self.expected_power, 1, 7)
+        calibration = QPushButton("⚙ Calibrate")
+        calibration.setToolTip("Calibrate the correction factor from the expected power")
         calibration.clicked.connect(self.calibrate)
-        grid.addWidget(calibration, 3, 2, 1, 2)
+        grid.addWidget(calibration, 1, 8, 1, 2)
         self.scale_info = QLabel("Effective current scale: 1 A/V")
-        grid.addWidget(self.scale_info, 3, 4, 1, 2)
+        grid.addWidget(self.scale_info, 1, 10, 1, 2)
+        grid.setColumnStretch(11, 1)
         for control in (self.probe_value, self.correction):
             control.textChanged.connect(self.update_scale)
         self.probe_type.currentIndexChanged.connect(self.update_scale)
