@@ -239,7 +239,7 @@ def test_qt_power_measurement_uses_shared_backend_and_writes_csv(tmp_path):
     app.processEvents()
     assert not tab.plot.grab().isNull()
     assert calls == [("CHAN1", "CHAN2", 100.0, False, "standard", False, False)]
-    assert "Real power (W)" in tab.results.toPlainText()
+    assert "Real power (P)" in tab.results.toPlainText()
     assert "230" in tab.results.toPlainText()
     assert os.path.isfile(tab.log.path)
     tab.expected_power.setText("460")

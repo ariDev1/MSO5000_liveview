@@ -32,6 +32,25 @@ def readout():
     return widget
 
 
+def format_si(value, unit):
+    """Engineer-style SI formatting mirroring the Tk power tab (UI-only)."""
+    try:
+        abs_val = abs(float(value))
+    except (TypeError, ValueError):
+        return f"n/a {unit}".strip()
+    if abs_val >= 1e6:
+        return f"{value / 1e6:.3f} M{unit}"
+    if abs_val >= 1e3:
+        return f"{value / 1e3:.3f} k{unit}"
+    if abs_val >= 1:
+        return f"{value:.3f} {unit}"
+    if abs_val >= 1e-3:
+        return f"{value / 1e-3:.3f} m{unit}"
+    if abs_val >= 1e-6:
+        return f"{value / 1e-6:.3f} µ{unit}"
+    return f"{value:.3e} {unit}"
+
+
 class SystemTab(QWidget):
     def __init__(self):
         super().__init__()
@@ -271,15 +290,43 @@ class LoggingTab(QWidget):
 
 
 class PQPlot(QWidget):
+    """2D PQ operating-point plot mirroring the Tk tab's power triangle.
+
+    GAP (Tk parity, recorded): the Tk tab draws this with Matplotlib and
+    saves a ``*_summary.png`` on auto-refresh stop; the Qt viewer keeps a
+    lightweight QPainter rendering and does not write a summary PNG, so the
+    CSV log remains the lab record in both viewers.
+    """
+
     def __init__(self):
         super().__init__()
         self.setMinimumSize(280, 210)
         self.points = []
+        self.summary = {"S": 0.0, "PF": 0.0, "theta": 0.0, "Z": 0.0}
 
-    def push(self, p, q):
+    def push(self, p, q, metadata=None):
         self.points.append((p, q))
         self.points = self.points[-30:]
+        if metadata:
+            try:
+                self.summary = {
+                    "S": float(metadata.get("S", 0.0) or 0.0),
+                    "PF": float(metadata.get("PF", 0.0) or 0.0),
+                    "theta": float(metadata.get("theta", 0.0) or 0.0),
+                    "Z": float(metadata.get("Z", 0.0) or 0.0),
+                }
+            except (TypeError, ValueError):
+                pass
         self.update()
+
+    def _quadrant(self, p, q):
+        if p >= 0 and q >= 0:
+            return 1
+        if p < 0 and q >= 0:
+            return 2
+        if p < 0 and q < 0:
+            return 3
+        return 4
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -292,31 +339,46 @@ class PQPlot(QWidget):
         if self.points:
             limit_p = max(1, *(abs(p) * 1.5 for p, _ in self.points))
             limit_q = max(1, *(abs(q) * 1.5 for _, q in self.points))
+
+            def to_xy(p, q):
+                return (int(cx + p / limit_p * (cx - 28)),
+                        int(cy - q / limit_q * (cy - 26)))
+
+            # Fading trail matching the Tk tab's 30-point history.
+            for index, (p, q) in enumerate(self.points):
+                alpha = 60 + int(195 * (index + 1) / len(self.points))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(136, 136, 136, alpha // 3))
+                px, qy = to_xy(p, q)
+                painter.drawEllipse(px - 3, qy - 3, 6, 6)
             p, q = self.points[-1]
-            px = int(cx + p / limit_p * (cx - 28))
-            qy = int(cy - q / limit_q * (cy - 26))
+            px, qy = to_xy(p, q)
+            # Power triangle: S (hypotenuse), P (adjacent), Q (opposite).
             painter.setPen(QPen(QColor("#eead68"), 2, Qt.PenStyle.DashLine))
             painter.drawLine(int(cx), int(cy), px, qy)
             painter.setPen(QPen(QColor("#65b9eb"), 1))
             painter.drawLine(int(cx), int(cy), px, int(cy))
             painter.setPen(QPen(QColor("#a7e88d"), 1))
             painter.drawLine(px, int(cy), px, qy)
-            for index, (p, q) in enumerate(self.points):
-                alpha = 60 + int(195 * (index + 1) / len(self.points))
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QColor(73, 208, 174, alpha))
-                painter.drawEllipse(int(cx + p / limit_p * (cx - 28)) - 4,
-                                    int(cy - q / limit_q * (cy - 26)) - 4, 8, 8)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(73, 208, 174, 255))
+            painter.drawEllipse(px - 4, qy - 4, 8, 8)
+            quadrant = self._quadrant(p, q)
+            painter.setPen(QColor("#bbbbbb"))
+            for label, x, y in (("I", 0.90, 0.10), ("II", 0.10, 0.10),
+                                ("III", 0.10, 0.90), ("IV", 0.90, 0.90)):
+                painter.drawText(int(self.width() * x), int(self.height() * y), label)
         painter.setPen(QColor("#a6b8ca"))
         painter.drawText(22, self.height() - 6, "P (W) →")
         painter.drawText(8, 16, "Q (VAR) ↑")
         if self.points:
             p, q = self.points[-1]
-            magnitude = math.hypot(p, q)
+            summary = self.summary
             painter.drawText(self.rect().adjusted(8, 8, -12, -8),
                              Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
                              f"P {p:.3g} W   Q {q:.3g} VAR\n"
-                             f"|P+jQ| {magnitude:.3g} VA   θ {math.degrees(math.atan2(q, p)):.1f}°")
+                             f"S {summary['S']:.3g} VA   θ {summary['theta']:.1f}°   "
+                             f"PF {summary['PF']:.3f}   Z {summary['Z']:.3g} Ω")
 
 
 class PowerTab(QWidget):
@@ -343,8 +405,13 @@ class PowerTab(QWidget):
         self.method.addItem("Instantaneous (v·i mean)", "standard")
         self.method.addItem("Vrms × Irms × cos(φ)", "rms_cos_phi")
         self.remove_dc = QCheckBox("Remove DC")
-        self.raw_v = QCheckBox("RAW voltage")
-        self.raw_i = QCheckBox("RAW current")
+        self.remove_dc.setToolTip("DC Offset removal — when ON, results exclude the DC component.")
+        # Tk labels these "25M[v]" / "25M[i]" (full 25 Mpts memory depth per
+        # channel); keep the same meaning here without touching shared code.
+        self.raw_v = QCheckBox("25M[v]")
+        self.raw_v.setToolTip("Fetch full 25 Mpts memory depth for the voltage channel.")
+        self.raw_i = QCheckBox("25M[i]")
+        self.raw_i.setToolTip("Fetch full 25 Mpts memory depth for the current channel.")
         for row, (label, widget) in enumerate((
             ("Voltage channel", self.voltage), ("Current channel", self.current),
             ("Probe type", self.probe_type), ("Value (Ω or mV/A)", self.probe_value),
@@ -366,10 +433,16 @@ class PowerTab(QWidget):
             control.textChanged.connect(self.update_scale)
         self.probe_type.currentIndexChanged.connect(self.update_scale)
         self.update_scale()
+        tip = QLabel("Tip: UNIT:V → set Value to shunt Ω (e.g., 0.01 for 10 mΩ). "
+                     "UNIT:A → set Value = 1.0. For better power accuracy, enable the "
+                     "20 MHz BW limit on the scope channels. Avoid >20 MHz unless needed.")
+        tip.setWordWrap(True)
         layout.addWidget(group)
+        layout.addWidget(tip)
         controls = QHBoxLayout()
-        self.measure_button = QPushButton("Measure")
+        self.measure_button = QPushButton("⚡ Measure")
         self.measure_button.setObjectName("primaryButton")
+        self.measure_button.setToolTip("Single power measurement with the current setup.")
         self.measure_button.clicked.connect(self.measure)
         self.auto = QCheckBox("Auto-measure")
         self.period = QSpinBox()
@@ -379,6 +452,10 @@ class PowerTab(QWidget):
         self.duration = QSpinBox()
         self.duration.setRange(0, 86400)
         self.duration.setSuffix(" s (0 = unlimited)")
+        # GAP (Tk parity, recorded): the Tk tab uses a "3D View (P,Q,t)"
+        # checkbox that owns the pop-out window lifecycle; Qt uses a button
+        # opening the same PQ3DView backend in a dialog. Same backend module,
+        # no shared-code change.
         view3d = QPushButton("3D PQ view")
         view3d.clicked.connect(self.show_3d)
         plot_last = QPushButton("Plot last log")
@@ -408,8 +485,11 @@ class PowerTab(QWidget):
 
     def update_scale(self):
         try:
+            # The Tk tab coerces an empty correction back to 1.0; mirror that
+            # locally so clearing the field never breaks scaling.
+            correction = self.correction.text().strip() or "1.0"
             scale = current_scale(self.probe_type.currentText(), self.probe_value.text(),
-                                  self.correction.text())
+                                  correction)
             self.scale_info.setText(f"Effective current scale: {scale:.4g} A/V")
         except ValueError:
             self.scale_info.setText("Enter a valid probe value and correction")
@@ -429,14 +509,31 @@ class PowerTab(QWidget):
             v_info, i_info = channels.get(v, {}), channels.get(i, {})
             skew = (numeric(v_info.get("Deskew (s)")) -
                     numeric(i_info.get("Deskew (s)"))) * 1e9
+            unit = str(i_info.get("Unit", "N/A"))
+            probe = str(i_info.get("Probe", "N/A"))
+            try:
+                scope_probe = float(i_info.get("Probe", 1.0))
+            except (TypeError, ValueError):
+                scope_probe = None
+            warning = ""
+            if scope_probe is not None:
+                if self.probe_type.currentText() == "shunt" and abs(scope_probe - 1.0) > 0.5:
+                    warning = (f"   ℹ Scope probe {scope_probe:.1f}× with shunt: "
+                               "results stay correct; 1× may improve SNR")
+                elif self.probe_type.currentText() == "clamp" and scope_probe < 2.0:
+                    warning = (f"   ⚠ Mismatch: scope={scope_probe:.1f}× — "
+                               "clamp probes often need 10×+")
             self.setup_status.setText(
                 f"Frequency reference: {system.get('Frequency reference', 'N/A')}   "
-                f"Current unit: {i_info.get('Unit', 'N/A')}   "
-                f"Scope probe: {i_info.get('Probe', 'N/A')}×   "
+                f"Current unit: {unit}   "
+                f"Scope probe: {probe}×   "
                 f"Deskew Δt(V−I): {skew:+.1f} ns" +
                 ("   ⚠ Channel offset active" if
                  any(abs(numeric(info.get("Offset"))) > 0.01
-                     for info in (v_info, i_info)) else ""))
+                     for info in (v_info, i_info)) else "   ✓ No active offset") +
+                warning +
+                ("   DC removal ON" if self.remove_dc.isChecked()
+                 else "   DC removal OFF — full waveform analyzed"))
         except (ValueError, TypeError):
             pass
 
@@ -458,6 +555,11 @@ class PowerTab(QWidget):
         dialog.show()
 
     def plot_last(self):
+        # GAP (Tk parity, recorded): the Tk tab launches
+        # utils/plot_rigol_csv.py as an external process. The Qt viewer keeps
+        # an embedded P/Q-versus-sample dialog over the same
+        # oszi_csv/power_log_*.csv files instead, so no subprocess or shared
+        # code is involved.
         import pandas as pd
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
         from matplotlib.figure import Figure
@@ -498,6 +600,9 @@ class PowerTab(QWidget):
                 self.measure()
 
     def calibrate(self):
+        # Mirrors the Tk auto-calibration: one uncorrected ("standard") probe
+        # shot establishes the correction factor, then a full measurement with
+        # the selected formula follows. Shared measurement code is untouched.
         if self.pending or app_state.is_logging_active:
             self.notify("Wait for the active measurement to finish")
             return
@@ -549,6 +654,10 @@ class PowerTab(QWidget):
         method = self.method.currentData()
         dc = self.remove_dc.isChecked()
         raw_v, raw_i = self.raw_v.isChecked(), self.raw_i.isChecked()
+        # GAP (Tk parity, recorded): the Tk CSV header also carries "# Created"
+        # and FrequencyRef comment rows. Qt keeps its established comment rows
+        # unchanged (CSV schema frozen) and shows the frequency reference in
+        # the setup status and results instead.
         details = {"VoltageCh": voltage, "CurrentCh": current, "Method": method,
                    "ProbeType": probe_type, "ProbeValue": value, "CurrentScale(A/V)": scale,
                    "CorrectionFactor": correction, "RemoveDC": dc}
@@ -565,24 +674,55 @@ class PowerTab(QWidget):
                 self.notify(f"Power measurement failed: {result}")
                 return
             average, energy = self.log.add(result, details)
-            self.plot.push(average["P"], average["Q"])
+            impedance = result["Vrms"] / result["Irms"] if result["Irms"] else 0.0
+            avg_pf = average["PF"]
+            try:
+                if math.isfinite(avg_pf):
+                    pf_angle = math.degrees(math.acos(max(min(avg_pf, 1.0), -1.0)))
+                else:
+                    pf_angle = float(result["Phase Angle (deg)"])
+            except (ValueError, TypeError, KeyError):
+                try:
+                    pf_angle = float(result["Phase Angle (deg)"])
+                except (ValueError, TypeError, KeyError):
+                    pf_angle = 0.0
+            self.plot.push(average["P"], average["Q"],
+                           {"S": average["S"], "PF": avg_pf,
+                            "theta": pf_angle, "Z": impedance})
             if self.pq3d is not None:
                 _, view, canvas = self.pq3d
                 view.push(time.time(), average["P"], average["Q"])
                 view.draw()
                 canvas.draw_idle()
+            try:
+                elapsed_sec = int(time.time() - self.log.started)
+            except TypeError:
+                elapsed_sec = 0
+            elapsed_hms = time.strftime("%H:%M:%S", time.gmtime(elapsed_sec))
+            freq_ref = self.context[0].get("Frequency reference", "N/A")
+            correction = (self.correction.text().strip() or "1.0")
             self.results.setPlainText(
-                f"{'Metric':<24} {'Instant':>14}  {'Average':>14}\n"
-                f"{'Real power (W)':<24} {result['Real Power (P)']:>14.4g}  {average['P']:>14.4g}\n"
-                f"{'Apparent power (VA)':<24} {result['Apparent Power (S)']:>14.4g}  {average['S']:>14.4g}\n"
-                f"{'Reactive power (VAR)':<24} {result['Reactive Power (Q)']:>14.4g}  {average['Q']:>14.4g}\n"
-                f"{'Power factor':<24} {result['Power Factor']:>14.4f}  {average['PF']:>14.4f}\n"
-                f"{'Vrms (V)':<24} {result['Vrms']:>14.4g}  {average['Vrms']:>14.4g}\n"
-                f"{'Irms (A)':<24} {result['Irms']:>14.4g}  {average['Irms']:>14.4g}\n"
-                f"Phase angle: {result['Phase Angle (deg)']:.2f}°   "
-                f"Impedance: {result['Vrms'] / result['Irms'] if result['Irms'] else 0:.3g} Ω\n"
-                f"Real energy: {energy[0]:.4f} Wh  Apparent: {energy[1]:.4f} VAh  "
-                f"Reactive: {energy[2]:.4f} VARh\nSamples: {self.log.count}\n"
+                f"Correction Factor: ×{correction}\n\n"
+                f"{'Metric':<22} {'Instant':>12}    {'Average':>12}\n"
+                f"{'-' * 50}\n"
+                f"{'Real power (P)':<22}: {format_si(result['Real Power (P)'], 'W'):<12} | "
+                f"{format_si(average['P'], 'W'):<12}\n"
+                f"{'Apparent power (S)':<22}: {format_si(result['Apparent Power (S)'], 'VA'):<12} | "
+                f"{format_si(average['S'], 'VA'):<12}\n"
+                f"{'Reactive power (Q)':<22}: {format_si(result['Reactive Power (Q)'], 'VAR'):<12} | "
+                f"{format_si(average['Q'], 'VAR'):<12}\n"
+                f"{'Power factor':<22}: {result['Power Factor']:>12.4f}  | {average['PF']:>12.6f}\n"
+                f"{'Vrms (V)':<22}: {format_si(result['Vrms'], 'V'):<12} | "
+                f"{format_si(average['Vrms'], 'V'):<12}\n"
+                f"{'Irms (A)':<22}: {format_si(result['Irms'], 'A'):<12} | "
+                f"{format_si(average['Irms'], 'A'):<12}\n\n"
+                f"{'Impedance (Z)':<22}: {format_si(impedance, 'Ω'):<12}\n"
+                f"{'Frequency (ref)':<22}: {str(freq_ref).strip():<12}  (used for θ, PF)\n"
+                f"{'PF Angle (θ)':<22}: {pf_angle:>10.2f} °\n"
+                f"{'Real Energy':<22}: {format_si(energy[0], 'Wh'):<12}\n"
+                f"{'Apparent Energy':<22}: {format_si(energy[1], 'VAh'):<12}\n"
+                f"{'Reactive Energy':<22}: {format_si(energy[2], 'VARh'):<12}\n"
+                f"\nIterations: {self.log.count}    Elapsed: {elapsed_hms}\n"
                 f"CSV: {self.log.path}")
 
         self.submit(lambda: self.backend.measure(voltage, current, scale, dc, method, raw_v, raw_i),
