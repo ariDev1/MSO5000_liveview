@@ -8,7 +8,7 @@ from datetime import datetime
 
 import app.app_state as app_state
 from scpi.interface import connect_scope, safe_query, safe_write, scpi_lock
-from scpi.waveform import compute_power_from_scope, export_channel_csv
+from scpi.waveform import compute_power_from_scope, export_channel_csv, get_channel_waveform_data
 
 
 def channel_name(value):
@@ -70,12 +70,20 @@ class ScopeBackend:
                 scope.query("*IDN?")
             except Exception as error:
                 raise ConnectionError("Scope connection lost") from error
-            system = {
-                "Timebase": safe_query(scope, ":TIMebase:SCALe?", "N/A"),
-                "Sample rate": safe_query(scope, ":ACQuire:SRATe?", "N/A"),
-                "Trigger": safe_query(scope, ":TRIGger:STATus?", "N/A"),
-                "Frequency reference": safe_query(scope, ":POWer:QUALity:FREQreference?", "N/A"),
-            }
+            fields = (
+                ("Timebase", ":TIMebase:SCALe?"), ("Sample rate", ":ACQuire:SRATe?"),
+                ("Trigger", ":TRIGger:STATus?"), ("Frequency reference", ":POWer:QUALity:FREQreference?"),
+                ("Acquisition type", ":ACQuire:TYPE?"), ("Interleave", ":ACQuire:INTerleave?"),
+                ("LA depth", ":ACQuire:LA:MDEPth?"), ("LA sample rate", ":ACQuire:LA:SRATe?"),
+                ("Trigger position", ":TRIGger:POSition?"), ("Trigger holdoff", ":TRIGger:HOLDoff?"),
+                ("Brightness", ":DISPlay:GBRightness?"), ("Grid", ":DISPlay:GRID?"),
+                ("Grading time", ":DISPlay:GRADing:TIME?"),
+                ("Counter mode", ":COUNter:MODE?"), ("Counter source", ":COUNter:SOURce?"),
+                ("Counter totalize", ":COUNTER:TOTalize:ENABle?"),
+                ("Measure mode", ":MEASure:MODE?"), ("Measure type", ":MEASure:TYPE?"),
+                ("Measure statistics", ":MEASure:STATistic:DISPlay?"),
+            )
+            system = {label: safe_query(scope, cmd, "N/A") for label, cmd in fields}
             channels = {}
             for index in range(1, 5):
                 name = f"CHAN{index}"
@@ -87,6 +95,11 @@ class ScopeBackend:
                     "Coupling": safe_query(scope, f":{name}:COUPling?", "N/A"),
                     "Probe": safe_query(scope, f":{name}:PROBe?", "N/A"),
                     "Unit": safe_query(scope, f":{name}:UNIT?", "N/A"),
+                    "Bandwidth": safe_query(scope, f":{name}:BWLimit?", "N/A"),
+                    "Invert": safe_query(scope, f":{name}:INVert?", "N/A"),
+                    "Impedance": safe_query(scope, f":{name}:IMPedance?", "N/A"),
+                    "Vernier": safe_query(scope, f":{name}:VERNier?", "N/A"),
+                    "Deskew (s)": safe_query(scope, f":{name}:TCALibrate?", "N/A"),
                 }
             for index in range(1, 5):
                 name = f"MATH{index}"
@@ -96,6 +109,9 @@ class ScopeBackend:
                     "Scale": safe_query(scope, f":{name}:SCALe?", "N/A"),
                     "Offset": safe_query(scope, f":{name}:OFFSet?", "N/A"),
                     "Operator": safe_query(scope, f":{name}:OPERator?", "N/A"),
+                    "Invert": safe_query(scope, f":{name}:INVert?", "N/A"),
+                    "Source 1": safe_query(scope, f":{name}:SOURce1?", "N/A"),
+                    "Source 2": safe_query(scope, f":{name}:SOURce2?", "N/A"),
                 }
         return system, channels
 
@@ -129,6 +145,23 @@ class ScopeBackend:
             if not response:
                 raise RuntimeError("SCPI write failed; see Debug Log.")
             return response
+
+    def self_test(self):
+        """Read-only diagnostics; never change the scope's acquisition state."""
+        scope = self._connected()
+        with scpi_lock:
+            idn = safe_query(scope, "*IDN?", "N/A")
+            active = [index for index in range(1, 5)
+                      if safe_query(scope, f":CHAN{index}:DISP?", "0") == "1"]
+        lines = [f"Instrument: {idn}", f"Displayed analog channels: {active or 'none'}"]
+        if active:
+            vpp, avg, rms = get_channel_waveform_data(scope, active[0])
+            lines.append(f"CH{active[0]} Vpp={vpp}  Vavg={avg}  Vrms={rms}")
+        if len(active) > 1:
+            result = compute_power_from_scope(scope, active[0], active[1])
+            lines.append(f"Power check: {result['Real Power (P)']:.3f} W" if result else
+                         "Power check: no waveform data")
+        return "\n".join(lines)
 
     def close(self):
         with scpi_lock:

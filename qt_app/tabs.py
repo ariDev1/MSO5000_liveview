@@ -1,16 +1,20 @@
 """Core measurement controls for the alternative Qt viewer."""
 
 import math
+import platform
+import shutil
+import sys
 import time
+from pathlib import Path
 
 import app.app_state as app_state
 from logger.longtime import pause_resume, start_logging, stop_logging
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
-    QSpinBox, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPlainTextEdit,
+    QPushButton, QSpinBox, QVBoxLayout, QWidget, QDialog,
 )
 
 from qt_app.backend import PowerLog, channel_name, current_scale, logging_channels
@@ -33,12 +37,79 @@ class SystemTab(QWidget):
         super().__init__()
         layout = QVBoxLayout(self)
         layout.addWidget(heading("Instrument status"))
+        row = QHBoxLayout()
+        self.docs = QComboBox()
+        self.docs.addItem("Documentation…", None)
+        for document in sorted((Path(__file__).resolve().parents[1] / "docs").glob("*.md")):
+            self.docs.addItem(document.stem, document)
+        self.docs.currentIndexChanged.connect(self.show_document)
+        copy = QPushButton("Copy system info")
+        copy.clicked.connect(lambda: QApplication.clipboard().setText(self.text.toPlainText()))
+        row.addWidget(self.docs, 1)
+        row.addWidget(copy)
+        layout.addLayout(row)
         self.text = readout()
         layout.addWidget(self.text)
+        self.system = {}
+        self.idn = "N/A"
+        self.document_path = None
+        self.document_text = ""
 
     def update_data(self, system, idn):
-        self.text.setPlainText("Instrument\n" + idn + "\n\n" +
-                               "\n".join(f"{key}: {value}" for key, value in system.items()))
+        self.system, self.idn = system, idn
+        self.show_document()
+
+    def show_document(self):
+        from version import VERSION, GIT_COMMIT, BUILD_DATE
+        import psutil
+        free = shutil.disk_usage(Path.cwd()).free / (1024 ** 3)
+        info = (f"MSO5000 Liveview {VERSION}  ·  {GIT_COMMIT}  ·  {BUILD_DATE}\n"
+                f"Host: {platform.system()} {platform.release()} ({platform.machine()})\n"
+                f"Python: {sys.version.split()[0]}    CPU: {psutil.cpu_percent()}%    "
+                f"RAM: {psutil.virtual_memory().percent}%    Disk free: {free:.1f} GiB\n"
+                f"Logging: {app_state.is_logging_active}  Power: {app_state.is_power_analysis_active}\n\n"
+                f"Instrument: {self.idn}\n\n" +
+                "\n".join(f"{key:<22}: {value}" for key, value in self.system.items()))
+        document = self.docs.currentData()
+        if document:
+            if document != self.document_path:
+                self.document_text = document.read_text(encoding="utf-8")[:200000]
+            info += f"\n\n--- {document.name} ---\n{self.document_text}"
+        self.document_path = document
+        if self.text.toPlainText() != info:
+            scroll = self.text.verticalScrollBar()
+            position = scroll.value()
+            self.text.setPlainText(info)
+            scroll.setValue(position)
+
+
+class LicensesTab(QWidget):
+    def __init__(self, submit, ip):
+        super().__init__()
+        self.submit, self.ip = submit, ip
+        layout = QVBoxLayout(self)
+        layout.addWidget(heading("Licensed options"))
+        self.text = readout()
+        layout.addWidget(self.text)
+        button = QPushButton("Refresh licenses")
+        button.clicked.connect(self.refresh)
+        layout.addWidget(button)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.refresh)
+        self.timer.start(15000)
+
+    def refresh(self):
+        from scpi.licenses import get_license_options
+
+        def done(options):
+            if isinstance(options, Exception):
+                self.text.setPlainText(f"License query failed: {options}")
+            else:
+                self.text.setPlainText("\n".join(
+                    f"{item['code']:<12} {item['status']:<15} {item['desc']}" for item in options)
+                    or "No license data received")
+
+        self.submit(lambda: get_license_options(self.ip), done, image=True)
 
 
 class ChannelsTab(QWidget):
@@ -55,19 +126,26 @@ class ChannelsTab(QWidget):
         copy.clicked.connect(lambda: self.copy_settings())
         export = QPushButton("Export displayed channels to CSV")
         export.clicked.connect(self.export)
+        copy_csv = QPushButton("Copy waveform CSV")
+        copy_csv.clicked.connect(self.copy_csv)
         row.addWidget(copy)
         row.addWidget(export)
+        row.addWidget(copy_csv)
         row.addStretch()
         layout.addLayout(row)
 
     def update_data(self, channels):
         self.channels = channels
-        self.text.setPlainText("\n".join(
-            f"{name}  " + "  |  ".join(f"{key}: {value}" for key, value in data.items())
-            for name, data in channels.items()) or "No displayed channels")
+        value = "\n\n".join(
+            name + "\n" + "\n".join(f"  {key:<16} {value}" for key, value in data.items())
+            for name, data in channels.items()) or "No displayed channels"
+        if self.text.toPlainText() != value:
+            scroll = self.text.verticalScrollBar()
+            position = scroll.value()
+            self.text.setPlainText(value)
+            scroll.setValue(position)
 
     def copy_settings(self):
-        from PySide6.QtWidgets import QApplication
         QApplication.clipboard().setText(self.text.toPlainText())
         self.notify("Channel settings copied")
 
@@ -79,7 +157,24 @@ class ChannelsTab(QWidget):
         else:
             names = list(self.channels)
             self.submit(lambda: self.backend.export(names),
-                        lambda paths: self.notify("Exported: " + ", ".join(paths)))
+                        lambda paths: self.notify(f"Export failed: {paths}" if isinstance(paths, Exception)
+                                                  else "Exported: " + ", ".join(paths)))
+
+    def copy_csv(self):
+        if app_state.is_logging_active or not self.channels:
+            self.notify("Select displayed channels and stop logging before copying CSV")
+            return
+        names = list(self.channels)
+
+        def finished(paths):
+            if isinstance(paths, Exception):
+                self.notify(f"CSV copy failed: {paths}")
+                return
+            QApplication.clipboard().setText("\n\n".join(
+                Path(path).read_text(encoding="utf-8") for path in paths))
+            self.notify("Waveform CSV copied to clipboard")
+
+        self.submit(lambda: self.backend.export(names), finished)
 
 
 class LoggingTab(QWidget):
@@ -119,6 +214,10 @@ class LoggingTab(QWidget):
         layout.addLayout(row)
         self.status = readout()
         layout.addWidget(self.status)
+        tip = QLabel("Performance: use ≥1 s for 1–2 channels and ≥2 s for 3–4 channels. "
+                     "The logger writes one timestamped CSV per session.")
+        tip.setWordWrap(True)
+        layout.addWidget(tip)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.timer.start(500)
@@ -193,6 +292,15 @@ class PQPlot(QWidget):
         if self.points:
             limit_p = max(1, *(abs(p) * 1.5 for p, _ in self.points))
             limit_q = max(1, *(abs(q) * 1.5 for _, q in self.points))
+            p, q = self.points[-1]
+            px = int(cx + p / limit_p * (cx - 28))
+            qy = int(cy - q / limit_q * (cy - 26))
+            painter.setPen(QPen(QColor("#eead68"), 2, Qt.PenStyle.DashLine))
+            painter.drawLine(int(cx), int(cy), px, qy)
+            painter.setPen(QPen(QColor("#65b9eb"), 1))
+            painter.drawLine(int(cx), int(cy), px, int(cy))
+            painter.setPen(QPen(QColor("#a7e88d"), 1))
+            painter.drawLine(px, int(cy), px, qy)
             for index, (p, q) in enumerate(self.points):
                 alpha = 60 + int(195 * (index + 1) / len(self.points))
                 painter.setPen(Qt.PenStyle.NoPen)
@@ -202,6 +310,13 @@ class PQPlot(QWidget):
         painter.setPen(QColor("#a6b8ca"))
         painter.drawText(22, self.height() - 6, "P (W) →")
         painter.drawText(8, 16, "Q (VAR) ↑")
+        if self.points:
+            p, q = self.points[-1]
+            magnitude = math.hypot(p, q)
+            painter.drawText(self.rect().adjusted(8, 8, -12, -8),
+                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
+                             f"P {p:.3g} W   Q {q:.3g} VAR\n"
+                             f"|P+jQ| {magnitude:.3g} VA   θ {math.degrees(math.atan2(q, p)):.1f}°")
 
 
 class PowerTab(QWidget):
@@ -210,6 +325,8 @@ class PowerTab(QWidget):
         self.submit, self.backend, self.notify = submit, backend, notify
         self.log = PowerLog()
         self.pending = False
+        self.context = ({}, {})
+        self.pq3d = None
         layout = QVBoxLayout(self)
         layout.addWidget(heading("Power analysis"))
         group = QGroupBox("Measurement setup")
@@ -243,6 +360,12 @@ class PowerTab(QWidget):
         calibration = QPushButton("Calibrate correction")
         calibration.clicked.connect(self.calibrate)
         grid.addWidget(calibration, 3, 2, 1, 2)
+        self.scale_info = QLabel("Effective current scale: 1 A/V")
+        grid.addWidget(self.scale_info, 3, 4, 1, 2)
+        for control in (self.probe_value, self.correction):
+            control.textChanged.connect(self.update_scale)
+        self.probe_type.currentIndexChanged.connect(self.update_scale)
+        self.update_scale()
         layout.addWidget(group)
         controls = QHBoxLayout()
         self.measure_button = QPushButton("Measure")
@@ -256,12 +379,18 @@ class PowerTab(QWidget):
         self.duration = QSpinBox()
         self.duration.setRange(0, 86400)
         self.duration.setSuffix(" s (0 = unlimited)")
+        view3d = QPushButton("3D PQ view")
+        view3d.clicked.connect(self.show_3d)
+        plot_last = QPushButton("Plot last log")
+        plot_last.clicked.connect(self.plot_last)
         controls.addWidget(self.measure_button)
         controls.addWidget(self.auto)
         controls.addWidget(QLabel("Interval"))
         controls.addWidget(self.period)
         controls.addWidget(QLabel("Duration"))
         controls.addWidget(self.duration)
+        controls.addWidget(view3d)
+        controls.addWidget(plot_last)
         controls.addStretch()
         layout.addLayout(controls)
         self.plot = PQPlot()
@@ -269,10 +398,94 @@ class PowerTab(QWidget):
         self.results.setMinimumHeight(180)
         layout.addWidget(self.plot, 2)
         layout.addWidget(self.results, 1)
+        self.setup_status = QLabel("Select a voltage and current channel")
+        self.setup_status.setWordWrap(True)
+        layout.addWidget(self.setup_status)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._auto_tick)
         self.timer.start(500)
         self.last_measurement = 0.0
+
+    def update_scale(self):
+        try:
+            scale = current_scale(self.probe_type.currentText(), self.probe_value.text(),
+                                  self.correction.text())
+            self.scale_info.setText(f"Effective current scale: {scale:.4g} A/V")
+        except ValueError:
+            self.scale_info.setText("Enter a valid probe value and correction")
+
+    def update_context(self, system, channels):
+        self.context = (system, channels)
+
+        def numeric(value):
+            try:
+                return float(value or 0)
+            except (ValueError, TypeError):
+                return 0.0
+
+        try:
+            v = channel_name(self.voltage.text()).replace("CHAN", "CH")
+            i = channel_name(self.current.text()).replace("CHAN", "CH")
+            v_info, i_info = channels.get(v, {}), channels.get(i, {})
+            skew = (numeric(v_info.get("Deskew (s)")) -
+                    numeric(i_info.get("Deskew (s)"))) * 1e9
+            self.setup_status.setText(
+                f"Frequency reference: {system.get('Frequency reference', 'N/A')}   "
+                f"Current unit: {i_info.get('Unit', 'N/A')}   "
+                f"Scope probe: {i_info.get('Probe', 'N/A')}×   "
+                f"Deskew Δt(V−I): {skew:+.1f} ns" +
+                ("   ⚠ Channel offset active" if
+                 any(abs(numeric(info.get("Offset"))) > 0.01
+                     for info in (v_info, i_info)) else ""))
+        except (ValueError, TypeError):
+            pass
+
+    def show_3d(self):
+        if self.pq3d is not None:
+            self.pq3d[0].raise_()
+            return
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+        from gui.power.pq3d_view import PQ3DView
+        dialog = QDialog(self)
+        dialog.setWindowTitle("PQ 3D — (P,Q,t)")
+        dialog.resize(900, 670)
+        view = PQ3DView(max_age_s=120, max_points=20000)
+        canvas = FigureCanvasQTAgg(view.fig)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(canvas)
+        dialog.finished.connect(lambda _: setattr(self, "pq3d", None))
+        self.pq3d = (dialog, view, canvas)
+        dialog.show()
+
+    def plot_last(self):
+        import pandas as pd
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+        from matplotlib.figure import Figure
+        files = list(Path("oszi_csv").glob("power_log_*.csv"))
+        if not files:
+            self.notify("No power log CSV found")
+            return
+        path = max(files, key=lambda file: file.stat().st_mtime)
+        try:
+            data = pd.read_csv(path, comment="#")
+            p, q = data["P (W)"], data["Q (VAR)"]
+            figure = Figure(figsize=(8, 5), facecolor="#101722")
+            axes = figure.add_subplot(111)
+            axes.plot(p, label="P (W)")
+            axes.plot(q, label="Q (VAR)")
+            axes.legend()
+            axes.set_xlabel("Sample")
+            axes.set_title(path.name)
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Power log")
+            dialog.resize(900, 600)
+            canvas = FigureCanvasQTAgg(figure)
+            box = QVBoxLayout(dialog)
+            box.addWidget(canvas)
+            dialog.show()
+            self.last_dialog = dialog
+        except Exception as error:
+            self.notify(f"Could not plot log: {error}")
 
     def _auto_tick(self):
         if self.auto.isChecked() and not self.pending and not app_state.is_logging_active:
@@ -353,12 +566,23 @@ class PowerTab(QWidget):
                 return
             average, energy = self.log.add(result, details)
             self.plot.push(average["P"], average["Q"])
+            if self.pq3d is not None:
+                _, view, canvas = self.pq3d
+                view.push(time.time(), average["P"], average["Q"])
+                view.draw()
+                canvas.draw_idle()
             self.results.setPlainText(
-                f"Instant P: {result['Real Power (P)']:.3f} W     Average P: {average['P']:.3f} W\n"
-                f"S: {result['Apparent Power (S)']:.3f} VA     Q: {result['Reactive Power (Q)']:.3f} VAR\n"
-                f"PF: {result['Power Factor']:.4f}     Phase: {result['Phase Angle (deg)']:.2f}°\n"
-                f"Vrms: {result['Vrms']:.3f} V     Irms: {result['Irms']:.3f} A\n"
-                f"Real energy: {energy[0]:.4f} Wh     Samples: {self.log.count}\n"
+                f"{'Metric':<24} {'Instant':>14}  {'Average':>14}\n"
+                f"{'Real power (W)':<24} {result['Real Power (P)']:>14.4g}  {average['P']:>14.4g}\n"
+                f"{'Apparent power (VA)':<24} {result['Apparent Power (S)']:>14.4g}  {average['S']:>14.4g}\n"
+                f"{'Reactive power (VAR)':<24} {result['Reactive Power (Q)']:>14.4g}  {average['Q']:>14.4g}\n"
+                f"{'Power factor':<24} {result['Power Factor']:>14.4f}  {average['PF']:>14.4f}\n"
+                f"{'Vrms (V)':<24} {result['Vrms']:>14.4g}  {average['Vrms']:>14.4g}\n"
+                f"{'Irms (A)':<24} {result['Irms']:>14.4g}  {average['Irms']:>14.4g}\n"
+                f"Phase angle: {result['Phase Angle (deg)']:.2f}°   "
+                f"Impedance: {result['Vrms'] / result['Irms'] if result['Irms'] else 0:.3g} Ω\n"
+                f"Real energy: {energy[0]:.4f} Wh  Apparent: {energy[1]:.4f} VAh  "
+                f"Reactive: {energy[2]:.4f} VARh\nSamples: {self.log.count}\n"
                 f"CSV: {self.log.path}")
 
         self.submit(lambda: self.backend.measure(voltage, current, scale, dc, method, raw_v, raw_i),
@@ -377,11 +601,23 @@ class SCPITab(QWidget):
         self.input.returnPressed.connect(self.send)
         button = QPushButton("Send")
         button.clicked.connect(self.send)
+        selftest = QPushButton("Run self-test")
+        selftest.clicked.connect(self.self_test)
         row.addWidget(self.input)
         row.addWidget(button)
+        row.addWidget(selftest)
         layout.addLayout(row)
+        columns = QHBoxLayout()
         self.output = readout()
-        layout.addWidget(self.output)
+        columns.addWidget(self.output, 3)
+        self.commands = QListWidget()
+        path = Path(__file__).resolve().parents[1] / "scpi_command_list.txt"
+        if path.is_file():
+            self.commands.addItems(line.strip() for line in path.read_text(encoding="utf-8").splitlines()
+                                   if line.strip())
+        self.commands.itemClicked.connect(lambda item: self.input.setText(item.text()))
+        columns.addWidget(self.commands, 1)
+        layout.addLayout(columns)
         layout.addWidget(QLabel("Commands can change acquisition settings. Use with care."))
 
     def send(self):
@@ -396,3 +632,10 @@ class SCPITab(QWidget):
             self.output.appendPlainText(f"> {text}\n{response}\n")
 
         self.submit(lambda: self.backend.command(text), finished)
+
+    def self_test(self):
+        if app_state.is_logging_active:
+            self.notify("Self-test unavailable during long-time logging")
+            return
+        self.submit(self.backend.self_test,
+                    lambda result: self.output.appendPlainText(f"Self-test:\n{result}\n"))

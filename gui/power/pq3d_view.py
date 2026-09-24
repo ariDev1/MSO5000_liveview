@@ -6,7 +6,7 @@ from collections import deque
 import numpy as np
 from matplotlib.figure import Figure
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
-import matplotlib.cm as cm
+from matplotlib import colormaps
 
 # -------------------- Configure your preset viewpoints here --------------------
 # Edit, remove, or add entries. 'proj' is "persp" or "ortho".
@@ -58,7 +58,7 @@ class PQ3DView:
         self._density_bounds = None   # ((xmin,xmax),(ymin,ymax))
 
         # Trail + head
-        self.cmap = cm.get_cmap("plasma")
+        self.cmap = colormaps["plasma"]
         self._trail = Line3DCollection([], linewidths=1.6, antialiased=True)
         self._trail.set_segments([np.zeros((2, 3))])  # seed
         self._trail.set_alpha(0.0)

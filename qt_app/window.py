@@ -8,15 +8,18 @@ from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QLabel, QMainWindow, QPushButton, QSplitter, QTabWidget, QVBoxLayout, QWidget,
+    QLabel, QHBoxLayout, QMainWindow, QPushButton, QScrollArea, QSplitter,
+    QTabWidget, QVBoxLayout, QWidget,
 )
 
 import app.app_state as app_state
 import config
 import version
 from logger.longtime import stop_logging
+from qt_app.advanced import BHCurveTab, HarmonicsTab, NoiseTab
 from qt_app.backend import ScopeBackend
-from qt_app.tabs import ChannelsTab, LoggingTab, PowerTab, SCPITab, SystemTab
+from qt_app.display import DetachedDisplay, ScopeDisplay
+from qt_app.tabs import ChannelsTab, LicensesTab, LoggingTab, PowerTab, SCPITab, SystemTab
 from utils.debug import debug_log
 
 
@@ -87,8 +90,6 @@ class MainWindow(QMainWindow):
         content = QWidget()
         self.setCentralWidget(content)
         layout = QVBoxLayout(content)
-        top = QVBoxLayout()
-        from PySide6.QtWidgets import QHBoxLayout
         bar = QHBoxLayout()
         title = QLabel("MSO5000  /  LIVE VIEW")
         title.setObjectName("appTitle")
@@ -98,39 +99,51 @@ class MainWindow(QMainWindow):
         self.retry.clicked.connect(self.connect_scope)
         self.hide_image = QPushButton("Hide display")
         self.hide_image.clicked.connect(self.toggle_image)
+        enlarge = QPushButton("Enlarge display")
+        enlarge.clicked.connect(self.enlarge_image)
         bar.addWidget(title)
         bar.addStretch()
         bar.addWidget(self.connection)
         bar.addWidget(self.retry)
         bar.addWidget(self.hide_image)
-        top.addLayout(bar)
-        layout.addLayout(top)
+        bar.addWidget(enlarge)
+        layout.addLayout(bar)
 
-        self.display = QLabel("Waiting for VNC screenshot…")
-        self.display.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.display.setMinimumHeight(170)
-        self.display.setStyleSheet("background:#080f18; border:1px solid #35455c; border-radius:9px;")
+        self.display = ScopeDisplay(allow_upscale=config.SCOPE_IMAGE_ALLOW_UPSCALE)
+        self.detached = None
         self.tabs = QTabWidget()
         self.system = SystemTab()
+        self.licenses = LicensesTab(self.submit, ip)
         self.channels = ChannelsTab(self.submit, self.backend, self.notify)
         self.logging = LoggingTab(self.backend, self.notify)
         self.power = PowerTab(self.submit, self.backend, self.notify)
         self.console = SCPITab(self.submit, self.backend, self.notify)
+        self.bh = BHCurveTab(self.submit, self.backend, self.notify) if config.ENABLE_BH_CURVE else None
+        self.harmonics = HarmonicsTab(self.submit, self.backend, self.notify) if config.ENABLE_HARMONICS else None
+        self.noise = NoiseTab(self.submit, self.backend, self.notify) if config.ENABLE_NOISE_INSPECTOR else None
         self.debug = QWidget()
         debug_layout = QVBoxLayout(self.debug)
         from qt_app.tabs import readout
         self.debug_text = readout()
         debug_layout.addWidget(self.debug_text)
-        for title, tab in (("System", self.system), ("Channels", self.channels),
+        for title, tab in (("System", self.system), ("Licenses", self.licenses),
+                           ("Channels", self.channels),
                            ("Long-time logging", self.logging), ("Power", self.power),
                            ("SCPI", self.console), ("Debug", self.debug)):
-            self.tabs.addTab(tab, title)
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.addWidget(self.display)
-        splitter.addWidget(self.tabs)
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 4)
-        layout.addWidget(splitter)
+            self.add_tab(title, tab)
+        for title, tab in (("B–H Curve", self.bh), ("Harmonics / THD", self.harmonics),
+                           ("Noise Inspector", self.noise)):
+            if tab is not None:
+                self.add_tab(title, tab)
+        self.splitter = QSplitter(Qt.Orientation.Vertical)
+        self.splitter.addWidget(self.display)
+        self.splitter.addWidget(self.tabs)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 1)
+        layout.addWidget(self.splitter)
+        QTimer.singleShot(0, lambda: self.splitter.setSizes([self.height() * 65 // 100,
+                                                              self.height() * 35 // 100]))
         self.statusBar().showMessage("Qt viewer • shared SCPI measurement backend")
 
         self.poll_timer = QTimer(self)
@@ -143,6 +156,16 @@ class MainWindow(QMainWindow):
         self.debug_timer.timeout.connect(self.show_debug)
         self.debug_timer.start(1000)
         QTimer.singleShot(0, self.connect_scope)
+        QTimer.singleShot(100, self.licenses.refresh)
+
+    def add_tab(self, title, tab):
+        # Complex tabs scroll internally rather than dictating the splitter's
+        # minimum height and shrinking the live scope to a narrow strip.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(tab)
+        self.tabs.addTab(scroll, title)
 
     def notify(self, message):
         # Called both from Qt and from the established logger's background thread.
@@ -211,11 +234,12 @@ class MainWindow(QMainWindow):
             self.connection.setText("Connected")
             self.system.update_data(system, self.idn)
             self.channels.update_data(channels)
+            self.power.update_context(system, channels)
 
         self.submit(self.backend.snapshot, done)
 
     def capture_image(self):
-        if self.closing or self.capturing or self.display.isHidden():
+        if self.closing or self.capturing or (self.display.isHidden() and self.detached is None):
             return
         self.capturing = True
 
@@ -227,33 +251,27 @@ class MainWindow(QMainWindow):
             image = QPixmap()
             if image.loadFromData(response):
                 self.pixmap = image
-                self.update_image()
+                self.display.set_image(image)
+                if self.detached is not None:
+                    self.detached.display.set_image(image)
 
         self.submit(lambda: capture(self.backend.ip), done, image=True)
-
-    def update_image(self):
-        if self.pixmap is None or self.display.isHidden():
-            return
-        width, height = self.display.width() - 12, self.display.height() - 12
-        if not config.SCOPE_IMAGE_ALLOW_UPSCALE:
-            width = min(width, self.pixmap.width())
-            height = min(height, self.pixmap.height())
-        image = self.pixmap.scaled(max(width, 1), max(height, 1),
-                                   Qt.AspectRatioMode.KeepAspectRatio,
-                                   Qt.TransformationMode.SmoothTransformation)
-        self.display.setPixmap(image)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.update_image()
 
     def toggle_image(self):
         hidden = self.display.isHidden()
         self.display.setVisible(hidden)
         self.hide_image.setText("Hide display" if hidden else "Show display")
         if hidden:
-            self.update_image()
             self.capture_image()
+
+    def enlarge_image(self):
+        if self.detached is not None:
+            self.detached.raise_()
+            self.detached.activateWindow()
+            return
+        self.detached = DetachedDisplay(self.pixmap if self.pixmap is not None else QPixmap(), self)
+        self.detached.finished.connect(lambda _: setattr(self, "detached", None))
+        self.detached.show()
 
     def show_debug(self):
         self.debug_text.setPlainText("\n".join(list(debug_log)[-500:]))

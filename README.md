@@ -67,13 +67,19 @@ pip install -r requirements-qt.txt
 python -m qt_app.main --ip 192.168.1.100
 ```
 
+On Ubuntu/Debian, Qt's X11 plugin also needs `sudo apt install libxcb-cursor0`.
+On Arch/Omarchy, install `xcb-util-cursor` instead. On Wayland, you can run
+with `QT_QPA_PLATFORM=wayland` if the X11 plugin is unavailable.
+
 Omit `--ip` to enter the address in a dialog. Core workflows available now are
-live VNC screenshots, system and channel status, CSV waveform export, long-time
-logging with pause/resume, power measurement with CSV and PQ plot, and a manual
-SCPI console. Outputs use `oszi_csv/` as before. The B-H, Harmonics, Noise
-Inspector, and advanced 3D views remain available in the Tk application while
-their Qt counterparts are developed. `python main.py` and the current Docker
-image still launch the established Tk application.
+resizable live VNC screenshots (with an enlarge button), detailed system and
+channel status, licensed options, documentation, CSV waveform export and copy,
+long-time logging with pause/resume, power measurement with CSV, PQ and 3D
+views, SCPI console with command list, B-H Curve, Harmonics/THD, and Noise
+Inspector. Analysis views share the existing calculation functions; their
+control layouts and some specialized Tk-only options still differ. Outputs use
+`oszi_csv/` as before. `python main.py` and the current Docker image still
+launch the established Tk application.
 
 Qt communication runs in a background I/O queue; a failed connection can be
 retried with **Reconnect**. A scope and VNC service are needed to check live
