@@ -1,6 +1,7 @@
 """Qt presentation for the established harmonic, B-H and noise calculations."""
 
 import math
+from collections import deque
 from pathlib import Path
 import time
 
@@ -673,6 +674,9 @@ class NoiseTab(QWidget):
         self.submit, self.backend, self.notify = submit, backend, notify
         self.pending, self.last = False, None
         self.surface = None
+        # Persistence trail for the heat-map-like history view (as in Tk).
+        self._trail = deque(maxlen=12)
+        self._trail_key = None
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
         header.addWidget(heading("Noise Inspector"))
@@ -897,7 +901,20 @@ class NoiseTab(QWidget):
                 ax.imshow(result["image"], origin="lower", aspect="auto",
                           extent=result.get("extent") or None, cmap="magma")
             elif result.get("plot_x") is not None:
-                ax.plot(result["plot_x"], result["plot_y"], color="#54d5ae")
+                x, y = np.asarray(result["plot_x"], float), np.asarray(result["plot_y"], float)
+                # Persistence trail, as in the Tk tab: reset on method/channel
+                # change, accumulate only in Auto mode to keep single runs clean.
+                key = f"{method}|{channel}"
+                if key != self._trail_key:
+                    self._trail_key = key
+                    self._trail.clear()
+                if self.auto.isChecked() and len(x) == len(y) and len(x) > 1:
+                    self._trail.append((x, y))
+                for idx, (old_x, old_y) in enumerate(self._trail):
+                    alpha = 0.12 + 0.35 * ((idx + 1) / len(self._trail)) ** 1.5
+                    ax.plot(old_x, old_y, linewidth=1.0, alpha=alpha,
+                            color="#54d5ae", zorder=1)
+                ax.plot(x, y, linewidth=0.9, color="#54d5ae", zorder=3)
                 for row in result.get("detections", []):
                     freq = row.get("f0_Hz", row.get("f_Hz"))
                     if freq is not None:
@@ -906,8 +923,11 @@ class NoiseTab(QWidget):
                                        color="#ffcc33")
                         except (TypeError, ValueError):
                             pass
-                if self.surface is not None:
-                    self.surface.push(result["plot_x"], result["plot_y"])
+                # Always record history (hidden until opened), as in the Tk
+                # tab — opening "3D history" later still shows past runs.
+                if self.surface is None:
+                    self.surface = SurfaceHistory(self)
+                self.surface.push(result["plot_x"], result["plot_y"])
             ax.xaxis.set_major_formatter(EngFormatter(unit="Hz"))
             hint = self.HINTS.get(method, "")
             title = f"{method} — {hint}" if hint else method
