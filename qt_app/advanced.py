@@ -788,7 +788,9 @@ class NoiseTab(QWidget):
         adv_row.addStretch()
         advanced_layout.addLayout(adv_row)
         self.advanced.setVisible(False)
-        layout.addWidget(self.advanced)
+        # Inside the foldable setup container: folding Setup hides the
+        # advanced row too instead of leaving it floating alone on top.
+        box.addWidget(self.advanced)
         self.plot = Plot()
         layout.addWidget(self.plot, 3)
         self.detections = readout()
