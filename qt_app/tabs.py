@@ -408,11 +408,24 @@ class PQPlot(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), QColor("#171e2b"))
-        cx, cy = self.width() / 2, self.height() / 2
+        painter.fillRect(self.rect(), QColor("#0d1117"))
+        width, height = self.width(), self.height()
+        cx, cy = width / 2, height / 2
+        small = painter.font()
+        small.setPointSize(8)
+        tiny = painter.font()
+        tiny.setPointSize(7)
+        # Faint instrument grid.
+        painter.setPen(QPen(QColor("#1c2634"), 1))
+        for gx in range(1, 6):
+            x = int(20 + gx * (width - 40) / 6)
+            painter.drawLine(x, 18, x, height - 20)
+        for gy in range(1, 4):
+            y = int(18 + gy * (height - 38) / 4)
+            painter.drawLine(20, y, width - 20, y)
         painter.setPen(QPen(QColor("#445469"), 1))
-        painter.drawLine(20, int(cy), self.width() - 20, int(cy))
-        painter.drawLine(int(cx), 18, int(cx), self.height() - 20)
+        painter.drawLine(20, int(cy), width - 20, int(cy))
+        painter.drawLine(int(cx), 18, int(cx), height - 20)
         if self.points:
             limit_p = max(1, *(abs(p) * 1.5 for p, _ in self.points))
             limit_q = max(1, *(abs(q) * 1.5 for _, q in self.points))
@@ -421,11 +434,27 @@ class PQPlot(QWidget):
                 return (int(cx + p / limit_p * (cx - 28)),
                         int(cy - q / limit_q * (cy - 26)))
 
-            # Fading trail matching the Tk tab's 30-point history.
+            # Density heat layer: where the operating point has been dwelling.
+            bins_x, bins_y = 24, 18
+            cells = {}
+            for p, q in self.points:
+                key = (min(bins_x - 1, max(0, int((p / limit_p * 0.5 + 0.5) * bins_x))),
+                       min(bins_y - 1, max(0, int((0.5 - q / limit_q * 0.5) * bins_y))))
+                cells[key] = cells.get(key, 0) + 1
+            peak = max(cells.values())
+            painter.setPen(Qt.PenStyle.NoPen)
+            for (bx, by), count in cells.items():
+                x0 = int(20 + bx * (width - 40) / bins_x)
+                x1 = int(20 + (bx + 1) * (width - 40) / bins_x)
+                y0 = int(18 + by * (height - 38) / bins_y)
+                y1 = int(18 + (by + 1) * (height - 38) / bins_y)
+                painter.setBrush(QColor(255, 180, 80, int(90 * count / peak)))
+                painter.drawRect(x0, y0, x1 - x0, y1 - y0)
+            # Fading trail in Tk red, oldest faintest.
             for index, (p, q) in enumerate(self.points):
-                alpha = 60 + int(195 * (index + 1) / len(self.points))
+                alpha = max(51, int(255 * (index + 1) / len(self.points)))
                 painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QColor(136, 136, 136, alpha // 3))
+                painter.setBrush(QColor(228, 68, 68, alpha))
                 px, qy = to_xy(p, q)
                 painter.drawEllipse(px - 3, qy - 3, 6, 6)
             p, q = self.points[-1]
@@ -440,22 +469,75 @@ class PQPlot(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(73, 208, 174, 255))
             painter.drawEllipse(px - 4, qy - 4, 8, 8)
+            summary = self.summary
+            magnitude = math.hypot(p, q)
+            pf = summary["PF"]
+            cos_theta = p / magnitude if magnitude > 0 else 0.0
+            sin_theta = q / magnitude if magnitude > 0 else 0.0
+            z_angle = summary["theta"]
             quadrant = self._quadrant(p, q)
+            painter.setPen(QColor("#e8f0f7"))
+            painter.setFont(small)
+            below = int(cy) + 20
+            above = int(cy) - 12
+            if quadrant == 1:
+                painter.drawText(px - 150, below, f"P = {p:.2f} W")
+                painter.drawText(px + 6, (qy + int(cy)) // 2, f"Q = {q:.2f} VAR")
+            elif quadrant == 2:
+                painter.drawText(px - 150, below, f"P = {p:.2f} W")
+                painter.drawText(px - 110, (qy + int(cy)) // 2, f"Q = {q:.2f} VAR")
+            elif quadrant == 3:
+                painter.drawText(px - 150, above, f"P = {p:.2f} W")
+                painter.drawText(px - 110, (qy + int(cy)) // 2, f"Q = {q:.2f} VAR")
+            else:
+                painter.drawText(px - 150, above, f"P = {p:.2f} W")
+                painter.drawText(px + 6, (qy + int(cy)) // 2, f"Q = {q:.2f} VAR")
+            painter.drawText((px + int(cx)) // 2 - 40, (qy + int(cy)) // 2 - 6,
+                             f"S = {magnitude:.2f} VA")
+            painter.setPen(QColor("#eead68"))
+            painter.drawText((px + int(cx)) // 2 - 40, (qy + int(cy)) // 2 + 22,
+                             f"θ = {summary['theta']:.1f}°")
+            # Summary instrument box, parked in the freest corner.
+            box_lines = (
+                f"PF = {pf:.3f}",
+                f"θ = {summary['theta']:.1f}°",
+                f"S = {magnitude:.2f} VA",
+                f"S → ({p:.2f} + j{q:.2f}) VA",
+                f"|S| = {magnitude:.2f} VA",
+                f"cos(θ) = {cos_theta:.3f}",
+                f"sin(θ) = {sin_theta:.3f}",
+                f"Z = {summary['Z']:.3f} Ω ∠ {z_angle:.1f}°",
+            )
+            metrics = painter.fontMetrics()
+            box_w = max(metrics.horizontalAdvance(line) for line in box_lines) + 16
+            box_h = metrics.height() * len(box_lines) + 14
+            corners = {1: (24, height - box_h - 24),
+                       2: (width - box_w - 24, height - box_h - 24),
+                       3: (width - box_w - 24, 22),
+                       4: (24, 22)}
+            bx, by = corners[quadrant]
+            painter.setPen(QPen(QColor("#444444"), 1))
+            painter.setBrush(QColor(26, 26, 26, 230))
+            painter.drawRect(int(bx), int(by), int(box_w), int(box_h))
+            painter.setPen(QColor("#e8f0f7"))
+            painter.setFont(tiny)
+            for idx, line in enumerate(box_lines):
+                painter.drawText(int(bx) + 8, int(by) + 12 + metrics.height() * (idx + 1) - 4,
+                                 line)
             painter.setPen(QColor("#bbbbbb"))
+            painter.setFont(small)
             for label, x, y in (("I", 0.90, 0.10), ("II", 0.10, 0.10),
                                 ("III", 0.10, 0.90), ("IV", 0.90, 0.90)):
-                painter.drawText(int(self.width() * x), int(self.height() * y), label)
+                painter.drawText(int(width * x), int(height * y), label)
         painter.setPen(QColor("#a6b8ca"))
-        painter.drawText(22, self.height() - 6, "P (W) →")
+        painter.setFont(small)
+        painter.drawText(22, height - 6, "P (W) →")
         painter.drawText(8, 16, "Q (VAR) ↑")
-        if self.points:
-            p, q = self.points[-1]
-            summary = self.summary
-            painter.drawText(self.rect().adjusted(8, 8, -12, -8),
-                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
-                             f"P {p:.3g} W   Q {q:.3g} VAR\n"
-                             f"S {summary['S']:.3g} VA   θ {summary['theta']:.1f}°   "
-                             f"PF {summary['PF']:.3f}   Z {summary['Z']:.3g} Ω")
+        # Legend for the phase-angle hypotenuse.
+        painter.setPen(QPen(QColor("#eead68"), 1, Qt.PenStyle.DashLine))
+        painter.drawLine(24, height - 22, 52, height - 22)
+        painter.setPen(QColor("#a6b8ca"))
+        painter.drawText(56, height - 18, "θ")
 
 
 class PowerTab(QWidget):
