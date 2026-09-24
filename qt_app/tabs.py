@@ -439,14 +439,24 @@ class PowerTab(QWidget):
         layout.addLayout(header)
         group = QGroupBox("Measurement setup")
         grid = QGridLayout(group)
+        grid.setSpacing(4)
+        grid.setContentsMargins(6, 6, 6, 6)
         self.voltage = QLineEdit("1")
         self.current = QLineEdit("2")
+        # Dense sizing: single-character channels need no wide fields, but
+        # "MATH1" (5 chars) must still fit.
+        for field in (self.voltage, self.current):
+            field.setFixedWidth(60)
         self.probe_type = QComboBox()
         self.probe_type.addItems(["shunt", "clamp"])
+        self.probe_type.setFixedWidth(95)
         self.probe_value = QLineEdit("1.0")
         self.correction = QLineEdit("1.0")
+        for field in (self.probe_value, self.correction):
+            field.setFixedWidth(60)
         self.expected_power = QLineEdit()
-        self.expected_power.setPlaceholderText("Optional reference W")
+        self.expected_power.setPlaceholderText("Ref W")
+        self.expected_power.setFixedWidth(70)
         self.method = QComboBox()
         self.method.addItem("Instantaneous (v·i mean)", "standard")
         self.method.addItem("Vrms × Irms × cos(φ)", "rms_cos_phi")
