@@ -164,6 +164,8 @@ class HarmonicsTab(QWidget):
         layout.addWidget(self.table, 2)
         self.timer = QTimer(self)
         self.timer.timeout.connect(lambda: self.run() if self.auto.isChecked() else None)
+        # GAP (Tk parity, recorded): the Tk tab re-arms ~2 s after each
+        # acquisition; Qt polls on a fixed 4 s cadence (gentler on the scope).
         self.timer.start(4000)
 
     def run(self):
@@ -609,6 +611,12 @@ class NoiseTab(QWidget):
         "AR Spectrum": {"Default": {"ar_order": 32, "nfft": 4096},
                         "Sharp peaks": {"ar_order": 64, "nfft": 8192},
                         "Fast scan": {"ar_order": 24, "nfft": 2048}},
+        "Matched Filter": {"Default": {}},
+        "Cyclostationary": {"Default": {"nfft": 4096, "hop": 2048},
+                            "Deep": {"nfft": 8192, "hop": 2048},
+                            "Fast": {"nfft": 2048, "hop": 1024}},
+        "Bicoherence": {"Default": {"nfft": 512, "overlap": 0.75},
+                        "Fast": {"nfft": 256, "overlap": 0.5}},
     }
     # GAP (Tk parity, recorded): the Tk tab also offers capture-Length
     # trimming (0.5–5 s), a daily auto-log CSV, Bicoherence accumulation
@@ -616,7 +624,8 @@ class NoiseTab(QWidget):
     # controls. Qt analyzes the full shared-fetch capture, reuses its
     # established per-run detections CSV, keeps a one-shot Bicoherence view,
     # and leaves cyclo extras at shared defaults — no shared code is touched
-    # to close these.
+    # to close these. 1-D spectra stream to Qt's own 3D-history dialog rather
+    # than the shared surface3d window the Tk tab feeds in Auto mode.
     # GAP (Tk parity, recorded): MSC in the Tk tab fetches both channels
     # under one exclusive SCPI window; Qt acquires via two shared fetches
     # and only checks that the sample rates agree.
@@ -759,6 +768,8 @@ class NoiseTab(QWidget):
         self.refresh_presets()
         self.timer = QTimer(self)
         self.timer.timeout.connect(lambda: self.run() if self.auto.isChecked() else None)
+        # GAP (Tk parity, recorded): the Tk tab re-arms ~2 s after each run;
+        # Qt polls on a fixed 4 s cadence (gentler on the scope).
         self.timer.start(4000)
 
     def _toggle_advanced(self, open):
