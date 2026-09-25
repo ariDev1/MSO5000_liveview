@@ -2,6 +2,34 @@
 
 All notable changes to this project are documented here.
 
+## v0.9.9-testing (2026-09-25)
+
+### Qt viewer (feature/qt-ui)
+
+- Tightened Harmonics and B-H setup rows: labels pair with their controls
+  (shared `pair_label_control` helper, 2 px inner gap, trailing stretch).
+- Unified the B-H fold: parameter grid and option row fold together, while
+  `ACQUIRE & PLOT` / export actions stay visible like Power's `MEASURE` row.
+- Reduced setup toggles to arrow-only (`▾`/`▸`) on all tabs.
+- Harmonics table selection moves the blue `k=` plot marker instantly,
+  including keyboard navigation (cached spectrum re-render, no re-measure).
+- Footer shows human-friendly `SR 2.00 GSa/s · TB 200 µs/div` (raw SCPI kept
+  in the tooltip).
+- B-H trail uses the Tk-parity `plasma` age colormap instead of flat cyan.
+- Status bar and debug log only refresh widgets on actual change (no more
+  per-second full rebuilds).
+
+### SCPI and waveform fetch
+
+- Removed the circular self-import in `scpi/interface.py`.
+- Dropped the discarded `:WAV:PRE?` priming query (one query per attempt,
+  settling delay kept); hardware-verified on RAW and NORM captures.
+- Fixed `fetch_waveform_with_fallback` to send `:WAV:POIN:MODE NORM` on the
+  NORM path instead of hardcoded `RAW`.
+- Merged the duplicated `Expected P (W)` tooltip in the Power tab.
+
+---
+
 ## v0.9.8j-testing (2026-08-24)
 
 ### Verification and scientific integrity

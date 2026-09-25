@@ -1,7 +1,7 @@
 # 🧠 RIGOL MSO5000 Live Monitor (Hacked FW Compatible)
 
-> **Current Version:** v0.9.8i-stable
-> 📦 See [Release Notes](https://github.com/ariDev1/MSO5000_liveview/releases/tag/v0.9.8i-stable)
+> **Current Version:** v0.9.9-testing
+> 📦 See [Release Notes](https://github.com/ariDev1/MSO5000_liveview/releases/tag/v0.9.9-testing)
 
 This tool provides a live view and SCPI-based data extraction from a **Rigol MSO5000** oscilloscope with **hacked firmware**, using VNC for screenshots and VISA (SCPI) for waveform data.
 
@@ -55,10 +55,10 @@ We published a technical whitepaper detailing how to achieve scientifically vali
 
 ## 🛠️ Installation (Tested on Ubuntu 24.04 Noble)
 
-### Qt preview (feature/qt-ui)
+### Qt viewer (feature/qt-ui)
 
-The Qt viewer is an **alternative application** alongside the tested Tk version.
-It uses the existing SCPI waveform, power and long-time logger modules. To try it
+The Qt viewer is a **full alternative application** alongside the Tk version,
+sharing the established SCPI, calculation, and logging modules. To try it
 from this branch, install the additional Qt dependencies into a Python virtual
 environment and run:
 
@@ -223,22 +223,33 @@ Enter the oscilloscope’s IP when prompted. GUI includes:
 ```
 MSO5000_liveview/
 ├── app/
+├── config.py
 ├── docs/
+├── entrypoint.sh
 ├── gui/
+├── headless/
+├── logger/
+├── qt_app/             ← Qt viewer (this branch)
+├── scpi/
+├── scpi_command_list.txt
+├── tests/
 ├── Dockerfile
 ├── run.sh
 ├── .dockerignore
-├── headless/
-├── logger/
-├── scpi/
 ├── main.py
 ├── build_version.py
-├── version.py          ← auto-generated
+├── version.py          ← auto-generated (see below)
 ├── requirements.txt
+├── requirements-qt.txt
 ├── how-to-install.txt
 ├── oszi_csv/           ← output folder for logs
 ├── utils/
 ```
+
+`version.py` is generated from Git tags by `build_version.py`
+(`VERSION` = latest tag, `GIT_COMMIT` = short HEAD, `BUILD_DATE` = UTC now).
+The Docker build regenerates it; tag a new release (e.g. `v0.9.9-testing`)
+before building so the footer and System tab report the right version.
 
 ---
 
