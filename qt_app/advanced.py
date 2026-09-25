@@ -11,14 +11,14 @@ from matplotlib.figure import Figure
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QGridLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QSizePolicy, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem,
+    QLabel, QLineEdit, QPushButton, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget, QHeaderView,
 )
 
 import app.app_state as app_state
 from qt_app.analysis import acquire, bh_curve, harmonics, noise, read_wave_csv, save_xy_csv
 from qt_app.backend import channel_name
-from qt_app.tabs import (as_bool, channel_color, heading, readout,
+from qt_app.tabs import (as_bool, channel_color, heading, pair_label_control, readout,
                          settings_store, tint_channel_combo)
 
 
@@ -62,9 +62,9 @@ class Plot(QWidget):
 
 
 def fold_setup(tab, key, expanded):
-    """Fold/unfold a tab's setup container (same pattern as Power's Setup ▾)."""
+    """Fold/unfold a tab's setup container (same pattern as Power's ▾)."""
     tab.setup_box.setVisible(expanded)
-    tab.setup_toggle.setText("SETUP ▾" if expanded else "SETUP ▸")
+    tab.setup_toggle.setText("▾" if expanded else "▸")
     QSettings("ariDev1", "MSO5000-Qt").setValue(key, bool(expanded))
 
 
@@ -288,7 +288,7 @@ class HarmonicsTab(QWidget):
         header = QHBoxLayout()
         header.addWidget(heading("Harmonics / THD"))
         header.addStretch()
-        self.setup_toggle = QPushButton("SETUP ▾")
+        self.setup_toggle = QPushButton("▾")
         self.setup_toggle.setCheckable(True)
         self.setup_toggle.setToolTip("Fold/unfold the setup row to give the plot more room.")
         header.addWidget(self.setup_toggle)
@@ -298,21 +298,6 @@ class HarmonicsTab(QWidget):
         row = QHBoxLayout(self.setup_box)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(10)
-
-        def _pair(text, widget):
-            """Label + control with minimum inner gap (2 px)."""
-            box = QHBoxLayout()
-            box.setContentsMargins(0, 0, 0, 0)
-            box.setSpacing(2)
-            label = QLabel(text)
-            label.setBuddy(widget)
-            label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-            box.addWidget(label)
-            box.addWidget(widget)
-            container = QWidget()
-            container.setContentsMargins(0, 0, 0, 0)
-            container.setLayout(box)
-            return container
         self.channel = QComboBox()
         self.channel.addItems([f"CHAN{i}" for i in range(1, 5)] + [f"MATH{i}" for i in range(1, 5)])
         tint_channel_combo(self.channel)
@@ -343,9 +328,9 @@ class HarmonicsTab(QWidget):
         md_button.clicked.connect(self.copy_markdown)
         surface_button = QPushButton("3D HISTORY")
         surface_button.clicked.connect(self.show_surface)
-        for widget in (_pair("Channel", self.channel), _pair("Window", self.window),
-                       _pair("Harmonics", self.count), self.raw, self.include_dc,
-                       self.auto, _pair("Interval", self.interval),
+        for widget in (pair_label_control("Channel", self.channel), pair_label_control("Window", self.window),
+                       pair_label_control("Harmonics", self.count), self.raw, self.include_dc,
+                       self.auto, pair_label_control("Interval", self.interval),
                        button, csv_button, png_button, md_button,
                        surface_button):
             row.addWidget(widget)
@@ -707,32 +692,22 @@ class BHCurveTab(QWidget):
         header = QHBoxLayout()
         header.addWidget(heading("B–H curve / hysteresis"))
         header.addStretch()
-        self.setup_toggle = QPushButton("SETUP ▾")
+        self.setup_toggle = QPushButton("▾")
         self.setup_toggle.setCheckable(True)
         self.setup_toggle.setToolTip("Fold/unfold the parameter grid to give the plot more room.")
         header.addWidget(self.setup_toggle)
         layout.addLayout(header)
         self.setup_box = QWidget()
         self.setup_box.setContentsMargins(0, 0, 0, 0)
-        grid = QGridLayout(self.setup_box)
+        setup_layout = QVBoxLayout(self.setup_box)
+        setup_layout.setContentsMargins(0, 0, 0, 0)
+        setup_layout.setSpacing(4)
+        grid_widget = QWidget()
+        grid_widget.setContentsMargins(0, 0, 0, 0)
+        grid = QGridLayout(grid_widget)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(4)
-
-        def _pair(text, widget):
-            """Label + control with minimum inner gap (2 px)."""
-            box = QHBoxLayout()
-            box.setContentsMargins(0, 0, 0, 0)
-            box.setSpacing(2)
-            label = QLabel(text)
-            label.setBuddy(widget)
-            label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-            box.addWidget(label)
-            box.addWidget(widget)
-            container = QWidget()
-            container.setContentsMargins(0, 0, 0, 0)
-            container.setLayout(box)
-            return container
         self.voltage = QComboBox()
         self.current = QComboBox()
         for selector in (self.voltage, self.current):
@@ -785,12 +760,24 @@ class BHCurveTab(QWidget):
                     ("Probe value", self.probe_value), ("Deskew (µs)", self.deskew),
                     ("Cycle reference", self.cycle_ref), ("Cycle count", self.avg_cycles))
         for idx, (name, widget) in enumerate(controls):
-            grid.addWidget(_pair(name, widget), idx // 5, idx % 5)
+            grid.addWidget(pair_label_control(name, widget), idx // 5, idx % 5)
         grid.setColumnStretch(5, 1)
+        setup_layout.addWidget(grid_widget)
+        opts_widget = QWidget()
+        opts_widget.setContentsMargins(0, 0, 0, 0)
+        opts = QHBoxLayout(opts_widget)
+        opts.setContentsMargins(0, 0, 0, 0)
+        opts.setSpacing(10)
+        for widget in (self.raw, self.dc, self.detrend, self.cycle, self.auto,
+                       pair_label_control("Interval", self.interval), self.equal_aspect, self.tight,
+                       self.data, self.overlay):
+            opts.addWidget(widget)
+        opts.addStretch(1)
+        setup_layout.addWidget(opts_widget)
         layout.addWidget(self.setup_box)
         wire_setup_fold(self, "bhSetupExpanded")
-        row = QHBoxLayout()
-        row.setSpacing(10)
+        actions = QHBoxLayout()
+        actions.setSpacing(10)
         button = QPushButton("ACQUIRE & PLOT")
         button.clicked.connect(self.run)
         png = QPushButton("SAVE PNG")
@@ -801,12 +788,10 @@ class BHCurveTab(QWidget):
         help_button.clicked.connect(lambda: show_help(self, "bh-curve_help.md"))
         clear = QPushButton("RESET TRAIL")
         clear.clicked.connect(self.clear_trail)
-        for widget in (self.raw, self.dc, self.detrend, self.cycle, self.auto,
-                       _pair("Interval", self.interval), self.equal_aspect, self.tight,
-                       self.data, self.overlay, button, clear, png, csv, help_button):
-            row.addWidget(widget)
-        row.addStretch(1)
-        layout.addLayout(row)
+        for widget in (button, clear, png, csv, help_button):
+            actions.addWidget(widget)
+        actions.addStretch(1)
+        layout.addLayout(actions)
         self.headline = QLabel("LOOP —")
         self.headline.setObjectName("headline")
         layout.addWidget(self.headline)
@@ -1084,7 +1069,7 @@ class NoiseTab(QWidget):
         header = QHBoxLayout()
         header.addWidget(heading("Noise Inspector"))
         header.addStretch()
-        self.setup_toggle = QPushButton("SETUP ▾")
+        self.setup_toggle = QPushButton("▾")
         self.setup_toggle.setCheckable(True)
         self.setup_toggle.setToolTip("Fold/unfold the setup rows to give the plot more room.")
         header.addWidget(self.setup_toggle)

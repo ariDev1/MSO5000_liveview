@@ -14,7 +14,7 @@ from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPlainTextEdit,
-    QPushButton, QSpinBox, QVBoxLayout, QWidget, QDialog,
+    QPushButton, QSizePolicy, QSpinBox, QVBoxLayout, QWidget, QDialog,
 )
 
 from qt_app.backend import PowerLog, channel_name, current_scale, logging_channels
@@ -30,6 +30,22 @@ def readout():
     widget = QPlainTextEdit()
     widget.setReadOnly(True)
     return widget
+
+
+def pair_label_control(text, widget, gap=2):
+    """Label + control with minimum inner gap (UI-only, shared)."""
+    box = QHBoxLayout()
+    box.setContentsMargins(0, 0, 0, 0)
+    box.setSpacing(gap)
+    label = QLabel(text)
+    label.setBuddy(widget)
+    label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+    box.addWidget(label)
+    box.addWidget(widget)
+    container = QWidget()
+    container.setContentsMargins(0, 0, 0, 0)
+    container.setLayout(box)
+    return container
 
 
 # Rigol-style channel palette, shared by all Qt tabs for traceability.
@@ -551,7 +567,7 @@ class PowerTab(QWidget):
         header = QHBoxLayout()
         header.addWidget(heading("Power analysis"))
         header.addStretch()
-        self.setup_toggle = QPushButton("SETUP ▾")
+        self.setup_toggle = QPushButton("▾")
         self.setup_toggle.setCheckable(True)
         self.setup_toggle.setToolTip("Fold/unfold the measurement setup to give the plot more room.")
         header.addWidget(self.setup_toggle)
@@ -754,7 +770,7 @@ class PowerTab(QWidget):
     def _toggle_setup(self, expanded):
         self.setup_group.setVisible(expanded)
         self.setup_tip.setVisible(expanded)
-        self.setup_toggle.setText("SETUP ▾" if expanded else "SETUP ▸")
+        self.setup_toggle.setText("▾" if expanded else "▸")
         self.setup_settings.setValue("powerSetupExpanded", bool(expanded))
 
     def _tint_fields(self):

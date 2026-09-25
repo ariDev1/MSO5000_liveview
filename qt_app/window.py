@@ -282,6 +282,10 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.build)
         self._clickable(self.build, lambda: self._goto_tab(self.system))
         self._last_poll = None
+        self._last_activity = (None, None)
+        self._last_data_text, self._last_data_tint = None, None
+        self._last_build_text = None
+        self._last_debug_text = None
         self._update_channels_bar({})
         # Workspace restore (same per-user store as zoom and fold states).
         self.workspace = QSettings("ariDev1", "MSO5000-Qt")
@@ -529,7 +533,10 @@ class MainWindow(QMainWindow):
         self.detached.show()
 
     def show_debug(self):
-        self.debug_text.setPlainText("\n".join(list(debug_log)[-500:]))
+        debug_text = "\n".join(list(debug_log)[-500:])
+        if debug_text != self._last_debug_text:
+            self._last_debug_text = debug_text
+            self.debug_text.setPlainText(debug_text)
         # Activity indicator mirroring the Tk LED meter's inputs, extended
         # with job detail (pause state, power iterations).
         if app_state.is_logging_active:
@@ -545,12 +552,13 @@ class MainWindow(QMainWindow):
             state, color = "■ SCPI", "#4f6"
         else:
             state, color = "□ IDLE", "#5c6b7d"
-        self.activity.setText(state)
-        self.activity.setStyleSheet(f"color: {color}; font-weight: bold;")
+        if (state, color) != self._last_activity:
+            self._last_activity = (state, color)
+            self.activity.setText(state)
+            self.activity.setStyleSheet(f"color: {color}; font-weight: bold;")
         # Data age: green when fresh, amber when stale, red on lost poll.
         if self._last_poll is None:
-            self.data_age.setText("DATA —")
-            self.data_age.setStyleSheet("font-family: monospace; color: #5c6b7d;")
+            data_text, tint = "DATA —", "#5c6b7d"
         else:
             age = time.monotonic() - self._last_poll
             if age < 5:
@@ -559,12 +567,19 @@ class MainWindow(QMainWindow):
                 tint = "#fd0"
             else:
                 tint = "#e44"
-            self.data_age.setText(f"DATA {age:.0f}s")
+            data_text = f"DATA {age:.0f}s"
+        if data_text != self._last_data_text:
+            self._last_data_text = data_text
+            self.data_age.setText(data_text)
+        if tint != self._last_data_tint:
+            self._last_data_tint = tint
             self.data_age.setStyleSheet(f"font-family: monospace; color: {tint};")
         # Build tag + UTC clock for screenshot/CSV traceability.
-        self.build.setText(
-            f"{version.VERSION} {version.GIT_COMMIT} · "
-            f"{datetime.now(timezone.utc):%H:%M:%S}Z")
+        build_text = (f"{version.VERSION} {version.GIT_COMMIT} · "
+                      f"{datetime.now(timezone.utc):%H:%M:%S}Z")
+        if build_text != self._last_build_text:
+            self._last_build_text = build_text
+            self.build.setText(build_text)
 
     def closeEvent(self, event):
         self.closing = True
