@@ -1,7 +1,7 @@
 # 🧠 RIGOL MSO5000 Live Monitor (Hacked FW Compatible)
 
-> **Current Version:** v0.9.9-testing
-> 📦 See [Release Notes](https://github.com/ariDev1/MSO5000_liveview/releases/tag/v0.9.9-testing)
+> **Current Version:** v0.9.10-testing
+> 📦 See [Release Notes](https://github.com/ariDev1/MSO5000_liveview/releases/tag/v0.9.10-testing)
 
 This tool provides a live view and SCPI-based data extraction from a **Rigol MSO5000** oscilloscope with **hacked firmware**, using VNC for screenshots and VISA (SCPI) for waveform data.
 
@@ -33,6 +33,11 @@ This method remains accurate for arbitrary waveshapes and is not dependent on si
   ↪️ Display of PF angle and cumulative energy  
   ↪️ Heatmap-style PQ trail with fading  
   ↪️ Shows `Reference: CURRENT` or `VOLTAGE` from scope
+- 🧲 **Magnetics Analyzer** (Qt) for ferrite cores  
+  ↪️ B(t)/H(t)/L(t)/μr′(t), B–H loop with plasma heat-trail, Bsat limits  
+  ↪️ Toroid or direct Ae/le geometry, material presets, open/loaded windings  
+  ↪️ Winding decomposition, loss split (Pcu/Pcore), per-harmonic L, CSV export
+- 🌊 **B-H Curve, Harmonics/THD and Noise Inspector** (Qt, alongside Tk)
 - 🐞 Scrollable debug log
 - ⚙️ Manual SCPI tab with command input and response log  
   ↪️ Command list from `scpi_command_list.txt` (click or double-click to load)  
@@ -75,8 +80,8 @@ Omit `--ip` to enter the address in a dialog. Core workflows available now are
 resizable live VNC screenshots (with an enlarge button), detailed system and
 channel status, licensed options, documentation, CSV waveform export and copy,
 long-time logging with pause/resume, power measurement with CSV, PQ and 3D
-views, SCPI console with command list, B-H Curve, Harmonics/THD, and Noise
-Inspector. Analysis views share the existing calculation functions and mirror
+views, SCPI console with command list, B-H Curve, Harmonics/THD, Noise
+Inspector, and Magnetics Analyzer. Analysis views share the existing calculation functions and mirror
 the Tk tab layouts, tables, and plots; deliberate Qt-side differences (embedded
 plot dialogs instead of external scripts, read-only self-test, per-run export
 filenames) are noted inline in `qt_app/` as `GAP` comments. Outputs use
@@ -227,9 +232,11 @@ MSO5000_liveview/
 ├── docs/
 ├── entrypoint.sh
 ├── gui/
+├── gui/magnetic/       ← shared magnetics core (B/H/L/μr)
 ├── headless/
 ├── logger/
 ├── qt_app/             ← Qt viewer (this branch)
+├── qt_app/magnetics.py ← Magnetics tab (Phase 1+2)
 ├── scpi/
 ├── scpi_command_list.txt
 ├── tests/

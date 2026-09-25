@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented here.
 
+## v0.9.10-testing (2026-09-25)
+
+### Magnetics Analyzer (new Qt tab)
+
+- Extracted the Tk-free calculation core to `gui/magnetic/magnetics.py`
+  (bit-identical parity check over 22 + 23 + 50 result keys).
+- New `MagneticsTab` behind `config.ENABLE_MAGNETICS`: V&I, B–H loop with
+  plasma trail, μdiff, B(t) with Bsat limits, H(t), L(t), μr'(t), B&Φ, B-vs-I.
+- Toroid OD/ID/HT or direct Ae/le geometry, material presets with custom
+  save, open-secondary and loaded (I2/N2, I3/N3) modes, R-winding loss split.
+- Decomposition dialog (phases, six L methods, per-harmonic L, μ'/μ''/tanδ),
+  hover cursors, per-run CSV export, `QSettings` persistence.
+- Moved BH Curve tab between Noise Inspector and Magnetics in the tab order.
+
+---
+
 ## v0.9.9-testing (2026-09-25)
 
 ### Qt viewer (feature/qt-ui)
