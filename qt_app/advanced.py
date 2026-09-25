@@ -11,7 +11,7 @@ from matplotlib.figure import Figure
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QGridLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem,
+    QLabel, QLineEdit, QPushButton, QSizePolicy, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget, QHeaderView,
 )
 
@@ -293,6 +293,22 @@ class HarmonicsTab(QWidget):
         self.setup_box.setContentsMargins(0, 0, 0, 0)
         row = QHBoxLayout(self.setup_box)
         row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+
+        def _pair(text, widget):
+            """Label + control with minimum inner gap (2 px)."""
+            box = QHBoxLayout()
+            box.setContentsMargins(0, 0, 0, 0)
+            box.setSpacing(2)
+            label = QLabel(text)
+            label.setBuddy(widget)
+            label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+            box.addWidget(label)
+            box.addWidget(widget)
+            container = QWidget()
+            container.setContentsMargins(0, 0, 0, 0)
+            container.setLayout(box)
+            return container
         self.channel = QComboBox()
         self.channel.addItems([f"CHAN{i}" for i in range(1, 5)] + [f"MATH{i}" for i in range(1, 5)])
         tint_channel_combo(self.channel)
@@ -323,12 +339,13 @@ class HarmonicsTab(QWidget):
         md_button.clicked.connect(self.copy_markdown)
         surface_button = QPushButton("3D HISTORY")
         surface_button.clicked.connect(self.show_surface)
-        for widget in (QLabel("Channel"), self.channel, QLabel("Window"), self.window,
-                       QLabel("Harmonics"), self.count, self.raw, self.include_dc,
-                       self.auto, QLabel("Interval"), self.interval,
+        for widget in (_pair("Channel", self.channel), _pair("Window", self.window),
+                       _pair("Harmonics", self.count), self.raw, self.include_dc,
+                       self.auto, _pair("Interval", self.interval),
                        button, csv_button, png_button, md_button,
                        surface_button):
             row.addWidget(widget)
+        row.addStretch(1)
         layout.addWidget(self.setup_box)
         wire_setup_fold(self, "harmonicsSetupExpanded")
         self.summary = QLabel("Select an enabled channel to analyze")
@@ -662,6 +679,23 @@ class BHCurveTab(QWidget):
         self.setup_box.setContentsMargins(0, 0, 0, 0)
         grid = QGridLayout(self.setup_box)
         grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(4)
+
+        def _pair(text, widget):
+            """Label + control with minimum inner gap (2 px)."""
+            box = QHBoxLayout()
+            box.setContentsMargins(0, 0, 0, 0)
+            box.setSpacing(2)
+            label = QLabel(text)
+            label.setBuddy(widget)
+            label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+            box.addWidget(label)
+            box.addWidget(widget)
+            container = QWidget()
+            container.setContentsMargins(0, 0, 0, 0)
+            container.setLayout(box)
+            return container
         self.voltage = QComboBox()
         self.current = QComboBox()
         for selector in (self.voltage, self.current):
@@ -714,11 +748,12 @@ class BHCurveTab(QWidget):
                     ("Probe value", self.probe_value), ("Deskew (µs)", self.deskew),
                     ("Cycle reference", self.cycle_ref), ("Cycle count", self.avg_cycles))
         for idx, (name, widget) in enumerate(controls):
-            grid.addWidget(QLabel(name), idx // 5, idx % 5 * 2)
-            grid.addWidget(widget, idx // 5, idx % 5 * 2 + 1)
+            grid.addWidget(_pair(name, widget), idx // 5, idx % 5)
+        grid.setColumnStretch(5, 1)
         layout.addWidget(self.setup_box)
         wire_setup_fold(self, "bhSetupExpanded")
         row = QHBoxLayout()
+        row.setSpacing(10)
         button = QPushButton("ACQUIRE & PLOT")
         button.clicked.connect(self.run)
         png = QPushButton("SAVE PNG")
@@ -730,9 +765,10 @@ class BHCurveTab(QWidget):
         clear = QPushButton("RESET TRAIL")
         clear.clicked.connect(self.clear_trail)
         for widget in (self.raw, self.dc, self.detrend, self.cycle, self.auto,
-                       QLabel("Interval"), self.interval, self.equal_aspect, self.tight,
+                       _pair("Interval", self.interval), self.equal_aspect, self.tight,
                        self.data, self.overlay, button, clear, png, csv, help_button):
             row.addWidget(widget)
+        row.addStretch(1)
         layout.addLayout(row)
         self.headline = QLabel("LOOP —")
         self.headline.setObjectName("headline")
