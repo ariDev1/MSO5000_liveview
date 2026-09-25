@@ -99,7 +99,6 @@ def multi_query(scope, commands, defaults=None):
     Try to batch several queries using a single SCPI request.
     Falls back to individual safe_query() if batching fails.
     """
-    from .interface import scpi_lock
     if defaults is None:
         defaults = ["N/A"] * len(commands)
 

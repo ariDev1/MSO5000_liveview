@@ -85,9 +85,8 @@ def _fetch_wave(scope, channel: str, use_raw: bool):
             pre_data = None
             for attempt in range(3):
                 try:
-                    scope.query(":WAV:PRE?")  # Prime the query
                     time.sleep(0.1 if use_raw else 0.05)
-                    
+
                     pre = scope.query(":WAV:PRE?").split(",")
                     
                     if len(pre) >= 10:
@@ -210,10 +209,9 @@ def fetch_waveform_with_fallback(scope, chan, retries=1):
             with scpi_lock:
                 scope.write(":WAV:FORM BYTE")
                 scope.write(f":WAV:MODE {mode_label}")
-                scope.write(":WAV:POIN:MODE RAW")
+                scope.write(f":WAV:POIN:MODE {mode_label}")
                 scope.write(f":WAV:POIN {WAV_POINTS}")
                 scope.write(f":WAV:SOUR {chan}")
-                scope.query(":WAV:PRE?")
                 time.sleep(0.1)
                 pre = scope.query(":WAV:PRE?").split(",")
                 xinc  = float(pre[4])
