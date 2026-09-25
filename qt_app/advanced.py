@@ -908,13 +908,19 @@ class BHCurveTab(QWidget):
             self.history.append((h[::max(1, len(h) // 5000)], b[::max(1, len(b) // 5000)]))
             self.history = self.history[-30:]
             self.plot.axes.clear()
-            for idx, (old_h, old_b) in enumerate(self.history):
-                if idx == len(self.history) - 1:
-                    self.plot.axes.plot(old_h, old_b, color="yellow",
-                                        linewidth=1.8, alpha=0.95)
-                else:
-                    self.plot.axes.plot(old_h, old_b, color="#00eaff", linewidth=1.5,
-                                        alpha=0.25 + 0.75 * (idx + 1) / len(self.history))
+            # Heatmap-like trail (Tk parity): older loops run through the
+            # plasma colormap by age, current loop stays yellow on top.
+            if len(self.history) > 1:
+                from matplotlib import colormaps
+                cmap = colormaps["plasma"]
+                for idx, (old_h, old_b) in enumerate(self.history[:-1]):
+                    tcol = idx / (len(self.history) - 2 + 1e-6)
+                    self.plot.axes.plot(old_h, old_b, color=cmap(tcol),
+                                        linewidth=1.3, alpha=0.7)
+            if self.history:
+                old_h, old_b = self.history[-1]
+                self.plot.axes.plot(old_h, old_b, color="yellow",
+                                    linewidth=1.8, alpha=0.95)
             try:
                 if self.tight.isChecked():
                     hmin, hmax = float(np.min(h)), float(np.max(h))
