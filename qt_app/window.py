@@ -239,8 +239,9 @@ class MainWindow(QMainWindow):
                            ("Long-Time Measurement", self.logging),
                            ("Power Analysis", self.power), ("SCPI", self.console)):
             self.add_tab(title, tab)
-        for title, tab in (("BH Curve", self.bh), ("Harmonics", self.harmonics),
-                           ("Noise Inspector", self.noise), ("Magnetics", self.magnetics)):
+        for title, tab in (("Harmonics", self.harmonics),
+                           ("Noise Inspector", self.noise),
+                           ("BH Curve", self.bh), ("Magnetics", self.magnetics)):
             if tab is not None:
                 self.add_tab(title, tab)
         self.splitter = QSplitter(Qt.Orientation.Vertical)
