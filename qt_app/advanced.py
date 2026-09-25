@@ -276,6 +276,10 @@ class HarmonicsTab(QWidget):
         self.surface = None
         self._selected_k = None
         self._selected_freq = None
+        self._last_freq = None
+        self._last_amplitude = None
+        self._last_count = 25
+        self._last_channel = "CHAN1"
         # Persistence trail (same as Noise Inspector): past spectra kept
         # while Auto is on, drawn faded behind the current one.
         self._trail = deque(maxlen=12)
@@ -363,6 +367,7 @@ class HarmonicsTab(QWidget):
         self.table.setHorizontalHeaderLabels(list(self.columns))
         self.table.setAlternatingRowColors(True)
         self.table.cellClicked.connect(self._on_table_select)
+        self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
         # Same arrangement as Noise Inspector: plot left (~75%), table
         # right (~25%) in one resizable row. Content-sized columns with a
         # measurement fills the available width.
@@ -445,6 +450,10 @@ class HarmonicsTab(QWidget):
                 return
             result, freq, amplitude = payload
             self.last = result
+            self._last_freq = np.asarray(freq, float)
+            self._last_amplitude = np.asarray(amplitude, float)
+            self._last_count = count
+            self._last_channel = channel
             base = (f"f₁ {result.f1_hz:.3f} Hz   Fundamental {result.v1_rms:.4g} RMS   "
                     f"THD {result.thd * 100:.2f}%")
             if result.thdn is not None:
@@ -472,12 +481,40 @@ class HarmonicsTab(QWidget):
 
     def _on_table_select(self, row, _col):
         """Mirror the Tk tab: remember the selected harmonic for the plot marker."""
+        self._apply_table_selection(row)
+        self._refresh_selection_marker()
+
+    def _on_table_selection_changed(self):
+        """Same marker update for keyboard navigation (arrow keys)."""
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        # Avoid double work when cellClicked already handled this row.
+        if self.table.item(row, 0) is None:
+            return
+        try:
+            freq = float(self.table.item(row, 1).text())
+        except (TypeError, ValueError, AttributeError):
+            return
+        if freq == self._selected_freq:
+            return
+        self._apply_table_selection(row)
+        self._refresh_selection_marker()
+
+    def _apply_table_selection(self, row):
         try:
             self._selected_k = int(float(self.table.item(row, 0).text()))
             self._selected_freq = float(self.table.item(row, 1).text())
         except (TypeError, ValueError, AttributeError):
             self._selected_k = None
             self._selected_freq = None
+
+    def _refresh_selection_marker(self):
+        """Re-draw the cached spectrum so the blue k-marker moves instantly."""
+        if self.last is None or self._last_freq is None or self._last_amplitude is None:
+            return
+        self._render_plot(self.last, self._last_freq, self._last_amplitude,
+                          self._last_count, channel_color(self._last_channel))
 
     @staticmethod
     def _cell(value):
