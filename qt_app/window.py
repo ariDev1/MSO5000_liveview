@@ -3,7 +3,9 @@
 import os
 import subprocess
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
@@ -15,11 +17,13 @@ from PySide6.QtWidgets import (
 import app.app_state as app_state
 import config
 import version
+from logger import longtime
 from logger.longtime import stop_logging
 from qt_app.advanced import BHCurveTab, HarmonicsTab, NoiseTab
 from qt_app.backend import ScopeBackend
 from qt_app.display import DetachedDisplay, ScopeDisplay
-from qt_app.tabs import ChannelsTab, LicensesTab, LoggingTab, PowerTab, SCPITab, SystemTab
+from qt_app.tabs import (ChannelsTab, LicensesTab, LoggingTab, PowerTab, SCPITab, SystemTab,
+                         channel_color)
 from utils.debug import debug_log, set_debug_level
 
 
@@ -94,7 +98,7 @@ def capture(ip):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, ip):
+    def __init__(self, ip, no_marquee=False):
         super().__init__()
         self.backend = ScopeBackend(ip)
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="qt-scope")
@@ -131,9 +135,6 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(content)
         layout = QVBoxLayout(content)
         bar = QHBoxLayout()
-        # GAP (Tk parity, recorded): the Tk top bar carries a scrolling
-        # marquee ticker (promo chrome, no lab function). Qt keeps a static
-        # title instead.
         title = QLabel("MSO5000  /  LIVE VIEW")
         title.setObjectName("appTitle")
         self.connection = QLabel("… CONNECTING")
@@ -145,7 +146,15 @@ class MainWindow(QMainWindow):
         enlarge = QPushButton("ENLARGE")
         enlarge.clicked.connect(self.enlarge_image)
         bar.addWidget(title)
-        bar.addStretch()
+        # Scrolling marquee ticker, as in the Tk top bar (promo chrome, no
+        # lab function). Timers live on the widget and stop with it.
+        if no_marquee:
+            bar.addStretch()
+            self.marquee = None
+        else:
+            from qt_app.marquee import MarqueeBar
+            self.marquee = MarqueeBar()
+            bar.addWidget(self.marquee, 1)
         bar.addWidget(self.connection)
         bar.addWidget(self.retry)
         bar.addWidget(self.hide_image)
@@ -199,12 +208,39 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.splitter)
         QTimer.singleShot(0, self._default_splitter_sizes)
         self.statusBar().showMessage("Qt viewer • shared SCPI measurement backend")
+        # Left: persistent last notification (click → Debug Log).
+        self.last_event = QLabel("Ready")
+        self.last_event.setToolTip("Last notification — click to open Debug Log")
+        self.statusBar().addWidget(self.last_event, 1)
+        self._clickable(self.last_event, lambda: self._goto_tab(self.debug))
+        # Right, permanent: job state, channel dots, data age, instrument, build.
         self.activity = QLabel("□ IDLE")
+        self.activity.setToolTip("Active job — click to open its tab")
         self.statusBar().addPermanentWidget(self.activity)
-        self.scope_info = QLabel("SR — · TRIG —")
+        self._clickable(self.activity, self._goto_job)
+        self.channels_bar = QLabel()
+        self.channels_bar.setTextFormat(Qt.TextFormat.RichText)
+        self.channels_bar.setToolTip("Displayed channels — click to open Channel Data")
+        self.statusBar().addPermanentWidget(self.channels_bar)
+        self._clickable(self.channels_bar, lambda: self._goto_tab(self.channels))
+        self.data_age = QLabel("DATA —")
+        self.data_age.setStyleSheet("font-family: monospace;")
+        self.data_age.setToolTip("Age of the last successful scope poll")
+        self.statusBar().addPermanentWidget(self.data_age)
+        self.scope_info = QLabel("SR — · TRIG — · TB —")
         self.scope_info.setStyleSheet("font-family: monospace;")
         self.scope_info.setToolTip("Instrument identity (see System Info tab)")
         self.statusBar().addPermanentWidget(self.scope_info)
+        self._clickable(self.scope_info, lambda: self._goto_tab(self.system))
+        self.build = QLabel(f"{version.VERSION} {version.GIT_COMMIT}")
+        self.build.setStyleSheet("font-family: monospace;")
+        self.build.setToolTip(f"{version.APP_NAME} {version.VERSION} · "
+                              f"{version.GIT_COMMIT} · {version.BUILD_DATE} · "
+                              f"{version.AUTHOR}\n{version.PROJECT_URL}")
+        self.statusBar().addPermanentWidget(self.build)
+        self._clickable(self.build, lambda: self._goto_tab(self.system))
+        self._last_poll = None
+        self._update_channels_bar({})
         # Workspace restore (same per-user store as zoom and fold states).
         self.workspace = QSettings("ariDev1", "MSO5000-Qt")
         geometry = self.workspace.value("mainGeometry")
@@ -294,7 +330,49 @@ class MainWindow(QMainWindow):
     def _message(self, message):
         if not self.closing:
             self.statusBar().showMessage(message, 10000)
+            self.last_event.setText(message[:140])
             self.logging.status.appendPlainText(message)
+
+    @staticmethod
+    def _clickable(label, slot):
+        label.setCursor(Qt.CursorShape.PointingHandCursor)
+        label.mousePressEvent = lambda event: slot()
+
+    def _goto_tab(self, inner):
+        for idx in range(self.tabs.count()):
+            page = self.tabs.widget(idx)
+            if hasattr(page, "widget") and page.widget() is inner:
+                self.tabs.setCurrentIndex(idx)
+                return
+
+    def _goto_job(self):
+        if app_state.is_logging_active:
+            self._goto_tab(self.logging)
+        elif app_state.is_power_analysis_active:
+            self._goto_tab(self.power)
+
+    @staticmethod
+    def _norm_channel(name):
+        text = str(name).upper().replace(" ", "")
+        if text.startswith("MATH"):
+            return text
+        if text.startswith("CHAN"):
+            return text
+        if text.startswith("CH"):
+            return "CHAN" + text[2:]
+        if text.isdigit():
+            return "CHAN" + text
+        return text
+
+    def _update_channels_bar(self, channels):
+        present = {self._norm_channel(key) for key in channels}
+        dots = "".join(
+            f"<span style=\"color:{channel_color(chan)}\">●</span>"
+            if chan in present else "<span style=\"color:#3a4a5e\">○</span>"
+            for chan in ("CHAN1", "CHAN2", "CHAN3", "CHAN4"))
+        names = ", ".join(sorted(present)) or "none"
+        self.channels_bar.setText(dots)
+        self.channels_bar.setToolTip(f"Displayed channels: {names} — click to open Channel Data")
 
     def submit(self, operation, done, *, image=False):
         executor = self.images if image else self.executor
@@ -357,10 +435,14 @@ class MainWindow(QMainWindow):
                 return
             system, channels = response
             self._set_connection("■ LINK", "#4f6")
+            self._last_poll = time.monotonic()
             self.scope_info.setText(
                 f"SR {system.get('Sample rate', '—')} · "
-                f"TRIG {system.get('Trigger', '—')}")
-            self.scope_info.setToolTip(self.idn)
+                f"TRIG {system.get('Trigger', '—')} · "
+                f"TB {system.get('Timebase', '—')}")
+            self.scope_info.setToolTip(f"{self.idn}\n"
+                                       f"Freq ref: {system.get('Frequency reference', 'N/A')}")
+            self._update_channels_bar(channels)
             self.system.update_data(system, self.idn)
             self.channels.update_data(channels)
             self.power.update_context(system, channels)
@@ -404,17 +486,41 @@ class MainWindow(QMainWindow):
 
     def show_debug(self):
         self.debug_text.setPlainText("\n".join(list(debug_log)[-500:]))
-        # Activity indicator mirroring the Tk LED meter's inputs.
+        # Activity indicator mirroring the Tk LED meter's inputs, extended
+        # with job detail (pause state, power iterations).
         if app_state.is_logging_active:
-            state, color = "■ LOG", "#e44"
+            paused = bool(getattr(longtime, "pause_flag", False))
+            state, color = ("⏸ LOG-PAUSED", "#fd0") if paused else ("■ LOG", "#e44")
         elif app_state.is_power_analysis_active:
-            state, color = "■ PWR", "#fd0"
+            try:
+                iterations = int(getattr(getattr(self.power, "log", None), "count", 0))
+            except (TypeError, ValueError):
+                iterations = 0
+            state, color = (f"■ PWR ×{iterations}", "#fd0")
         elif app_state.is_scpi_busy:
             state, color = "■ SCPI", "#4f6"
         else:
             state, color = "□ IDLE", "#5c6b7d"
         self.activity.setText(state)
         self.activity.setStyleSheet(f"color: {color}; font-weight: bold;")
+        # Data age: green when fresh, amber when stale, red on lost poll.
+        if self._last_poll is None:
+            self.data_age.setText("DATA —")
+            self.data_age.setStyleSheet("font-family: monospace; color: #5c6b7d;")
+        else:
+            age = time.monotonic() - self._last_poll
+            if age < 5:
+                tint = "#4f6"
+            elif age < 15:
+                tint = "#fd0"
+            else:
+                tint = "#e44"
+            self.data_age.setText(f"DATA {age:.0f}s")
+            self.data_age.setStyleSheet(f"font-family: monospace; color: {tint};")
+        # Build tag + UTC clock for screenshot/CSV traceability.
+        self.build.setText(
+            f"{version.VERSION} {version.GIT_COMMIT} · "
+            f"{datetime.now(timezone.utc):%H:%M:%S}Z")
 
     def closeEvent(self, event):
         self.closing = True

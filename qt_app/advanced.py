@@ -11,8 +11,8 @@ from matplotlib.figure import Figure
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QGridLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QPushButton, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QWidget, QHeaderView,
 )
 
 import app.app_state as app_state
@@ -276,6 +276,10 @@ class HarmonicsTab(QWidget):
         self.surface = None
         self._selected_k = None
         self._selected_freq = None
+        # Persistence trail (same as Noise Inspector): past spectra kept
+        # while Auto is on, drawn faded behind the current one.
+        self._trail = deque(maxlen=12)
+        self._trail_key = None
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
         header.addWidget(heading("Harmonics / THD"))
@@ -336,14 +340,28 @@ class HarmonicsTab(QWidget):
         self.interharmonics.setMaximumHeight(60)
         layout.addWidget(self.interharmonics)
         self.plot = Plot()
-        layout.addWidget(self.plot, 3)
         self.columns = ("k", "f_hz", "f_pred", "df_hz", "mag_rms", "dBr1",
                         "percent", "cumTHD_pct", "phase_deg")
         self.table = QTableWidget(0, len(self.columns))
         self.table.setHorizontalHeaderLabels(list(self.columns))
         self.table.setAlternatingRowColors(True)
         self.table.cellClicked.connect(self._on_table_select)
-        layout.addWidget(self.table, 2)
+        # Same arrangement as Noise Inspector: plot left (~75%), table
+        # right (~25%) in one resizable row. Content-sized columns with a
+        # measurement fills the available width.
+        header = self.table.horizontalHeader()
+        for col in range(len(self.columns) - 1):
+            header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(len(self.columns) - 1, QHeaderView.Stretch)
+        body = QSplitter(Qt.Orientation.Horizontal)
+        body.addWidget(self.plot)
+        body.addWidget(self.table)
+        body.setStretchFactor(0, 3)
+        body.setStretchFactor(1, 1)
+        body.setSizes([750, 250])
+        self.table.setMinimumWidth(260)
+        layout.addWidget(body, 1)
+        self.body = body
         self.timer = QTimer(self)
         self.timer.timeout.connect(lambda: self.run() if self.auto.isChecked() else None)
         # Operator-settable cadence (Tk re-arms ~2 s; Qt defaults to a
@@ -356,9 +374,10 @@ class HarmonicsTab(QWidget):
         self.raw.toggled.connect(lambda _=None: self._save_setup())
         self.include_dc.toggled.connect(lambda _=None: self._save_setup())
         self.interval.valueChanged.connect(lambda _=None: self._save_setup())
+        self.auto.toggled.connect(lambda on: self.run() if on else None)
 
     def _retime(self):
-        self.timer.setInterval(max(1, self.interval.value()) * 1000)
+        self.timer.start(max(1, self.interval.value()) * 1000)
 
     def _save_setup(self):
         store = settings_store()
@@ -420,6 +439,14 @@ class HarmonicsTab(QWidget):
             self.headline.setText(
                 f"THD {result.thd * 100:.2f}%   f₁ {result.f1_hz:.2f} Hz")
             self._render_table(result)
+            # Persistence trail, as in the Noise Inspector: reset on
+            # setup change, accumulate only in Auto mode.
+            key = f"{channel}|{window}|{count}"
+            if key != self._trail_key:
+                self._trail_key = key
+                self._trail.clear()
+            if self.auto.isChecked():
+                self._trail.append((np.asarray(freq), np.asarray(amplitude)))
             self._render_plot(result, freq, amplitude, count, channel_color(channel))
             if self.surface is not None:
                 self.surface.push(freq, amplitude)
@@ -482,7 +509,12 @@ class HarmonicsTab(QWidget):
         import matplotlib.patches as mpatches
         from scipy.signal import find_peaks
         self.plot.axes.clear()
-        self.plot.axes.plot(freq, amplitude, color=trace, linewidth=1.4, label="Spectrum")
+        # Historical spectra first (oldest faintest), current on top.
+        for idx, (old_x, old_y) in enumerate(self._trail):
+            alpha = 0.12 + 0.35 * ((idx + 1) / len(self._trail)) ** 1.5
+            self.plot.axes.plot(old_x, old_y, linewidth=1.0, alpha=alpha,
+                                color=trace, zorder=1)
+        self.plot.axes.plot(freq, amplitude, color=trace, linewidth=1.4, label="Spectrum", zorder=3)
         for item in result.rows:
             self.plot.axes.axvline(item.f_hz, linestyle="--", alpha=0.25)
         if result.f1_hz > 0:
@@ -532,6 +564,15 @@ class HarmonicsTab(QWidget):
             self.plot.axes.text(self._selected_freq, max(amplitude) if len(amplitude) else 0,
                                 f"k={self._selected_k}", color="#00eaff", fontsize=9,
                                 ha="center", va="bottom")
+        # Auto-zoom to the interesting part: the highest table harmonic
+        # plus margin, instead of the full 0..fs/2 capture span.
+        if len(freq) > 1:
+            f_end = float(freq[-1])
+            tops = [float(item.f_hz) for item in result.rows]
+            if result.f1_hz > 0:
+                tops.append(float(result.f1_hz))
+            if tops:
+                self.plot.axes.set_xlim(0, min(max(max(tops) * 1.1, 1e-12), f_end))
         self.plot.axes.legend(
             handles=[mlines.Line2D([], [], linewidth=1.4, label="Spectrum", color=trace),
                      mlines.Line2D([], [], linestyle=":", linewidth=1.2,
@@ -703,6 +744,7 @@ class BHCurveTab(QWidget):
         layout.addWidget(self.details)
         self.timer = QTimer(self)
         self.timer.timeout.connect(lambda: self.run() if self.auto.isChecked() else None)
+        self.auto.toggled.connect(lambda on: self.run() if on else None)
         self._retime()
         self._toggle_data(True)
         self._restore_setup()
@@ -780,7 +822,7 @@ class BHCurveTab(QWidget):
         self._retime()
 
     def _retime(self):
-        self.timer.setInterval(max(1, self.interval.value()) * 1000)
+        self.timer.start(max(1, self.interval.value()) * 1000)
 
     def _toggle_data(self, visible):
         self.details.setVisible(bool(visible))
@@ -1057,7 +1099,8 @@ class NoiseTab(QWidget):
         self.interval.valueChanged.connect(self._retime)
         run = QPushButton("ANALYZE")
         run.clicked.connect(self.run)
-        for widget in (QLabel("Channel"), self.channel, QLabel("Other"), self.other,
+        self.other_label = QLabel("Other")
+        for widget in (QLabel("Channel"), self.channel, self.other_label, self.other,
                        self.method, self.preset, QLabel("NFFT"), self.nfft, self.csv_path,
                        browse, self.auto, QLabel("Interval"), self.interval, run):
             row.addWidget(widget)
@@ -1087,17 +1130,29 @@ class NoiseTab(QWidget):
         # advanced row too instead of leaving it floating alone on top.
         box.addWidget(self.advanced)
         self.plot = Plot()
-        layout.addWidget(self.plot, 3)
+        self.table = QTableWidget()
+        self.table.setAlternatingRowColors(True)
+        self.table.cellClicked.connect(self.on_table_select)
+        # Fill the available width: content-sized columns + stretched last
+        # visible column, so no empty viewport remains on the right.
+        self.table.horizontalHeader().setStretchLastSection(True)
+        # Plot left (~75%), hits table right (~25%) in one resizable row
+        # instead of stacked full-width widgets leaving empty space.
         self.headline = QLabel("0 HITS")
         self.headline.setObjectName("headline")
         layout.addWidget(self.headline)
         self.detections = readout()
         self.detections.setMaximumHeight(65)
         layout.addWidget(self.detections)
-        self.table = QTableWidget()
-        self.table.setAlternatingRowColors(True)
-        self.table.cellClicked.connect(self.on_table_select)
-        layout.addWidget(self.table, 2)
+        body = QSplitter(Qt.Orientation.Horizontal)
+        body.addWidget(self.plot)
+        body.addWidget(self.table)
+        body.setStretchFactor(0, 3)
+        body.setStretchFactor(1, 1)
+        body.setSizes([750, 250])
+        self.table.setMinimumWidth(220)
+        layout.addWidget(body, 1)
+        self.body = body
         self.auto_log = QCheckBox("Log detections automatically")
         self.auto_log.setChecked(True)
         layout.addWidget(self.auto_log)
@@ -1124,9 +1179,11 @@ class NoiseTab(QWidget):
         self.refresh_presets()
         self.timer = QTimer(self)
         self.timer.timeout.connect(lambda: self.run() if self.auto.isChecked() else None)
+        self.auto.toggled.connect(lambda on: self.run() if on else None)
         # Operator-settable cadence (Tk re-arms ~2 s; Qt defaults to a
         # gentler 4 s but the interval spinbox reaches the same range).
         self._retime()
+        self._update_channel_visibility()
         self._restore_setup()
         for box in (self.channel, self.other, self.method, self.preset):
             box.currentIndexChanged.connect(lambda _=None: self._save_setup())
@@ -1213,7 +1270,7 @@ class NoiseTab(QWidget):
         self._retime()
 
     def _retime(self):
-        self.timer.setInterval(max(1, self.interval.value()) * 1000)
+        self.timer.start(max(1, self.interval.value()) * 1000)
 
     def _toggle_advanced(self, open):
         self.advanced.setVisible(open)
@@ -1225,6 +1282,13 @@ class NoiseTab(QWidget):
         self.preset.addItems(list(self.PRESETS.get(self.method.currentText(), {"Default": {}})))
         self.preset.blockSignals(False)
         self.apply_preset()
+        self._update_channel_visibility()
+
+    def _update_channel_visibility(self):
+        """Show the second channel selector only for MSC (Tk: pair only for MSC)."""
+        needs_pair = self.method.currentText() == "MSC"
+        self.other.setVisible(needs_pair)
+        self.other_label.setVisible(needs_pair)
 
     def apply_preset(self):
         values = self.PRESETS.get(self.method.currentText(), {}).get(self.preset.currentText(), {})
@@ -1247,9 +1311,12 @@ class NoiseTab(QWidget):
     def run(self):
         if self.pending or app_state.is_logging_active:
             return
-        self.pending = True
         channel, second = self.channel.currentText(), self.other.currentText()
         method, path, nfft = self.method.currentText(), self.csv_path.text().strip(), self.nfft.value()
+        if method == "MSC" and second == channel:
+            self.notify("MSC needs two different channels")
+            return
+        self.pending = True
         params = {"nfft": nfft, "seglen": self.seglen.value(), "hop": self.hop.value(),
                   "overlap": self.overlap.value(), "pfa": self.pfa.value(),
                   "topk": self.topk.value(), "smooth_bins": self.smooth_bins.value(),
@@ -1338,13 +1405,27 @@ class NoiseTab(QWidget):
                 f"{method}   Resolution: {result.get('df_Hz', 'N/A')} Hz   "
                 f"Detections: {len(rows)}" +
                 (f"   Elapsed: {elapsed:.2f} s" if elapsed is not None else ""))
-            columns = list(dict.fromkeys(key for row in rows for key in row))
+            def _cell_text(value):
+                # Display-only compaction: full precision stays in the CSV
+                # export; the table shows 6 significant digits so long
+                # floats (e.g. MSC 0.998618874034408) don't widen columns.
+                if isinstance(value, float):
+                    return f"{value:.6g}"
+                return str(value if value is not None else "")
+
+            # Drop columns that carry no information (e.g. empty 'notes'
+            # for MSC). They are removed rather than hidden: the header's
+            # stretch-last-section only fills the viewport when the last
+            # section is visible.
+            columns = [key for key in dict.fromkeys(k for row in rows for k in row)
+                       if any(_cell_text(r.get(key, "")).strip() for r in rows)]
             self.table.setColumnCount(len(columns))
             self.table.setHorizontalHeaderLabels(columns)
             self.table.setRowCount(len(rows))
+
             for row_idx, row in enumerate(rows):
                 for col_idx, key in enumerate(columns):
-                    text = str(row.get(key, ""))
+                    text = _cell_text(row.get(key, ""))
                     item = QTableWidgetItem(text)
                     try:
                         float(text)
@@ -1353,7 +1434,15 @@ class NoiseTab(QWidget):
                     except (TypeError, ValueError):
                         pass
                     self.table.setItem(row_idx, col_idx, item)
-            self.table.resizeColumnsToContents()
+            # Content-sized columns with a stretching last column, enforced
+            # via resize modes (not a one-shot resizeColumnsToContents):
+            # modes re-apply on every data change, so a narrower follow-up
+            # measurement still fills the available width.
+            header = self.table.horizontalHeader()
+            for col_idx in range(max(0, len(columns) - 1)):
+                header.setSectionResizeMode(col_idx, QHeaderView.ResizeToContents)
+            if columns:
+                header.setSectionResizeMode(len(columns) - 1, QHeaderView.Stretch)
             if self.auto.isChecked() and self.auto_log.isChecked() and result.get("detections"):
                 self.save_csv()
 

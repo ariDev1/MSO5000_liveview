@@ -16,6 +16,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="MSO5000 Qt live viewer")
     parser.add_argument("--ip", help="Scope IPv4 address")
     parser.add_argument("--samples", type=int, help="Override normal-mode waveform points")
+    parser.add_argument("--noMarquee", action="store_true", help="Disable the marquee text at the top")
     parser.add_argument("--version", action="version", version=version.VERSION)
     args = parser.parse_args(argv)
     if args.samples is not None:
@@ -39,7 +40,7 @@ def main(argv=None):
         QMessageBox.warning(None, "Invalid address", "Enter a valid IPv4 address.")
         return 2
     app_state.is_shutting_down = False
-    window = MainWindow(str(address))
+    window = MainWindow(str(address), no_marquee=args.noMarquee)
     if getattr(config, "QT_WINDOW_START_MAXIMIZED", True):
         window.showMaximized()
     else:
