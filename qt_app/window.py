@@ -78,6 +78,48 @@ def style_sheet(scale=1.0):
 ZOOM_MIN, ZOOM_MAX, ZOOM_STEP = 0.7, 1.6, 0.1
 
 
+def _footer_rate(raw):
+    """Human-friendly sample rate: '2.000000E+9' -> '2.00 GSa/s' (UI-only)."""
+    import math
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError, AttributeError):
+        text = str(raw).strip() if raw is not None else ""
+        return text or "—"
+    if not math.isfinite(value):
+        return str(raw).strip()
+    abs_val = abs(value)
+    if abs_val >= 1e9:
+        return f"{value / 1e9:.2f} GSa/s"
+    if abs_val >= 1e6:
+        return f"{value / 1e6:.2f} MSa/s"
+    if abs_val >= 1e3:
+        return f"{value / 1e3:.2f} kSa/s"
+    return f"{value:.0f} Sa/s"
+
+
+def _footer_time(raw):
+    """Human-friendly timebase: '2.000000E-04' -> '200 µs/div' (UI-only)."""
+    import math
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError, AttributeError):
+        text = str(raw).strip() if raw is not None else ""
+        return text or "—"
+    if not math.isfinite(value):
+        return str(raw).strip()
+    abs_val = abs(value)
+    if abs_val >= 1:
+        return f"{value:.3f} s/div"
+    if abs_val >= 1e-3:
+        return f"{value / 1e-3:.2f} ms/div"
+    if abs_val >= 1e-6:
+        return f"{value / 1e-6:.1f} µs/div"
+    if abs_val >= 1e-9:
+        return f"{value / 1e-9:.1f} ns/div"
+    return f"{value:.3e} s/div"
+
+
 class Events(QObject):
     completed = Signal(object, object)
     message = Signal(str)
@@ -437,11 +479,13 @@ class MainWindow(QMainWindow):
             self._set_connection("■ LINK", "#4f6")
             self._last_poll = time.monotonic()
             self.scope_info.setText(
-                f"SR {system.get('Sample rate', '—')} · "
-                f"TRIG {system.get('Trigger', '—')} · "
-                f"TB {system.get('Timebase', '—')}")
+                f"SR {_footer_rate(system.get('Sample rate', '—'))} · "
+                f"TRIG {str(system.get('Trigger', '—')).strip()} · "
+                f"TB {_footer_time(system.get('Timebase', '—'))}")
             self.scope_info.setToolTip(f"{self.idn}\n"
-                                       f"Freq ref: {system.get('Frequency reference', 'N/A')}")
+                                       f"Freq ref: {system.get('Frequency reference', 'N/A')}\n"
+                                       f"Raw SR: {system.get('Sample rate', 'N/A')} · "
+                                       f"Raw TB: {system.get('Timebase', 'N/A')}")
             self._update_channels_bar(channels)
             self.system.update_data(system, self.idn)
             self.channels.update_data(channels)
