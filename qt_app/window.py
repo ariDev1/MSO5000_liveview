@@ -20,6 +20,7 @@ import version
 from logger import longtime
 from logger.longtime import stop_logging
 from qt_app.advanced import BHCurveTab, HarmonicsTab, NoiseTab
+from qt_app.magnetics import MagneticsTab
 from qt_app.backend import ScopeBackend
 from qt_app.display import DetachedDisplay, ScopeDisplay
 from qt_app.tabs import (ChannelsTab, LicensesTab, LoggingTab, PowerTab, SCPITab, SystemTab,
@@ -215,6 +216,7 @@ class MainWindow(QMainWindow):
         self.bh = BHCurveTab(self.submit, self.backend, self.notify) if config.ENABLE_BH_CURVE else None
         self.harmonics = HarmonicsTab(self.submit, self.backend, self.notify) if config.ENABLE_HARMONICS else None
         self.noise = NoiseTab(self.submit, self.backend, self.notify) if config.ENABLE_NOISE_INSPECTOR else None
+        self.magnetics = MagneticsTab(self.submit, self.backend, self.notify) if config.ENABLE_MAGNETICS else None
         self.debug = QWidget()
         debug_layout = QVBoxLayout(self.debug)
         from qt_app.tabs import readout
@@ -238,7 +240,7 @@ class MainWindow(QMainWindow):
                            ("Power Analysis", self.power), ("SCPI", self.console)):
             self.add_tab(title, tab)
         for title, tab in (("BH Curve", self.bh), ("Harmonics", self.harmonics),
-                           ("Noise Inspector", self.noise)):
+                           ("Noise Inspector", self.noise), ("Magnetics", self.magnetics)):
             if tab is not None:
                 self.add_tab(title, tab)
         self.splitter = QSplitter(Qt.Orientation.Vertical)

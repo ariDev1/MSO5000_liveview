@@ -7,6 +7,7 @@ from datetime import datetime
 import numpy as np
 
 from gui.harmonic.harmonics import analyze_harmonics
+from gui.magnetic.magnetics import compute_magnetics_full
 from qt_app.backend import channel_name
 from scpi.waveform import _fetch_wave
 
@@ -93,8 +94,50 @@ def bh_curve(scope, voltage, current, turns, area_mm2, length_mm, probe_type,
     return h, b, dt
 
 
-def noise(y, fs, method, params, other=None, template_path=""):
-    # Qt-owned adapter: forwards operator params through the shared run_*
+def magnetics(scope, voltage, current, n_turns, ae_m2, le_m, raw=False,
+              deskew_us=0.0, i2_chan=None, n2=0, i3_chan=None, n3=0,
+              r_winding=None):
+    """Ferrite magnetics via the shared fetch path.
+
+    Open-secondary mode when i2_chan/i3_chan are None (I_primary is the
+    magnetising current). Loaded mode fetches the extra winding channels
+    and refers them by N2/N1, N3/N1. Returns the full result dict of
+    compute_magnetics_full (time arrays plus scalar readouts and the
+    "decomp" cross-checks). Raises ValueError/RuntimeError on bad geometry
+    or empty captures, mirroring bh_curve() conventions.
+    """
+    if n_turns <= 0 or ae_m2 <= 0 or le_m <= 0:
+        raise ValueError("Turns, area and path length must be positive")
+    ti, yi, _ = acquire(scope, current, raw)
+    tv, v, _ = acquire(scope, voltage, raw)
+    waves = [(ti, yi), (tv, v)]
+    i2 = i3 = None
+    if i2_chan:
+        t2, y2, _ = acquire(scope, i2_chan, raw)
+        waves.append((t2, y2))
+    if i3_chan:
+        t3, y3, _ = acquire(scope, i3_chan, raw)
+        waves.append((t3, y3))
+    t0 = max(w[0][0] for w in waves)
+    t1 = min(w[0][-1] for w in waves)
+    if t1 <= t0:
+        raise ValueError("Waveforms have no common time range")
+    n = min(len(w[1]) for w in waves)
+    t = np.linspace(t0, t1, n)
+    dt = (t1 - t0) / (n - 1)
+    i = np.interp(t - deskew_us * 1e-6, ti, yi)
+    vv = np.interp(t, tv, v)
+    if i2_chan:
+        i2 = np.interp(t - deskew_us * 1e-6, t2, y2)
+    if i3_chan:
+        i3 = np.interp(t - deskew_us * 1e-6, t3, y3)
+    return compute_magnetics_full(vv, i, dt, int(n_turns), float(ae_m2),
+                                  float(le_m), I2wave=i2, N2=int(n2 or 0),
+                                  I3wave=i3, N3=int(n3 or 0),
+                                  R_winding=r_winding)
+
+
+def noise(y, fs, method, params, other=None, template_path=""):    # Qt-owned adapter: forwards operator params through the shared run_*
     # functions' existing keyword arguments only. Each default below equals
     # the shared default, so untouched Qt controls reproduce prior results.
     nfft = params.get("nfft", 4096)
