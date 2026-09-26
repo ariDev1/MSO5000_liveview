@@ -34,7 +34,7 @@ main() {
         exit 1
     fi
 
-    exec python3 /app/main.py
+    exec python3 /app/start.py "$@"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
