@@ -12,7 +12,9 @@ RUN apt update && apt install -y \
     libx11-6 libx11-xcb1 libxcb1 libxcomposite1 \
     libxcursor1 libxdamage1 libxext6 libxfixes3 \
     libxrandr2 libxtst6 libnss3 libatk1.0-0 \
+    libxcb-cursor0 \
     libatk-bridge2.0-0 libgtk-3-0 libasound2 \
+    libgl1 \
     libpulse0 curl git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -30,8 +32,9 @@ RUN MSO5000_BUILD_VERSION="$MSO5000_VERSION" \
     python3 build_version.py \
     && chmod +x /app/entrypoint.sh
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies (Qt requirements include the base set + PySide6,
+# so both the Tk and Qt GUIs work from the chooser in start.py)
+RUN pip install --no-cache-dir -r requirements-qt.txt
 
 # Use custom entrypoint
 ENTRYPOINT ["/app/entrypoint.sh"]

@@ -18,6 +18,12 @@ from PySide6.QtWidgets import (
 import app.app_state as app_state
 from qt_app.analysis import acquire, bh_curve, harmonics, noise, read_wave_csv, save_xy_csv
 from qt_app.backend import channel_name
+from qt_app.surface_gl import (
+    get_shared_stage,
+    prepare_values,
+    range_hint,
+    select_backend,
+)
 from qt_app.tabs import (as_bool, channel_color, heading, pair_label_control, readout,
                          settings_store, tint_channel_combo)
 
@@ -100,9 +106,52 @@ class SurfaceHistory:
     transparent with faint edges, as in the Tk window. One deliberate
     difference: Log Z stays opt-in here because Qt feeds both linear
     (harmonics) and already-logged (noise dB) spectra into the same view.
+    The GPU view itself is shared app-wide (single GL context): opening
+    3D HISTORY in another tab moves the one instrument screen there and
+    redraws that tab's data, while each tab keeps its own history.
+
+    Performance notes (measured, matplotlib 3.10, 40 traces x 250 pts):
+    mplot3d is CPU software rendering, so a per-segment Line3DCollection
+    costs ~600 ms per frame here while one plain 3D line per trace costs
+    ~40 ms. The GPU backend (default when available) colors every point
+    by its level, so the color legend stays fully meaningful. The
+    matplotlib fallback "lines" mode instead colors each trace by its
+    *peak* level on the shared scale: the color bar stays valid, only
+    the within-trace gradient is simplified away there.
+    Live pushes are additionally throttled to one redraw per 0.5 s and the
+    color bar is created once and updated, not rebuilt, per redraw.
     """
 
-    def __init__(self, parent):
+    # Live-update throttle: a full 3D rebuild+draw still costs ~100 ms, so
+    # coalesce rapid pushes instead of blocking the GUI thread per spectrum.
+    _REDRAW_INTERVAL_S = 0.5
+    # Surface grid cap (view-only x-decimation, halves rotation cost).
+    _SURFACE_MAX_CELLS = 8000
+
+    def __init__(self, parent, default_log_z=False, source_name="Spectrum"):
+        # GPU waterfall when available (MSO5000_3D=gl|mpl|auto); the
+        # matplotlib renderer stays as the fallback path in _redraw.
+        self._backend = select_backend()
+        self.source_name = source_name
+        # Data model (both backends; the GPU control bar lives in the
+        # shared stage and mirrors these fields on show/edit).
+        self.history = []
+        self._seen = 0
+        self.max_lines = 40
+        self.use_log = bool(default_log_z)
+        self.render_mode = "lines"
+        self.stride_n = 1
+        self.pts_n = 250
+        self._last_draw_t = 0.0
+        self._redraw_pending = False
+        if self._backend == "gl":
+            # The 3D window is shared app-wide (single GL context); it is
+            # claimed in show(), so there is no per-tab dialog or widgets.
+            self.dialog = None
+            self.plot = None
+            self._colorbar = None
+            self._mappable = None
+            return
         self.dialog = QDialog(parent)
         self.dialog.setWindowTitle("Spectrum history · 3D")
         self.dialog.resize(900, 670)
@@ -130,13 +179,34 @@ class SurfaceHistory:
                        QLabel("Pts/line"), self.pts, apply, clear):
             bar.addWidget(widget)
         bar.addStretch()
+        # Controls apply live (APPLY re-applies explicitly): otherwise
+        # Stride/Mode/Pts changes appear to do nothing until APPLY.
+        self.last_n.valueChanged.connect(lambda _v=None: self.apply_opts())
+        self.stride.valueChanged.connect(lambda _v=None: self.apply_opts())
+        self.pts.valueChanged.connect(lambda _v=None: self.apply_opts())
+        self.log_z.toggled.connect(lambda _on=None: self.apply_opts())
+        self.mode.currentIndexChanged.connect(
+            lambda _i=None: self.apply_opts())
         layout.addLayout(bar)
         layout.addWidget(self.plot)
-        self.history = []
-        self._seen = 0
+        self._colorbar = None
+        self._mappable = None
+        if default_log_z:
+            # Linear harmonic magnitudes span ~12 decades (noise floor vs
+            # fundamental), which renders as a flat plane; noise feeds
+            # already-logged dB spectra, so only harmonics defaults here.
+            # (The model default in use_log already matches; mirror it in
+            # the fallback dialog's checkbox.)
+            self.log_z.setChecked(True)
         self.apply_opts()
 
-    def show(self):
+    def show(self, source_name=None):
+        if self._backend == "gl":
+            stage = get_shared_stage()
+            self.dialog = stage
+            stage.show_model(
+                self, source_name or self.source_name)
+            return
         self.dialog.show()
         self.dialog.raise_()
         try:
@@ -145,6 +215,12 @@ class SurfaceHistory:
             pass
 
     def apply_opts(self):
+        if self._backend == "gl":
+            # Controls live in the shared stage and write straight into
+            # this model; just trim and repaint if currently shown.
+            self.history = self.history[-self.max_lines:]
+            self._redraw()
+            return
         # Cache plain values so background pushes never touch live widgets.
         self.max_lines = max(10, self.last_n.value())
         self.use_log = self.log_z.isChecked()
@@ -170,26 +246,62 @@ class SurfaceHistory:
         self.history.append((axis, np.interp(axis, x, y)))
         self.history = self.history[-self.max_lines:]
         try:
-            visible = self.dialog.isVisible()
+            dialog = self.dialog
+            visible = dialog.isVisible() if dialog is not None else False
         except RuntimeError:
             return  # parent torn down; data stays cached in history
+        if visible:
+            self._request_redraw()
+
+    def _request_redraw(self):
+        """Redraw now if due, else coalesce into one deferred redraw."""
+        now = time.monotonic()
+        if now - self._last_draw_t >= self._REDRAW_INTERVAL_S:
+            self._redraw()
+            return
+        if self._redraw_pending:
+            return
+        self._redraw_pending = True
+        wait_ms = int((self._REDRAW_INTERVAL_S - (now - self._last_draw_t)) * 1000)
+        QTimer.singleShot(max(1, wait_ms), self._fire_pending)
+
+    def _fire_pending(self):
+        self._redraw_pending = False
+        try:
+            dialog = self.dialog
+            visible = dialog.isVisible() if dialog is not None else False
+        except RuntimeError:
+            return
         if visible:
             self._redraw()
 
     def _redraw(self):
         from matplotlib import colormaps
         from matplotlib.colors import Normalize
-        from mpl_toolkits.mplot3d.art3d import Line3DCollection
+        self._last_draw_t = time.monotonic()
+        self._redraw_pending = False
+        if self._backend == "gl":
+            # The window is shared: draw only while it shows this model.
+            # Anything else (never shown, other tab current) keeps its
+            # history untouched for later.
+            if self.dialog is None:
+                return
+            stage = self.dialog
+            if stage.current is not self:
+                return
+            stage._redraw_current()
+            return
         if not self.history:
             self.plot.axes.clear()
             self.plot.canvas.draw_idle()
             return
-        if getattr(self, "_colorbar", None) is not None:
-            try:
-                self._colorbar.remove()
-            except (AttributeError, ValueError):
-                pass
-            self._colorbar = None
+        raw = [yy for _, yy in self.history]
+        values, log_active, scale_note = prepare_values(raw, self.use_log)
+        stacked = np.concatenate(values) if values else np.array([0.0, 1.0])
+        vmin, vmax = float(np.min(stacked)), float(np.max(stacked))
+        if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin >= vmax:
+            vmin, vmax = vmin - 0.5, vmax + 0.5
+        level_label = "log₁₀(Level)" if log_active else "Level"
         ax = self.plot.axes
         ax.clear()
         # Transparent cube walls with faint edges, subtle grid (as in Tk).
@@ -205,27 +317,24 @@ class SurfaceHistory:
             ax.set_proj_type("persp")
         except (AttributeError, ValueError):
             pass
-        values = [yy if not self.use_log
-                  else np.log10(np.clip(yy, 1e-12, None)) for _, yy in self.history]
-        stacked = np.concatenate(values) if values else np.array([0.0, 1.0])
-        vmin, vmax = float(np.min(stacked)), float(np.max(stacked))
-        if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin >= vmax:
-            vmin, vmax = vmin - 0.5, vmax + 0.5
         norm = Normalize(vmin=vmin, vmax=vmax)
         cmap = colormaps["viridis"]
-        if self.render_mode == "lines":
-            # One collection: every segment colored by its level value.
-            segments, colors, widths = [], [], []
+        render_mode = self.render_mode
+        if len(self.history) < 2 and render_mode == "surface":
+            # A single-row mesh has no faces to draw; show lines so the
+            # first run is visible instead of an empty cube.
+            render_mode = "lines"
+        if render_mode == "lines":
+            # Fast path: one plain 3D line per trace, colored by its peak
+            # level on the shared scale (see class docstring for why a
+            # per-segment collection is avoided here). Newest stays bolder.
+            peaks = np.array([float(np.max(zz)) for zz in values])
+            trace_colors = cmap(norm(np.clip(peaks, vmin, vmax)))
             for idx, ((xx, _), zz) in enumerate(zip(self.history, values)):
-                points = np.column_stack([xx, np.full(len(xx), idx), zz])
-                segments.extend(zip(points[:-1], points[1:]))
-                mid = 0.5 * (zz[:-1] + zz[1:])
-                colors.extend(cmap(norm(mid)).tolist())
-                widths.extend([1.8 if idx == len(self.history) - 1 else 1.1]
-                              * max(0, len(xx) - 1))
-            collection = Line3DCollection(segments, colors=colors,
-                                          linewidths=widths, alpha=0.95)
-            ax.add_collection3d(collection)
+                newest = idx == len(self.history) - 1
+                ax.plot(xx, np.full(len(xx), idx), zz,
+                        color=trace_colors[idx],
+                        linewidth=1.8 if newest else 1.1, alpha=0.95)
             ax.set_xlim(float(np.min([x.min() for x, _ in self.history])),
                         float(np.max([x.max() for x, _ in self.history])))
             ax.set_ylim(-0.5, len(self.history) - 0.5)
@@ -233,22 +342,31 @@ class SurfaceHistory:
         else:
             xx = self.history[0][0]
             rows = len(self.history)
-            grid_x, grid_y = np.meshgrid(xx, np.arange(rows))
-            grid_z = np.vstack(values)
-            if self.render_mode == "wire":
+            step = 1
+            if render_mode == "surface":
+                # View-only x-decimation to cap the software-rendered grid.
+                step = max(1, int(math.ceil(rows * len(xx) / self._SURFACE_MAX_CELLS)))
+            xx_s = xx[::step]
+            grid_x, grid_y = np.meshgrid(xx_s, np.arange(rows))
+            grid_z = np.vstack([zz[::step] for zz in values])
+            if render_mode == "wire":
                 ax.plot_wireframe(grid_x, grid_y, grid_z, color="#7aa5ff",
                                   linewidth=0.4, alpha=0.65)
             else:
                 ax.plot_surface(grid_x, grid_y, grid_z, cmap="viridis",
                                 norm=norm, alpha=0.9, shade=True)
         from matplotlib.cm import ScalarMappable
-        self._colorbar = self.plot.figure.colorbar(
-            ScalarMappable(norm=norm, cmap=cmap), ax=ax, shrink=0.7, pad=0.08)
-        self._colorbar.set_label("log₁₀(Level)" if self.use_log else "Level",
-                                 color="#e5edf6")
-        self._colorbar.ax.yaxis.set_tick_params(color="#e5edf6", labelcolor="#e5edf6")
-        ax.set_zlabel("log₁₀(Level)" if self.use_log else "Level",
-                      color="#e5edf6")
+        if self._colorbar is None or self._mappable is None:
+            self._mappable = ScalarMappable(norm=norm, cmap=cmap)
+            self._colorbar = self.plot.figure.colorbar(
+                self._mappable, ax=ax, shrink=0.7, pad=0.08)
+            self._colorbar.set_label(level_label, color="#e5edf6")
+            self._colorbar.ax.yaxis.set_tick_params(color="#e5edf6", labelcolor="#e5edf6")
+        else:
+            self._mappable.set_norm(norm)
+            self._colorbar.update_normal(self._mappable)
+            self._colorbar.set_label(level_label, color="#e5edf6")
+        ax.set_zlabel(level_label, color="#e5edf6")
         self.plot.style_axes("Spectrum history", "Frequency (Hz)", "Acquisition")
 
 
@@ -459,8 +577,12 @@ class HarmonicsTab(QWidget):
             if self.auto.isChecked():
                 self._trail.append((np.asarray(freq), np.asarray(amplitude)))
             self._render_plot(result, freq, amplitude, count, channel_color(channel))
-            if self.surface is not None:
-                self.surface.push(freq, amplitude)
+            # Always record history (hidden until opened): opening
+            # "3D HISTORY" later still shows past runs. Created on demand
+            # so measuring before ever opening the dialog keeps data.
+            if self.surface is None:
+                self.surface = SurfaceHistory(self, default_log_z=True, source_name="Harmonics")
+            self.surface.push(freq, amplitude)
 
         self.submit(lambda: harmonics(self.backend._connected(), channel, raw, count, window, include_dc), done)
 
@@ -666,7 +788,9 @@ class HarmonicsTab(QWidget):
 
     def show_surface(self):
         if self.surface is None:
-            self.surface = SurfaceHistory(self)
+            # Linear harmonic magnitudes span ~12 decades, so default to
+            # Log Z here (still toggleable in the dialog).
+            self.surface = SurfaceHistory(self, default_log_z=True, source_name="Harmonics")
         self.surface.show()
 
 
@@ -1419,6 +1543,7 @@ class NoiseTab(QWidget):
             if result.get("image") is not None:
                 ax.imshow(result["image"], origin="lower", aspect="auto",
                           extent=result.get("extent") or None, cmap="magma")
+                self._feed_surface_from_image(result)
             elif result.get("plot_x") is not None:
                 x, y = np.asarray(result["plot_x"], float), np.asarray(result["plot_y"], float)
                 trace = channel_color(channel)
@@ -1446,7 +1571,7 @@ class NoiseTab(QWidget):
                 # Always record history (hidden until opened), as in the Tk
                 # tab — opening "3D history" later still shows past runs.
                 if self.surface is None:
-                    self.surface = SurfaceHistory(self)
+                    self.surface = SurfaceHistory(self, source_name="Noise")
                 self.surface.push(result["plot_x"], result["plot_y"])
             ax.xaxis.set_major_formatter(EngFormatter(unit="Hz"))
             hint = self.HINTS.get(method, "")
@@ -1514,8 +1639,41 @@ class NoiseTab(QWidget):
 
     def show_surface(self):
         if self.surface is None:
-            self.surface = SurfaceHistory(self)
+            self.surface = SurfaceHistory(self, source_name="Noise")
         self.surface.show()
+
+    def _feed_surface_from_image(self, result):
+        """Feed a time-frequency image into the 3D waterfall history.
+
+        Spectrogram-like methods (Spectrogram, Spectral Kurtosis,
+        Cyclostationary, Bicoherence) return an (n_freq, n_time) image
+        instead of a 1-D spectrum, so the shared history would stay empty
+        and the 3D dialog would show axes without waves. Each time column
+        is a spectrum over frequency; push a decimated subset so one run
+        contributes a visible stack without flooding the Last-N history.
+        """
+        try:
+            image = np.asarray(result.get("image"), dtype=float)
+        except (TypeError, ValueError):
+            return
+        if image.ndim != 2 or image.shape[0] < 2 or image.shape[1] < 1:
+            return
+        extent = result.get("extent") or None
+        try:
+            if extent is not None and len(extent) == 4:
+                freq = np.linspace(float(extent[2]), float(extent[3]),
+                                   image.shape[0])
+            else:
+                freq = np.arange(image.shape[0], dtype=float)
+        except (TypeError, ValueError):
+            return
+        if self.surface is None:
+            self.surface = SurfaceHistory(self, source_name="Noise")
+        step = max(1, int(math.ceil(image.shape[1] / 8)))
+        for col in range(0, image.shape[1], step):
+            column = image[:, col]
+            if len(column) == len(freq) and bool(np.isfinite(column).all()):
+                self.surface.push(freq, column)
 
     def on_table_select(self, row, _col):
         """Mirror the Tk tab: mark the selected detection on the plot."""

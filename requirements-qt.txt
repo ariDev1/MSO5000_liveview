@@ -1,2 +1,5 @@
 -r requirements.txt
 PySide6>=6.7,<7
+# GPU 3D waterfall (Qt "3D HISTORY" dialog); falls back to matplotlib if absent
+pyqtgraph>=0.13
+PyOpenGL>=3.1

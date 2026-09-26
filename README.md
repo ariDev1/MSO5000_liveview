@@ -72,6 +72,11 @@ pip install -r requirements-qt.txt
 python -m qt_app.main --ip 192.168.1.100
 ```
 
+The Qt "3D HISTORY" waterfall renders on the GPU (pyqtgraph + PyOpenGL,
+both in `requirements-qt.txt`) so rotation stays fluid; without those
+packages — or with `MSO5000_3D=mpl` — it falls back to the matplotlib
+renderer. `MSO5000_3D=gl` forces the GPU path.
+
 On Ubuntu/Debian, Qt's X11 plugin also needs `sudo apt install libxcb-cursor0`.
 On Arch/Omarchy, install `xcb-util-cursor` instead. On Wayland, you can run
 with `QT_QPA_PLATFORM=wayland` if the X11 plugin is unavailable.
