@@ -219,6 +219,35 @@ def test_qt_advanced_tabs_render_existing_analysis_results(monkeypatch):
         tab.close()
 
 
+@pytest.mark.parametrize("tab_name", ["HarmonicsTab", "NoiseTab"])
+def test_qt_analysis_plot_starts_wide_and_keeps_user_split(tab_name):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QTableWidgetItem
+    from qt_app import advanced
+
+    app = QApplication.instance() or QApplication([])
+    tab = getattr(advanced, tab_name)(lambda operation, done: None, None, lambda text: None)
+    try:
+        tab.resize(1200, 700)
+        tab.show()
+        app.processEvents()
+        app.processEvents()  # first-show layout and deferred initial splitter sizes
+        assert tab.body._initial_size_applied
+        assert tab.body.sizes()[0] > tab.body.sizes()[1]
+
+        tab.body.moveSplitter(tab.body.width() // 2, 1)
+        app.processEvents()
+        chosen_width = tab.body.sizes()[0]
+        tab.table.setRowCount(1)
+        if tab.table.columnCount() == 0:
+            tab.table.setColumnCount(1)
+        tab.table.setItem(0, 0, QTableWidgetItem("very wide detection " * 30))
+        app.processEvents()
+        assert abs(tab.body.sizes()[0] - chosen_width) <= 2
+    finally:
+        tab.close()
+
+
 def test_qt_power_measurement_uses_shared_backend_and_writes_csv(tmp_path):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication

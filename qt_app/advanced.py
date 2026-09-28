@@ -11,8 +11,8 @@ from matplotlib.figure import Figure
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QGridLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget, QHeaderView,
+    QLabel, QLineEdit, QPushButton, QSizePolicy, QSpinBox, QSplitter, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget, QHeaderView,
 )
 
 import app.app_state as app_state
@@ -65,6 +65,37 @@ class Plot(QWidget):
         path, _ = QFileDialog.getSaveFileName(parent, "Save plot", "oszi_csv/plot.png", "PNG (*.png)")
         if path:
             self.figure.savefig(path, dpi=150, facecolor=self.figure.get_facecolor())
+
+
+class AnalysisSplitter(QSplitter):
+    """Size the plot/table row once its displayed width is known."""
+
+    def __init__(self, plot, table, table_min_width):
+        super().__init__(Qt.Orientation.Horizontal)
+        self._initial_size_applied = False
+        # Table contents may grow after a measurement; scroll inside the table
+        # instead of letting its size hint take width away from the plot.
+        table.setMinimumWidth(table_min_width)
+        table.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        self.addWidget(plot)
+        self.addWidget(table)
+        self.setChildrenCollapsible(False)
+        self.setStretchFactor(0, 3)
+        self.setStretchFactor(1, 1)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._initial_size_applied:
+            QTimer.singleShot(0, self._set_initial_sizes)
+
+    def _set_initial_sizes(self):
+        if not self.isVisible() or self._initial_size_applied:
+            return
+        width = self.width() - self.handleWidth()
+        if width <= 0:
+            return
+        self.setSizes([width * 3 // 4, width // 4])
+        self._initial_size_applied = True
 
 
 def fold_setup(tab, key, expanded):
@@ -478,13 +509,7 @@ class HarmonicsTab(QWidget):
         for col in range(len(self.columns) - 1):
             header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(len(self.columns) - 1, QHeaderView.Stretch)
-        body = QSplitter(Qt.Orientation.Horizontal)
-        body.addWidget(self.plot)
-        body.addWidget(self.table)
-        body.setStretchFactor(0, 3)
-        body.setStretchFactor(1, 1)
-        body.setSizes([750, 250])
-        self.table.setMinimumWidth(260)
+        body = AnalysisSplitter(self.plot, self.table, 260)
         layout.addWidget(body, 1)
         self.body = body
         self.timer = QTimer(self)
@@ -1332,13 +1357,7 @@ class NoiseTab(QWidget):
         self.detections = readout()
         self.detections.setMaximumHeight(65)
         layout.addWidget(self.detections)
-        body = QSplitter(Qt.Orientation.Horizontal)
-        body.addWidget(self.plot)
-        body.addWidget(self.table)
-        body.setStretchFactor(0, 3)
-        body.setStretchFactor(1, 1)
-        body.setSizes([750, 250])
-        self.table.setMinimumWidth(220)
+        body = AnalysisSplitter(self.plot, self.table, 220)
         layout.addWidget(body, 1)
         self.body = body
         self.auto_log = QCheckBox("Log detections automatically")
