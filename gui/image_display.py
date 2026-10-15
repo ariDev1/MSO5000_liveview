@@ -7,6 +7,7 @@ import threading
 from PIL import Image, ImageTk
 import tkinter as tk
 from config import INTERVALL_BILD, SCOPE_IMAGE_ALLOW_UPSCALE
+from utils.commands import resolve_command
 from utils.debug import log_debug
 
 BILDPFAD = "/tmp/oszi_screenshot.png"
@@ -52,7 +53,7 @@ def attach_image_label(label_widget):
 def capture_screenshot(ip, output_path):
     """Capture one screenshot without invoking a command shell."""
     subprocess.run(
-        ["vncdo", "-s", ip, "capture", str(output_path)],
+        [resolve_command("vncdo"), "-s", ip, "capture", str(output_path)],
         check=True,
     )
 

@@ -41,13 +41,16 @@ def test_screenshot_capture_uses_an_argument_list_without_a_shell(monkeypatch, t
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(image_display.subprocess, "run", record_run)
+    # The resolved path is environment-dependent (venv vs system install), so
+    # pin it here; this test is about the argv shape, not the lookup itself.
+    monkeypatch.setattr(image_display, "resolve_command", lambda name: f"/venv/bin/{name}")
     output_path = tmp_path / "scope screenshot.tmp.png"
 
     image_display.capture_screenshot("192.168.1.100", output_path)
 
     assert calls == [
         (
-            ["vncdo", "-s", "192.168.1.100", "capture", str(output_path)],
+            ["/venv/bin/vncdo", "-s", "192.168.1.100", "capture", str(output_path)],
             {"check": True},
         )
     ]

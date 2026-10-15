@@ -360,7 +360,7 @@ def setup_power_analysis_tab(tab_frame, ip, root):
     ).grid(row=0, column=10, padx=8)
 
     def plot_last_power_log():
-        import glob, subprocess, os
+        import glob, subprocess, os, sys
         files = glob.glob("oszi_csv/power_log_*.csv")
         if not files:
             log_debug("⚠️ No power log files found")
@@ -370,7 +370,9 @@ def setup_power_analysis_tab(tab_frame, ip, root):
 
         #plot with no scaling
         log_debug(f"📈 Plot Last (no scale): {latest_file}")
-        subprocess.Popen(["python3", "utils/plot_rigol_csv.py", latest_file])
+        # sys.executable, not a bare "python3": the helper needs this venv's
+        # matplotlib, which a system interpreter may not have.
+        subprocess.Popen([sys.executable, "utils/plot_rigol_csv.py", latest_file])
 
 
     ttk.Button(control_row, text="📈 Plot Last", command=plot_last_power_log).grid(row=0, column=2, padx=3)

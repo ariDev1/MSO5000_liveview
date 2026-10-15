@@ -25,6 +25,7 @@ from qt_app.backend import ScopeBackend
 from qt_app.display import DetachedDisplay, ScopeDisplay
 from qt_app.tabs import (ChannelsTab, LicensesTab, LoggingTab, PowerTab, SCPITab, SystemTab,
                          channel_color)
+from utils.commands import resolve_command
 from utils.debug import debug_log, set_debug_level
 
 
@@ -131,7 +132,7 @@ def capture(ip):
     descriptor, path = tempfile.mkstemp(suffix=".png", prefix="mso5000-qt-")
     os.close(descriptor)
     try:
-        subprocess.run(["vncdo", "-s", ip, "capture", path],
+        subprocess.run([resolve_command("vncdo"), "-s", ip, "capture", path],
                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                        check=True, timeout=10)
         with open(path, "rb") as image:

@@ -25,11 +25,6 @@ from scpi.interface import connect_scope, safe_query
 from scpi.loop import start_scpi_loop
 from scpi.data import scpi_data
 import app.app_state as app_state
-from utils.runtime import ensure_venv_bin_on_path
-
-# vncdo (vncdotool) sits next to the interpreter; make it findable when the
-# virtualenv was never activated, otherwise screenshots silently never arrive.
-ensure_venv_bin_on_path()
 
 # NOTE: Tab setup functions are imported lazily inside build_tabs() to keep import order clean.
 
