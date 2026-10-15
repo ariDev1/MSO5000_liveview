@@ -1,4 +1,24 @@
-sudo apt install python3-tk python3.12-venv
+#!/bin/bash
+# Prewritten install script for MSO5000 Liveview (native Python setup).
+#
+# Installs the Tk GUI's system package for the detected distribution, creates
+# the virtualenv, installs the Python requirements and launches the Tk app.
+#
+#   Debian/Ubuntu : python3-tk, python3.12-venv
+#   Arch/Omarchy  : tk   (venv/ensurepip ship with the python package)
+
+if command -v pacman >/dev/null 2>&1; then
+    echo "==> Arch/Omarchy detected: installing tk with pacman"
+    sudo pacman -S tk
+elif command -v apt >/dev/null 2>&1; then
+    echo "==> Debian/Ubuntu detected: installing python3-tk and python3.12-venv with apt"
+    sudo apt install python3-tk python3.12-venv
+else
+    echo "Error: neither pacman nor apt found." >&2
+    echo "Install tkinter for Python plus the venv module, then re-run this script." >&2
+    exit 1
+fi
+
 git clone https://github.com/ariDev1/MSO5000_liveview.git
 cd MSO5000_liveview/
 python3 -m venv venv

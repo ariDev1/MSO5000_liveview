@@ -6,7 +6,6 @@ requests
 vncdotool
 psutil
 zeroconf
-Image
 matplotlib
 pandas
 scipy

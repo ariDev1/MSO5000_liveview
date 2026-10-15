@@ -58,7 +58,17 @@ We published a technical whitepaper detailing how to achieve scientifically vali
 
 ---
 
-## 🛠️ Installation (Tested on Ubuntu 24.04 Noble)
+## 🛠️ Installation
+
+Tested on Ubuntu 24.04 LTS (Python 3.12) and on Arch Linux / **Omarchy** (Python 3.14).
+Only the package manager differs — the UI dependencies map like this:
+
+| Need | Debian / Ubuntu | Arch / Omarchy |
+|------|-----------------|----------------|
+| Tk GUI (`tkinter`) | `sudo apt install python3-tk` | `sudo pacman -S tk` |
+| virtualenv | `sudo apt install python3.12-venv` | ships with `python` |
+| Qt X11 cursor plugin | `sudo apt install libxcb-cursor0` | `sudo pacman -S xcb-util-cursor` |
+| `xhost` (Docker only) | `sudo apt install x11-xserver-utils` | `sudo pacman -S xorg-xhost` |
 
 ### Qt viewer (feature/qt-ui)
 
@@ -71,6 +81,9 @@ environment and run:
 pip install -r requirements-qt.txt
 python -m qt_app.main --ip 192.168.1.100
 ```
+
+On Arch/Omarchy the `run-native.sh` wrapper below does both steps in one go:
+`./run-native.sh --gui qt --ip 192.168.1.100`.
 
 The Qt "3D HISTORY" waterfall renders on the GPU (pyqtgraph + PyOpenGL,
 both in `requirements-qt.txt`) so rotation stays fluid; without those
@@ -102,6 +115,12 @@ are needed to check live operation; the automated tests use simulated connection
 
 ### 📦 Native Python Setup
 
+Once the system packages from the table above are installed, the steps are the
+same on both distributions. `how-to-install.txt` automates them and detects
+`apt` vs `pacman` on its own (Tk app only): `bash how-to-install.txt`.
+
+#### Debian / Ubuntu
+
 ```bash
 sudo apt install python3-tk python3.12-venv
 
@@ -113,13 +132,38 @@ pip install -r requirements.txt
 python3 main.py
 ```
 
-Or use the prewritten install script:
+#### 🐧 Arch Linux / Omarchy
 
 ```bash
-bash how-to-install.txt
+sudo pacman -S tk                # provides libtk8.6.so for tkinter
+
+git clone https://github.com/ariDev1/MSO5000_liveview.git
+cd MSO5000_liveview/
+python3 -m venv venv
+./venv/bin/pip install -r requirements-qt.txt   # Tk + Qt
 ```
 
-> 💡 Tested on Ubuntu 24.04 LTS with Python 3.12 and VNC enabled on the Rigol scope.
+`requirements-qt.txt` starts with `-r requirements.txt`, so that one command
+installs both GUIs — use `requirements.txt` alone for the Tk app only. Activating
+the virtualenv is optional, since every entry point can also be called directly
+as `./venv/bin/python …`.
+
+Then launch through the wrapper, which uses the local virtualenv and needs no
+Docker or display bridging: the Tk app talks to XWayland and the Qt viewer runs
+on Wayland natively.
+
+```bash
+./run-native.sh --gui qt --ip 192.168.1.100
+./run-native.sh --gui tk --ip 192.168.1.100
+./run-native.sh                            # interactive Tk/Qt chooser
+```
+
+All arguments are forwarded to `start.py`, so `MSO5000_GUI=qt ./run-native.sh`
+and `./run-native.sh --samples 500` work as well. It exits with a hint if the
+`venv/` directory is missing.
+
+> 💡 Tested on Ubuntu 24.04 LTS (Python 3.12) and Omarchy/Arch (Python 3.14), with
+> VNC enabled on the Rigol scope.
 
 ### 🧓 Ubuntu 22.04 LTS Compatibility
 
@@ -247,6 +291,7 @@ MSO5000_liveview/
 ├── tests/
 ├── Dockerfile
 ├── run.sh
+├── run-native.sh       ← native venv launcher (no Docker)
 ├── .dockerignore
 ├── main.py
 ├── build_version.py
