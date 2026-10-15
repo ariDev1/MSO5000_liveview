@@ -10,6 +10,11 @@ import app.app_state as app_state
 import config
 import version
 from qt_app.window import MainWindow
+from utils.runtime import ensure_venv_bin_on_path
+
+# vncdo (vncdotool) sits next to the interpreter; make it findable when the
+# virtualenv was never activated, otherwise screenshots silently never arrive.
+ensure_venv_bin_on_path()
 
 
 def main(argv=None):
