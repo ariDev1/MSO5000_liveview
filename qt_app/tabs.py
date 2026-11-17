@@ -661,6 +661,10 @@ class PowerTab(QWidget):
         self.measure_button.setObjectName("primaryButton")
         self.measure_button.setToolTip("Single power measurement with the current setup.")
         self.measure_button.clicked.connect(self.measure)
+        self.reset_button = QPushButton("RESET")
+        self.reset_button.setToolTip(
+            "Clear this session's average, counters, and plot. Existing CSV logs are kept.")
+        self.reset_button.clicked.connect(self.reset_measurements)
         self.auto = QCheckBox("Auto-measure")
         self.auto.toggled.connect(self._on_auto_toggled)
         self.period = QSpinBox()
@@ -679,6 +683,7 @@ class PowerTab(QWidget):
         plot_last = QPushButton("PLOT LAST LOG")
         plot_last.clicked.connect(self.plot_last)
         controls.addWidget(self.measure_button)
+        controls.addWidget(self.reset_button)
         controls.addWidget(self.auto)
         controls.addWidget(QLabel("Interval"))
         controls.addWidget(self.period)
@@ -899,8 +904,29 @@ class PowerTab(QWidget):
 
     def _on_auto_toggled(self, active):
         # Tk saves the summary plot when auto-measure stops; Qt matches it.
+        self.reset_button.setEnabled(not active)
         if not active:
             self._save_summary_png()
+
+    def reset_measurements(self):
+        """Clear accumulated power-analysis state, preserving completed CSV files."""
+        if self.auto.isChecked():
+            self.notify("Stop Auto-measure before resetting measurements")
+            return
+        if self.pending:
+            self.notify("Wait for the active measurement to finish before resetting")
+            return
+        self.log.reset()
+        self.plot.points.clear()
+        self.plot.summary = {"S": 0.0, "PF": 0.0, "theta": 0.0, "Z": 0.0}
+        self.plot.update()
+        self.headline.setText("P —   AVG —")
+        self.results.setPlainText("No measurements in this session")
+        if self.pq3d is not None:
+            _, view, canvas = self.pq3d
+            view.clear()
+            canvas.draw_idle()
+        self.notify("Power measurements reset; previous CSV logs were kept")
 
     def _save_summary_png(self):
         """Snapshot the PQ triangle next to the CSV log (mirrors Tk)."""

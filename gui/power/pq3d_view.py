@@ -240,6 +240,25 @@ class PQ3DView:
             if 0 <= ix < H.shape[0] and 0 <= iy < H.shape[1]:
                 H[ix, iy] += 1.0
 
+    def clear(self):
+        """Clear the plotted measurement trail while retaining the view settings."""
+        self.buf.clear()
+        self._density = None
+        self._density_bounds = None
+        self._manual_limits = False
+        self._xlim = self._ylim = self._zlim = None
+        self._trail.set_segments([])
+        self._trail.set_alpha(0.0)
+        try:
+            self._head._offsets3d = ([], [], [])
+        except Exception:
+            pass
+        self.ax.set_xlim(-1, 1)
+        self.ax.set_ylim(-1, 1)
+        self.ax.set_zlim(-self.max_age_s, 0)
+        if self.fig.canvas is not None:
+            self.fig.canvas.draw_idle()
+
     def _arrays(self):
         arr = np.asarray(self.buf, dtype=float)
         x = arr[:, 1]                       # P

@@ -181,6 +181,10 @@ class PowerLog:
 
     def __init__(self, directory="oszi_csv"):
         self.directory = directory
+        self.reset()
+
+    def reset(self):
+        """Start a new in-memory measurement session without deleting old logs."""
         self.path = None
         self.started = None
         self.count = 0
@@ -201,7 +205,12 @@ class PowerLog:
         energy = [average[key] * elapsed_hr for key in ("P", "S", "Q")]
         if self.path is None:
             os.makedirs(self.directory, exist_ok=True)
-            self.path = os.path.join(self.directory, f"power_log_{datetime.now():%Y%m%d_%H%M%S}.csv")
+            stem = f"power_log_{datetime.now():%Y%m%d_%H%M%S}"
+            self.path = os.path.join(self.directory, f"{stem}.csv")
+            suffix = 1
+            while os.path.exists(self.path):
+                self.path = os.path.join(self.directory, f"{stem}_{suffix:02d}.csv")
+                suffix += 1
             with open(self.path, "w", newline="") as output:
                 writer = csv.writer(output)
                 writer.writerow(["# File", "Power Log"])

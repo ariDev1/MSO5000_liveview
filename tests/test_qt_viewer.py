@@ -68,6 +68,59 @@ def test_qt_power_csv_keeps_existing_columns_and_sample_average(tmp_path, monkey
     assert "# Method,standard" in rows
 
 
+def test_qt_power_log_reset_starts_fresh_session_and_preserves_old_csv(tmp_path):
+    log = PowerLog(str(tmp_path))
+    result = {"Real Power (P)": 100.0, "Apparent Power (S)": 100.0,
+              "Reactive Power (Q)": 0.0, "Power Factor": 1.0,
+              "Phase Angle (deg)": 0.0, "Vrms": 100.0, "Irms": 1.0}
+    log.add(result, {"Method": "standard"})
+    previous_path = log.path
+
+    log.reset()
+
+    assert log.count == 0
+    assert log.started is None
+    assert log.path is None
+    assert all(total == 0 for total in log.totals.values())
+    log.add(result, {"Method": "standard"})
+    assert log.path != previous_path
+    assert os.path.exists(previous_path)
+
+
+def test_qt_power_tab_reset_button_clears_plot_and_open_3d_view(tmp_path):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from qt_app.tabs import PowerTab
+
+    app = QApplication.instance() or QApplication([])
+    notices = []
+    tab = PowerTab(lambda operation, done: None, object(), notices.append)
+    tab.log = PowerLog(str(tmp_path))
+    tab.log.count = 3
+    tab.plot.push(10.0, 2.0)
+    tab.show_3d()
+    tab.pq3d[1].push(1.0, 10.0, 2.0)
+
+    tab.reset_button.click()
+
+    assert tab.log.count == 0
+    assert tab.plot.points == []
+    assert tab.headline.text() == "P —   AVG —"
+    assert "No measurements" in tab.results.toPlainText()
+    assert not tab.pq3d[1].buf
+    assert notices == ["Power measurements reset; previous CSV logs were kept"]
+    assert tab.reset_button.text() == "RESET"
+    tab.auto.setChecked(True)
+    assert not tab.reset_button.isEnabled()
+    tab.reset_measurements()  # The handler also guards against programmatic calls.
+    assert tab.log.count == 0
+    assert notices[-1] == "Stop Auto-measure before resetting measurements"
+    tab.auto.setChecked(False)
+    assert tab.reset_button.isEnabled()
+    tab.pq3d[0].close()
+    tab.close()
+
+
 def test_qt_shell_handles_background_callbacks_without_a_scope(monkeypatch):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import QTimer
